@@ -20,11 +20,11 @@ describe("catalog integrity", () => {
       const d = m.defaults ?? {};
       if (d.aspectRatio && m.options.aspectRatios) expect(m.options.aspectRatios, `${m.id} aspect`).toContain(d.aspectRatio);
       if (d.resolution && m.options.resolutions) expect(m.options.resolutions, `${m.id} resolution`).toContain(d.resolution);
-      // ComfyUI, browser-only tools and Ollama-only text steps are the open engine; every API provider is cloud.
+      // ComfyUI, the WorldCast worker, browser-only tools and Ollama-only text steps are the open engine; every API provider is cloud.
       // A Fuobe Original runs on both: each engine it lists has routes, and every route is on one of them.
       const engines = m.engines ?? [m.engine];
       for (const r of m.routes) {
-        const open = r.provider === "comfyui" || r.provider === "local" || (r.provider === "llm" && r.endpoint === "ollama");
+        const open = r.provider === "comfyui" || r.provider === "worldcast" || r.provider === "local" || (r.provider === "llm" && r.endpoint === "ollama");
         expect(engines, `${m.id} engine/provider`).toContain(open ? "open" : "cloud");
       }
       if (m.engines) {

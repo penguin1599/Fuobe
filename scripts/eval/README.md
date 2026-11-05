@@ -77,7 +77,7 @@ harness measures what a user gets.
 | `pnpm eval:covers --from-masters <dir> --run <name>` | Turns rendered masters (one folder per preset id) into covers, merged into the same file |
 | `pnpm eval:history` | Lists runs, newest first, and the per-case scores of one case (`--case soul/v1-general`) |
 | `pnpm eval:validate` | Checks every case file, and that the generated suites match the research |
-| `pnpm eval:setup` | Creates the metrics venv with uv (`--identity`, `--download`, `--dinov2`, `--torch-backend`) |
+| `pnpm eval:setup` | Creates the metrics venv with uv (`--identity`, `--asr`, `--download`, `--dinov2`, `--torch-backend`) |
 | `pnpm eval:trash <runId>` | Moves the run's generations to the Trash of the Fuobe it ran on (`--dry-run` counts them). The run's folder here keeps its outputs and scores |
 
 Every command takes `--json`. Runs are named by id, by path, or as `latest`, `latest~1` (the run
@@ -130,10 +130,15 @@ One JSON file per Original in `cases/`. Later Original packages add their own fi
 | `relight` | Relight's looks | 12 portraits of your own (`local/relight/<id>.png`: 8 editorial portraits and 4 more) × the four named looks, and Golden hour and Studio rim with their softness said once | `viggle` (Generate lighting as the tool runs it), `turbo-today` (Qwen-Image 2.1 Turbo, the same words), `edit-2509-relight` (Qwen-Image-Edit 2509 with its Relight LoRA); run one variant at a time | identity, clip, aesthetic |
 | `relight-placement` | Where Relight's placed light lands | the same 12 portraits × one white and one teal light at each of the 9 side × height spots | `viggle` only | identity, clip, aesthetic |
 | `turnaround` | Turnaround video (N7-6) | 4 through `/api/turnaround`: four views, the front and the back (sides drawn by the Angles app), the front alone, a sheet alone (a front drawn from it) | `default` (Frames on your GPU, H3 Max references in the cloud), `keyframes` (cloud: FLUX 3 Max), `camera` (cloud: H3 Max camera controls) | identity of 8 sampled frames against the views, temporal, clip |
+| `idol-views` | Idol 3D's other sides (idol-8) | 6 pictures in `local/idol-views/`: a figurine, a generated character, a photo of a consenting person, a product, a mug with its handle on its own left (view 1 must show the handle: the side check) and a glass, 2 seeds | `best` (the candidate: what the buttons run), `quick` (Quick look's settings) | identity, clip, aesthetic; look at the four views of every case, the people above all, before offering the buttons on characters |
+| `separation` | Soundtrack separation (DBS D4): Split soundtrack, Remove dialogue, the dub's voice split | 7 synthetic 12 s mixes with known stems (dialogue centred and panned left, a mains hum, tape hiss, a master at −0.1 dBFS, a loud master whose music and effects reach full scale, the same mix inside a video) and your own clip for the blind review | `bsrnn-mono` (DBS-BSRNN, the fast stereo bed), `bsrnn-stereo`, `tiger-mono`, `tiger-stereo` (each channel), `dbs-dub` and `melband` (the dub's first step, Qwen3-ASR 0.6B), `demucs` (cloud), and Clean up dialogue: `clean-dialogue` (open, the bed at −18 dB), `clean-veed` and `clean-deepfilternet` (cloud) | separation, wer |
+| `mesh` | Idol 3D quick mesh (idol-7): Idol's splat meshed by core Extract Mesh from Splat, in From an image on your GPU | 4 of your pictures: a rendered product, a product photo and a figurine (photo crop on), a generated character | `idol-mesh` (the 384 grid), `fine-grid` (512), `trellis2` (TRELLIS.2 for reference) | style against the picture, temporal, aesthetic; score the server's turntable of the GLB (Chromium and ffmpeg on the server) and open the GLBs too |
+| `splat` | Image to 3D → Splat on your GPU: Idol 3D against TripoSplat ([the rule](#the-splat-suite-splat-modes-defaults)) | 11 single objects from one picture each (product renders, product photos, a figurine, a stylised character, a person, thin parts, glass and chrome), 3 seeds | `idol-best` (the candidate), `idol-quick`, `triposplat-today`, `idol-photo-crop` (the photo cases only), `triposplat-cloud` (cloud: fal's TripoSplat, a reference for the haze and the price) | style (DINOv2, the orbit against the input picture), temporal, aesthetic, splat |
 
-`soul.json`, `soul-cinema.json`, `soul-hex.json`, `dop.json`, `dop-mix.json` and `dop-mixed-media.json` are **generated** from the research. They come from
-`docs/research/higgsfield-image-studios.json` (the look ids) and
-`docs/research/fuobe-originals-recipes-5.json` (recipes, LoRAs, Soul Cinema's recipe, the motion map).
+`soul.json`, `soul-cinema.json`, `soul-hex.json`, `dop.json`, `dop-mix.json`, `dop-mixed-media.json` and `separation.json` are **generated** from the research. They come from
+`docs/research/higgsfield-image-studios.json` (the look ids),
+`docs/research/fuobe-originals-recipes-5.json` (recipes, LoRAs, Soul Cinema's recipe, the motion map) and
+`docs/research/dbs-separation-7.json` (the DBS models' licences in the separation suite).
 `soul-hex`'s palettes are Fuobe's own. Run
 `node scripts/eval/gen-cases.mjs` after the research changes, and don't edit the generated files by
 hand. `pnpm eval:validate` fails when they are out of date. The subject prompts are Fuobe's own. No
@@ -213,11 +218,16 @@ scripts/eval/local/
   marketing/product.png, person.png   # a product photo on a plain background; a full-body photo of a consenting person
   marketing/garment.png, selfie.jpg   # a garment on its own or flat-lay; a consenting person's selfie
   angles/subject.png                  # a person or a product in a scene
+  idol-views/figurine.png, character.png, person.png, product.png, mug.png, glass.png  # one object each; person.png a consenting person, full body; mug.png its handle on its own left
   evolution/walk.mp4                  # 4–30 s of someone walking, your own footage
   evolution/ref-1.png … ref-3.png     # characters, places or a style you own (never Higgsfield previews)
   turnaround/front.png, right.png     # one consenting person or a made-up character, full body on a plain background;
   turnaround/back.png, left.png       #   right and left are their own (facing them, their right side is on your left)
   turnaround/sheet.png                # a turnaround sheet of the same character
+  splat/bottle.png, sneaker.png, headphones.png      # generated product renders, one object each
+  splat/photo-mug.jpg, photo-bag.jpg, figurine.jpg   # photos of one object (the photo crop runs on these)
+  splat/character.png, person.png                    # a stylised character; a made-up person or one who agreed, full body
+  splat/chair.png, plant.png, glass-chrome.png       # thin parts; glass with chrome
 ```
 
 The `popcorn` suite needs no inputs of its own: its boards start from words. The `turnaround` suite's cases with
@@ -294,6 +304,10 @@ Other case fields:
 - `engines`: the engines the case runs on.
 - `tags`, `metrics` and `note`.
 
+A variant can also name `tags`: it runs only on the cases with one of them, and the others skip it (the splat
+suite's photo crop runs on the cases tagged `photo`). `defaults.styleModel` (`clip` or `dinov2`) is the style
+metric's embedder for the suite's runs; it is kept in `run.json`, and `--style-model` overrides it.
+
 Paths can start with:
 
 - `local/…`: your own inputs.
@@ -359,6 +373,9 @@ still has its timing and cost, and the report says why the scores are missing.
 | SyncNet (optional) | `syncnet` | higher | runs only when `FUOBE_EVAL_SYNCNET_CMD` points at your own SyncNet. It isn't bundled because its weights' licence isn't stated | yours |
 | Shot continuity | `continuity` | higher | CLIP similarity between consecutive shots of a film | CLIP |
 | Palette | `paletteFit`, `paletteCover` | lower, higher | the mean ΔE (CIE76, Lab) from each pixel to the nearest colour of the palette the request sent (`params.palette`, or the palette lock's colours), and the share of the palette's colours that are nearest for at least 3% of the pixels | none (numpy) |
+| Separation | `voiceSiSdr`, `remixSiSdr`, `musicSiSdr`, `effectsSiSdr`, `backgroundSiSdr`, `voiceSdr`, `backgroundSdr`, `mixError`, `bedLevel`, `bedPeak`, `bedScale`, `stereoCorrGap`, `noiseInVoice`, `speedX` | see each | each stem against the mix's known part (SI-SDR, and SDR where the level counts; a mono stem is scored against the reference's mono mean); voice + bed against the input (dB under it); the bed's level and peak against the known bed, and its gain against input − voice (`bedScale`: AudioMerge scales a bed that peaks over full scale down); Clean up dialogue's one file against the voice plus the known bed at the level asked (`remixSiSdr`, `bedLevel` = the bed's gain in it); the bed's left/right correlation against the known bed's; the share of a known hum or hiss left in the dialogue; times real time from ComfyUI-DBS's report (all passes), else from ComfyUI's time for the graph | none (numpy) |
+| Word error rate | `wer`, `werInput`, `werTranscript` | lower | the dialogue stem heard by Whisper against the words spoken; `werInput` is the same on the input as it is (what "Clean the voice first" changes); `werTranscript` is the job's own transcript (Qwen3-ASR in the dub's first step) | **Whisper base.en** (OpenAI, **MIT**; the card says Apache-2.0) through transformers (Apache-2.0): `pnpm eval:setup --asr` |
+| Splat haze | `haze`, `gaussians` | lower, — | reads the job's splat file (`.spz` versions 1–3, or a binary 3DGS `.ply`, by its content) and gives the share of Gaussians under opacity 0.05 and their count. A GLB (the demo's) is noted, not scored | none (numpy) |
 | Time, cost, memory | `seconds`, `costUsd`, `vramGb` | lower | from the runner | — |
 
 Identity needs `pnpm eval:setup --identity`, which installs insightface and onnxruntime (MIT
@@ -474,6 +491,55 @@ in at least 6 of the 8 cases. Then the default for all 32 effects goes back to K
 change (the `mixed-media-route` branch of `src/lib/catalog/dop.ts`), and `docs/STATUS.md` records the run.
 Anything less keeps Fuobe DoP. The metrics are shown beside the ratings but don't decide this one: the two
 models' clips differ in look by design (the still is redrawn first), so the people decide.
+
+### The separation suite: defaults with numbers
+
+The separation suite chooses the soundtrack split's defaults (doc `docs/research/dbs-separation-7.md`, §2.4 and §9 D4).
+Its test mixes are built here, so every stem is known exactly:
+
+```bash
+pnpm eval:setup --asr                                             # Whisper for the word error rate (optional)
+python3 -I scripts/eval/fixtures/make-separation.py --speech <folder> --speech-licence "<source, licence>"   # local/separation/<mix>/: mix, voice, music, effects, background, noise, meta.json
+pnpm eval:run --suite separation --engine open --variants bsrnn-mono,bsrnn-stereo,tiger-mono,tiger-stereo
+pnpm eval:run --suite separation --engine open --cases separation/centre,separation/hum,separation/video --variants bsrnn-mono,dbs-dub,melband
+pnpm eval:run --suite separation --engine open --cases separation/centre,separation/hum,separation/hiss,separation/loud-bed --variants clean-dialogue,bsrnn-mono
+pnpm eval:review latest                                           # your own clip in local/separation/real/clip.mp4, blind
+```
+
+`--speech` takes a folder of speech files with their words (`<name>.flac` and `<name>.txt`, or an `index.json`):
+Fuobe's own TTS lines are the intended source. Its licence is required (`--speech-licence`, or a `licence.txt` in the folder). The music, effects, hum and hiss are synthesized by the script from
+fixed seeds (Fuobe's own, CC0). Each mix's `meta.json` records the words, the levels and every source's licence. The
+blind review pairs the dialogue stems and the music & effects stems of two variants as separate questions, with
+players instead of pictures, both sides served as FLAC so the file type doesn't say which model made it. Clean up dialogue's
+open run gives one file; it is scored against the voice plus the known bed at the level asked (`remixSiSdr`), with the
+bed's gain in it (`bedLevel`), the noise left in it and its WER. The cloud runs Demucs (as today's cloud dub does); DBS isn't hosted, and SAM Audio
+isn't offered on the cloud engine. The suite's `decides` field holds the rule; a person changes a default, in a
+reviewed commit.
+
+### The splat suite: Splat mode's defaults
+
+The splat suite chooses three defaults in Image to 3D → Splat ([`docs/research/idol-9.md`](../../docs/research/idol-9.md),
+§9 idol-3, and its Results section): which open model comes first (TripoSplat or Idol 3D), Idol's Quick look settings,
+and whether the photo crop starts on for photos. It needs a GPU with 8–16 GB and both models' weights; the CPU ComfyUI
+can't run it.
+
+```bash
+pnpm eval:run --suite splat --engine open --variants idol-best,idol-quick,triposplat-today,idol-photo-crop --dry-run
+pnpm eval:run --suite splat --engine open --variants idol-best,idol-quick,triposplat-today,idol-photo-crop --label "<GPU>, driver <x>, ComfyUI <v>"
+pnpm eval:review latest                                           # the orbits, blind: Idol Best against each of the others
+pnpm eval:report latest                                           # the ratings per pair
+pnpm eval:compare latest:triposplat-today latest:idol-best --per-case
+pnpm eval:promote latest --against triposplat-today              # decision 1: Idol Best against TripoSplat today only
+pnpm eval:run --suite splat --engine cloud --variants triposplat-cloud   # optional: fal's TripoSplat, about $0.05 a job
+```
+
+The orbit video is what is scored and reviewed; the `.spz` stays with each job and the `splat` metric reads it. Style
+uses DINOv2 (the suite's `styleModel`), so it compares the orbit's frames with the input picture without words. The
+photo crop runs on the three cases tagged `photo`. Where ComfyUI has the ComfyUI-Idol pack, Idol runs its clean graph,
+whose saved file is pruned at opacity 0.05, so Idol's haze there is near zero by design and the number that matters is
+TripoSplat's. The cloud has no Idol run here; `triposplat-cloud` is labelled TripoSplat and gives the haze, the time and
+the price only (a `.ply` without an orbit). The suite's `decides` field holds the rules; a person changes each default
+in a reviewed commit.
 
 ## Covers: the renders become the preview media
 

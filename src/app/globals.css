@@ -248,7 +248,7 @@
   /* Home: the composer's ring brightens once when a Try chip fills it; Audio's waveform ripples on hover. */
   --animate-ring-flash: ring-flash 260ms ease-out both;
   --animate-wave-bar: wave-bar 900ms ease-in-out infinite;
-  /* Clean up voice's demo: the "Busy brasserie" dot pulses while the room plays. */
+  /* Clean up voice's demo: the "Noisy restaurant" dot pulses while the room plays. */
   --animate-live-dot: live-dot 1.1s ease-out infinite;
   /* Watermark Remover: the scan line moving down the picture, and the line across the marks being removed. */
   --animate-wm-scan: wm-scan 2.2s ease-in-out infinite;

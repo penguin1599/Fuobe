@@ -94,6 +94,7 @@ describe("Remove object: estimates", () => {
     expect(e.costUsd).toBeGreaterThanOrEqual(1.68);
     expect(e.costUsd).toBeLessThan(1.7);
     expect(e.notes.join(" ")).toMatch(/cut into 3 pieces/);
+    expect(e.notes.join(" ")).not.toMatch(/tested/i);
     expect(e.previewUsd).toBeGreaterThan(0);
     // Bria finds the object by name itself: the preview is only SAM 3.1's reading of the words.
     expect(e.previewExact).toBe(false);
@@ -149,6 +150,7 @@ describe("Remove object: estimates", () => {
     const painted = await (await estimateRoute.POST(json(body({ engine: "open", mode: "paint", mask: "/api/files/m.png", source: { url: clip, duration: 6, fps: 27 } })))).json();
     expect(painted).toMatchObject({ modelId: "oss-vace-remove-painted", pieces: 3 });
     expect(painted.notes.join(" ")).toMatch(/runs as 3 windows/);
+    expect(painted.notes.join(" ")).not.toMatch(/tested/i);
     const effects = await (await estimateRoute.POST(json(body({ engine: "open", effects: true, source: { url: clip, duration: 12, fps: 16 } })))).json();
     expect(effects.modelId).toBe("oss-void-remove");
     expect(effects.notes.join(" ")).toMatch(/VOID needs a 24–40 GB GPU/);
@@ -161,7 +163,8 @@ describe("Remove object: estimates", () => {
     expect(e).toMatchObject({ modelId: "oss-h3-person-remove", pieces: 1, costUsd: 0 });
     const notes = e.notes.join(" ");
     expect(notes).toMatch(/clean copy of the part's first frame with the person gone/);
-    expect(notes).toMatch(/H3_RELAY=1/);
+    expect(notes).toMatch(/Needs the H3 Relay nodes on your ComfyUI and 24 GB of VRAM/);
+    expect(notes).not.toMatch(/H3_RELAY|scripts\/|install-comfyui|tested/);
     expect(notes).toMatch(/People only/);
     expect(notes).not.toMatch(/licen[cs]e/i);
     expect((await (await h3({ prompt: " " })).json()).error).toMatch(/Say who to remove/);

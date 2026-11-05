@@ -46,6 +46,8 @@ export interface RunFacts {
   inputs: { image: number; video: number; audio: number };
   lane: string | null;
   providerUsd: number | null;
+  /** The other steps the run makes beside `model` (a 2K take's Open-H3 Regenerate finish), when it makes any. */
+  steps?: { model: string; op: string }[];
 }
 
 export interface QueueFacts {

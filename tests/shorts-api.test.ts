@@ -5,6 +5,9 @@ import type { Generation } from "@/lib/catalog/types";
 import { tempDir } from "./helpers/temp-dir";
 
 vi.setConfig({ testTimeout: 120_000 });
+// Regenerate is switched off for now (REGEN_OFFERED); Shorts' Enhance is checked as it runs once switched on.
+// tests/regenerate-held.test.ts checks that every way in refuses it while it is off.
+vi.mock("@/lib/catalog/regenerate", async (importOriginal) => ({ ...(await importOriginal<typeof import("@/lib/catalog/regenerate")>()), REGEN_OFFERED: true }));
 
 const dir = tempDir("fuobe-shorts-");
 process.env.FUOBE_DATA_DIR = dir;
@@ -23,6 +26,7 @@ const sessionRoute = await import("@/app/api/shorts/sessions/[id]/route");
 const regenRoute = await import("@/app/api/shorts/sessions/[id]/segments/[index]/route");
 const primaryRoute = await import("@/app/api/shorts/sessions/[id]/segments/[index]/primary/route");
 const stitchRoute = await import("@/app/api/shorts/sessions/[id]/stitch/route");
+const enhanceRoute = await import("@/app/api/shorts/sessions/[id]/segments/[index]/enhance/route");
 const estimateRoute = await import("@/app/api/shorts/estimate/route");
 const presetsRoute = await import("@/app/api/shorts/presets/route");
 const mixedRoute = await import("@/app/api/mixed-media/route");
@@ -262,6 +266,47 @@ describe("Shorts sessions", () => {
     const frame = gens.getGeneration(take.frame!)!;
     expect(frame.status).toBe("succeeded");
     expect(frame.request.inputs?.images?.[0]).toMatch(/^\/api\/files\//);
+  });
+
+  it("enhances a segment on your GPU (RIFE to 24 fps, then Regenerate at 1080p) and stitches the mix at one rate", async () => {
+    const s = await shorts.createSession(body({ engine: "open" }) as never);
+    const before = await settle(s.segments[1].primary);
+    expect(before.status).toBe("succeeded");
+    const res = await enhanceRoute.POST(json("POST", { requestId: "enhance-1" }), params({ id: s.id, index: "1" }));
+    expect(res.status).toBe(201);
+    const v = await res.json();
+    const take = v.segments[1].takes.at(-1);
+    expect(take.enhance.from).toBe(s.segments[1].primary);
+    expect(gens.getGeneration(take.enhance.smooth)).toMatchObject({ modelId: "oss-rife", op: "interpolate", request: { params: { targetFps: 24 } } });
+    const regen = gens.getGeneration(take.look)!;
+    expect(regen).toMatchObject({ modelId: "oss-h3-regenerate", op: "upscale-video", engine: "open", feature: "shorts" });
+    expect(regen.request.params).toMatchObject({ resolution: "1080p", extra: { startSigma: 0.8, draftFrom: "other" } });
+    expect(regen.request.prompt).toBe(before.request.prompt);
+    expect(dependsOn(take.look)).toEqual([take.enhance.smooth]);
+    // The same request id answers with the first take; an enhanced take isn't enhanced again.
+    const same = await (await enhanceRoute.POST(json("POST", { requestId: "enhance-1" }), params({ id: s.id, index: "1" }))).json();
+    expect(same.segments[1].takes).toHaveLength(2);
+    expect(await settle(take.look)).toMatchObject({ status: "succeeded" });
+    const picked = shorts.makePrimary(s.id, 1, take.look);
+    expect((await enhanceRoute.POST(json("POST"), params({ id: s.id, index: "1" }))).status).toBe(409);
+    // The stitch: the other segments to 24 fps, the join at 1080p, each clip in its place.
+    await settle(s.stitches[0].final);
+    const st = await (await stitchRoute.POST(json("POST"), params({ id: picked.id }))).json();
+    const ids: string[] = st.stitches.at(-1).ids;
+    const smooth = ids.map((id) => gens.getGeneration(id)!).filter((g) => g.modelId === "oss-rife");
+    expect(smooth).toHaveLength(2);
+    const join = ids.map((id) => gens.getGeneration(id)!).find((g) => g.op === "concat")!;
+    expect(join.request.params?.resolution).toBe("1080p");
+    expect(await settle(st.stitches.at(-1).final)).toMatchObject({ status: "succeeded" });
+    const joined = gens.getGeneration(join.id)!;
+    const regenUrl = gens.getGeneration(take.look)!.outputs[0].url;
+    expect(joined.request.inputs?.videos?.[1]).toBe(regenUrl);
+    // A cloud short: Enhance runs on your GPU only.
+    const cloud = await shorts.createSession(body() as never);
+    await settle(cloud.segments[0].primary);
+    const refused = await enhanceRoute.POST(json("POST"), params({ id: cloud.id, index: "0" }));
+    expect(refused.status).toBe(422);
+    expect((await refused.json()).error).toMatch(/runs on your GPU \(open source\)/);
   });
 
   it("runs Fuobe Shorts in the cloud by default: cut → first frame → Qwen edit in the look → Wan Fun VACE by depth → join → sound", async () => {

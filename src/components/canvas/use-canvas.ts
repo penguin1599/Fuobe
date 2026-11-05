@@ -128,3 +128,47 @@ export function useRunCanvas(id: string) {
     },
   });
 }
+
+// ---------------------------------------------------------------------------
+// An account's own canvases (/api/account/canvases): boards it keeps, never the owner's.
+
+/** An account's board as the editor opens it. */
+export interface AccountCanvas {
+  id: string;
+  name: string;
+  pages: CanvasPage[];
+  templateId: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** The account's own canvases; `enabled: false` (a guest, or the owner) asks for nothing. */
+export function useAccountCanvases({ enabled }: { enabled: boolean }) {
+  return useQuery({
+    queryKey: ["account-canvases"],
+    enabled,
+    queryFn: async () => (await json<{ items: CanvasSummary[] }>(await fetch("/api/account/canvases"))).items,
+  });
+}
+
+export function useAccountCanvas(id: string, { enabled }: { enabled: boolean }) {
+  return useQuery({
+    queryKey: ["account-canvases", id],
+    enabled,
+    retry: false,
+    // The editor owns the board once loaded.
+    refetchOnWindowFocus: false,
+    staleTime: Infinity,
+    queryFn: async () => json<AccountCanvas>(await fetch(`/api/account/canvases/${encodeURIComponent(id)}`)),
+  });
+}
+
+export const accountCanvasApi = {
+  create: async (body: { name: string; templateId: string | null; pages: CanvasPage[] }) => json<AccountCanvas>(await send("/api/account/canvases", "POST", body)),
+  save: async (id: string, patch: { name?: string; pages?: CanvasPage[] }, keepalive = false) =>
+    json<{ id: string; name: string; updatedAt: number }>(await send(`/api/account/canvases/${encodeURIComponent(id)}`, "PATCH", patch, { keepalive })),
+  remove: async (id: string) => {
+    const res = await fetch(`/api/account/canvases/${encodeURIComponent(id)}`, { method: "DELETE" });
+    if (!res.ok && res.status !== 404) throw responseError(res, "Couldn't delete it. Please try again.");
+  },
+};

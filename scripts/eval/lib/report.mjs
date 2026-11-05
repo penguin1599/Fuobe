@@ -125,7 +125,7 @@ export function summarize(loaded) {
           seed: x.row.seed,
           status: x.row.status,
           error: x.row.error ?? x.row.skip ?? null,
-          outputs: (x.row.outputs ?? []).filter((o) => o.kind === "image" || o.kind === "video").map((o) => ({ file: o.file, kind: o.kind })),
+          outputs: (x.row.outputs ?? []).filter((o) => o.kind === "image" || o.kind === "video" || o.kind === "audio").map((o) => ({ file: o.file, kind: o.kind, ...(o.stem && { stem: o.stem }) })),
           scores: x.scores,
           notes: [...(x.row.notes ?? []), ...(metrics?.jobs?.[x.row.id]?._notes ?? [])],
         })),
@@ -227,7 +227,11 @@ export function reportHtml(summary) {
         .map(([v, s]) => {
           const tiles = s.items
             .map((it) => {
-              const media = it.outputs[0]
+              // Audio results (a separation's stems): one player per stem, named.
+              const sounds = it.outputs.filter((o) => o.kind === "audio");
+              const media = sounds.length
+                ? `<div class="stems">${sounds.map((o, i) => `<label class="stem"><span class="muted">${esc(o.stem ?? `audio ${i + 1}`)}</span><audio src="${href(o.file)}" preload="none" controls></audio></label>`).join("")}</div>`
+                : it.outputs[0]
                 ? it.outputs[0].kind === "video"
                   ? `<video class="media" src="${href(it.outputs[0].file)}" muted loop playsinline preload="metadata" controls></video>`
                   : `<img class="media" src="${href(it.outputs[0].file)}" alt="${esc(`${c.title}, ${v}, ${it.promptId}`)}" loading="lazy">`
@@ -235,7 +239,7 @@ export function reportHtml(summary) {
               return `<figure style="margin:0">${media}<figcaption class="muted" style="font-size:12px;margin-top:4px">${esc(it.promptId)} · seed ${esc(it.seed)}${it.error ? ` · ${esc(it.error)}` : ""}</figcaption><div class="row" style="margin-top:4px">${chips(it.scores, keys)}</div></figure>`;
             })
             .join("");
-          return `<div class="card"><h3>${esc(v)}${s.recipeComplete ? "" : ' <span class="chip bad" title="Some of the recipe\'s LoRAs were left out on this engine">recipe incomplete</span>'}</h3>${s.recipe ? `<p class="muted" style="font-size:12px">${esc(s.recipe)}</p>` : ""}<div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(min(100%,140px),1fr))">${tiles}</div></div>`;
+          return `<div class="card"><h3>${esc(v)}${s.recipeComplete ? "" : ' <span class="chip bad" title="Some of the recipe\'s LoRAs were left out on this engine">recipe incomplete</span>'}</h3>${s.recipe ? `<p class="muted" style="font-size:12px">${esc(s.recipe)}</p>` : ""}<div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(min(100%,${s.items.some((it) => it.outputs.some((o) => o.kind === "audio")) ? 240 : 140}px),1fr))">${tiles}</div></div>`;
         })
         .join("");
       return `<section><h2 id="${esc(c.caseId)}">${esc(c.title)} <span class="muted" style="font-weight:400">${esc(c.caseId)}</span></h2><div class="grid">${cols}</div></section>`;

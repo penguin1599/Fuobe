@@ -139,6 +139,18 @@ describe("the probe", () => {
     expect(inv.models.loras?.folderMissing).toBe(true);
     expect(inv.models.mmaudio?.folderMissing).toBe(true);
   });
+
+  it("finds a folder a pack lists in another case from its directory (ComfyUI-RMBG's models/RMBG as \"rmbg\")", async () => {
+    const f = idx.files["RMBG/VRMBG-3.0/model.safetensors"];
+    expect(f.folder).toBe("RMBG");
+    const s = zImageReady();
+    s.folders = [...s.folders!.filter((x) => x !== "RMBG"), "rmbg"];
+    s.files = { ...s.files, rmbg: [{ name: f.file, size: f.sizeBytes }] };
+    fake = await startFakeComfy(s);
+    const inv = await gatherInventory(transport(fake.url), idx);
+    expect(inv.models.RMBG?.folderMissing).toBeUndefined();
+    expect(filePresence(f, inv)).toBe("present");
+  });
 });
 
 describe("reading a big /object_info a piece at a time", () => {

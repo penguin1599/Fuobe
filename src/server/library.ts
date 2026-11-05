@@ -21,6 +21,7 @@ import {
   type Folder,
   type ReviewFilter,
 } from "@/lib/library";
+import { fileAccount, generationAccount } from "./account-library";
 import { db } from "./db";
 import { assetUses, cancelGeneration, deleteGeneration, getGeneration, type ListOptions } from "./generations";
 import { absolutePath, deleteAsset, getAsset } from "./storage";
@@ -424,16 +425,23 @@ export const ZIP_MAX_BYTES = 4 * 1024 ** 3 - 1;
 /** Results a folder zip takes at most, its subfolders' included (the zip format counts entries in 16 bits). */
 export const FOLDER_ZIP_MAX = 5000;
 
-/** Add the finished output files of these generations under `prefix`, with readable names unique in the zip. */
-function addEntries(list: string[], prefix: string, used: Set<string>, out: ZipEntry[]): void {
+/**
+ * Add the finished output files of these generations under `prefix`, with readable names unique in the zip. With
+ * `account` (a signed-in account's zip): only its own runs, and of their files only those it may open itself
+ * (fileAccount: its own, and not held for a check). Anything else is left out, as if it didn't exist.
+ */
+function addEntries(list: string[], prefix: string, used: Set<string>, out: ZipEntry[], account?: string): void {
   for (const id of list) {
+    if (account !== undefined && generationAccount(id) !== account) continue;
     const g = getGeneration(id, { includeDeleted: true });
     if (!g || g.status !== "succeeded") continue;
     g.outputs.forEach((o, i) => {
       if (!o.url.startsWith("/api/files/")) return;
       let file: string;
       try {
-        file = absolutePath(decodeURIComponent(o.url.slice("/api/files/".length).split("?")[0]));
+        const rel = decodeURIComponent(o.url.slice("/api/files/".length).split("?")[0]);
+        if (account !== undefined && fileAccount(rel) !== account) return;
+        file = absolutePath(rel);
       } catch {
         return;
       }
@@ -447,10 +455,10 @@ function addEntries(list: string[], prefix: string, used: Set<string>, out: ZipE
   }
 }
 
-/** The finished output files of these generations, with readable, unique names. */
-export function zipEntries(list: string[]): ZipEntry[] {
+/** The finished output files of these generations, with readable, unique names (`account`: that account's own only). */
+export function zipEntries(list: string[], opts: { account?: string } = {}): ZipEntry[] {
   const out: ZipEntry[] = [];
-  addEntries(ids(list), "", new Set(), out);
+  addEntries(ids(list), "", new Set(), out, opts.account);
   return out;
 }
 

@@ -2,6 +2,7 @@ import "server-only";
 import fs from "node:fs";
 import path from "node:path";
 import { nanoid } from "nanoid";
+import { IDOL_VIEW_ORDER, idolViewMeta, wantsIdolViews } from "@/lib/av/idol-views";
 import { cueText, parseCues, type Cue } from "@/lib/cues";
 import { H3_REMOVAL_WORKFLOW } from "@/lib/catalog/character-swap";
 import { HAND_OFF, windowArtifact } from "@/lib/catalog/remove-object";
@@ -337,17 +338,29 @@ function demoOutputs(op: Operation | undefined, kind: MediaKind, prompt: string,
         { url: "sample:demo-model.glb", kind: "model3d", contentType: "model/gltf-binary", meta: { demo: true, format: "glb" } },
         { url: "sample:demo-turntable.mp4", kind: "video", contentType: "video/mp4", meta: { demo: true, turntable: true } },
       ];
-    // Round 4. A splat and a rig come back as the demo mesh (a real splat is a .ply or .spz). A scene is the
-    // mesh and its depth map on the open engine (MoGe), the depth map alone on the cloud (Marigold).
+    // Round 4. A rig comes back as the demo mesh. A scene is the mesh and its depth map on the open engine (MoGe),
+    // the depth map alone on the cloud (Marigold).
     case "scene-3d": {
       const depth = demoDepth(brief, ar, kind === "image");
       if (kind === "image") return [depth];
       return [{ url: "sample:demo-model.glb", kind: "model3d", contentType: "model/gltf-binary", meta: { demo: true, format: "glb", scene: true, role: "scene" } }, depth];
     }
+    // A splat is a real one (scripts/gen-demo-splat.mjs), so the splat viewer opens in demo mode: an .spz with its
+    // orbit video on the open engine (as the TripoSplat and Idol 3D graphs write), a .ply on the cloud (fal's).
     case "splat":
-      return [{ url: "sample:demo-model.glb", kind: "model3d", contentType: "model/gltf-binary", meta: { demo: true, format: "glb", splat: true } }];
+      // Idol 3D's four views of the object (front, left, back, right), as image-to-views-idol returns them.
+      if (meta.idolViews) return IDOL_VIEW_ORDER.map((side, index) => ({ url: svgUri(demoSvg(`${side} view`, "1:1", index)), kind: "image" as const, contentType: "image/svg+xml", meta: { ...idolViewMeta(index), role: "tiles", demo: true } }));
+      return meta.openSplat
+        ? [
+            { url: "sample:demo-splat.spz", kind: "model3d", contentType: "model/x-spz", meta: { demo: true, format: "spz", role: "splat" } },
+            { url: "sample:demo-turntable.mp4", kind: "video", contentType: "video/mp4", meta: { demo: true, turntable: true } },
+          ]
+        : [{ url: "sample:demo-splat.ply", kind: "model3d", contentType: "model/ply", meta: { demo: true, format: "ply" } }];
     case "rig-3d":
       return [{ url: "sample:demo-model.glb", kind: "model3d", contentType: "model/gltf-binary", meta: { demo: true, format: "glb", rigged: true } }];
+    // Hi3D's refine: the demo mesh, geometry only as the real one is.
+    case "refine-3d":
+      return [{ url: "sample:demo-model.glb", kind: "model3d", contentType: "model/gltf-binary", meta: { demo: true, format: "glb", refined: true, geometryOnly: true } }];
     // A retexture comes back as the demo mesh (a real one is the same model with its new textures).
     case "retexture-3d":
       return [{ url: "sample:demo-model.glb", kind: "model3d", contentType: "model/gltf-binary", meta: { demo: true, format: "glb", retextured: true } }];
@@ -470,6 +483,8 @@ export const mockProvider: ProviderAdapter = {
         format: input.format,
         clips: input.audios?.length,
         frames: route.op === "extract-frames" ? input.extra?.max_frames : undefined,
+        // Idol 3D asked for its four views of the object (src/lib/av/idol-views.ts).
+        idolViews: route.op === "splat" && wantsIdolViews(input.extra),
         // Remove background: which file the demo stands for (the cut-out or its alpha mask).
         matteOutput: route.op === "bg-remove-video" ? (input.matteOutput ?? model.options.matteOutputs?.[0] ?? "cutout") : undefined,
         // The painted eraser's second output: the window's last tracked mask (video-inpaint-wan-vace-painted), saved
@@ -481,6 +496,8 @@ export const mockProvider: ProviderAdapter = {
         master: route.provider === "comfyui" && route.endpoint === "video-character-swap-h3-segment",
         // H3 Person Removal: each window's preview and checkpoint, so "Redo from here" can be tried (H3 Relay's review).
         h3Review: route.provider === "comfyui" && route.endpoint === H3_REMOVAL_WORKFLOW,
+        // A splat on the open engine is an .spz with an orbit video; fal's is a .ply.
+        openSplat: route.op === "splat" && route.provider === "comfyui",
         // A stem split that also transcribes (ComfyUI's dub-prepare-separate-transcribe).
         transcript: route.op === "separate-audio" && route.provider === "comfyui" && route.endpoint.includes("transcribe"),
         // The Watermark Remover's picture (kept whole by prepareFile).

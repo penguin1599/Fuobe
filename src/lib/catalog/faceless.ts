@@ -2,6 +2,7 @@ import { describeMove, KEN_BURNS_FPS, sceneMoves } from "@/lib/av/ken-burns";
 import { SPLIT_MODEL } from "@/lib/av/split";
 import { COPY_JOIN_VIDEOS, lengthRange, plannedDurations } from "./clip-lengths";
 import { estimateCost } from "./plan";
+import { REGEN_FINISH_TIER, REGEN_MODEL, regenFinishSteps, sixteenFpsModel, type FinishStep } from "./regenerate";
 import { pricingAt } from "./promo";
 import type { ChainSlot, Engine, Generation, GenerationRequest, ModelDef } from "./types";
 
@@ -647,6 +648,11 @@ export interface EngineModels {
   sourceStill?: string;
   /** "Upscale to 1080p" on a finished episode (cloud: SeedVR2; open: Real-ESRGAN in passes of a few frames, so memory stays flat). */
   upscale?: string;
+  /**
+   * "Regenerate to 1080p (sharper, may redraw)": each scene redrawn by Open-H3 Regenerate before the join and the music
+   * (open engine only: nobody hosts the open refiner, so the cloud keeps its upscaler and shows no Regenerate).
+   */
+  regenerate?: string;
   write: string;
 }
 
@@ -703,6 +709,7 @@ export const ENGINE_MODELS: Record<Engine, EngineModels> = {
     captionsUseWords: true,
     sourceStill: "oss-qwen-image-21-turbo",
     upscale: "oss-upscale-video-esrgan",
+    regenerate: REGEN_MODEL,
     write: "oss-text-llm",
   },
 };
@@ -1306,6 +1313,91 @@ export function buildEpisodeGraph(input: GraphInput, lookup: ModelLookup): Graph
 
 /** The step whose output is the finished episode. */
 export const finalKey = (graph: Pick<GraphStep, "key">[]) => (graph.some((s) => s.key === "captions") ? "captions" : "mix");
+
+// ---------------------------------------------------------------------------
+// "Regenerate to 1080p" (package n7-10; docs/research/new-models-7.md §2.10)
+
+/** Keys of the regenerated film's steps (beside the episode's own). */
+export const REGEN_PREFIX = "regen-";
+
+export const FACELESS_REGEN_COPY = {
+  label: "Regenerate to 1080p",
+  hint: "Sharper, may redraw: each scene is redrawn at 1080p from its own words, then joined under the same voice and music.",
+  /** The GPU time a visitor sees (no install detail). */
+  time: (scenes: number) => `Runs on your GPU · about ${Math.max(1, Math.round(scenes * 1.5))} min`,
+  done: "Regenerated (1080p)",
+} as const;
+
+/**
+ * The regenerated film from an episode's graph: each clip (one scene, or one shot of it; never over 15 s) is redrawn by
+ * Open-H3 Regenerate at 1080p with the 576p preset and start sigma 0.8, from the scene's own words (its picture's
+ * prompt, and its motion for an animated scene); a 16 fps clip (Wan) goes through RIFE to 24 fps first. Then the clips
+ * are joined the way the episode joins them, at 1080p, and the same narration, music bed and subtitles go on top: the
+ * steps reuse the episode's narration, bed and timing (their keys stay as they are, for `existing`). `joinMax` is the
+ * episode's fold size (resolveModels).
+ */
+export function regeneratePlan(graph: GraphStep[], o: { engine: Engine; joinMax: number; lookup: ModelLookup }): { steps: FinishStep[]; final: string } {
+  const regen = ENGINE_MODELS[o.engine].regenerate;
+  if (!regen) throw new Error("Regenerate runs on your GPU (open source): switch the episode to open source to use it");
+  const byKey = new Map(graph.map((s) => [s.key, s]));
+  const steps: FinishStep[] = [];
+  const clips: string[] = [];
+  for (const c of graph.filter((s) => s.part === "clip")) {
+    const still = c.after?.length ? byKey.get(c.after[0]) : undefined;
+    const words = [still?.request.prompt, c.request.op === "i2v" ? c.request.prompt : undefined].filter((w): w is string => !!w?.trim()).join(" ");
+    const seconds = c.seconds ?? c.request.params?.duration ?? 5;
+    const plan = regenFinishSteps({
+      key: `${REGEN_PREFIX}${c.key}`,
+      clip: { key: c.key },
+      prompt: words || c.request.prompt || "",
+      seconds,
+      fps: sixteenFpsModel(c.request.modelId) ? 16 : undefined,
+      draftFrom: "other",
+      helper: { feature: c.request.feature, batchTitle: c.request.batchTitle },
+      label: c.label,
+    });
+    steps.push(...plan.steps);
+    clips.push(plan.final);
+  }
+  if (!clips.length) throw new Error("The episode has no scenes to regenerate");
+  // The joins: the episode's own join model, folded the same way, at 1080p where it takes a size.
+  const join = graph.find((s) => s.part === "join");
+  let film = clips[0];
+  if (join) {
+    const sized = o.lookup(join.request.modelId)?.options.resolutions?.includes(REGEN_FINISH_TIER);
+    const name = (k: string) => (clips.includes(k) ? k : `${REGEN_PREFIX}${k}`);
+    for (const level of foldJoins(clips, o.joinMax)) {
+      for (const j of level) {
+        steps.push({
+          key: name(j.key),
+          request: { ...join.request, params: { ...join.request.params, ...(sized && { resolution: REGEN_FINISH_TIER }) }, step: { label: j.key === "join" ? "Joining the redrawn scenes" : "Joining scenes", index: 0, of: 1 } },
+          after: j.after.map(name),
+          chain: j.after.map(() => ({ slot: "videos" as const })),
+        });
+      }
+    }
+    if (clips.length > 1) film = `${REGEN_PREFIX}join`;
+  }
+  // The same voice, bed and subtitles as the episode.
+  const mix = graph.find((s) => s.key === "mix");
+  if (!mix) throw new Error("The episode has no mix to put on the redrawn scenes");
+  const swap = (k: string) => (k === mix.after?.[0] ? film : k);
+  steps.push({ key: `${REGEN_PREFIX}mix`, request: { ...mix.request, title: undefined }, after: (mix.after ?? []).map(swap), chain: mix.chain });
+  const captions = graph.find((s) => s.key === "captions");
+  if (captions) {
+    steps.push({ key: `${REGEN_PREFIX}captions`, request: captions.request, after: (captions.after ?? []).map((k) => (k === "mix" ? `${REGEN_PREFIX}mix` : k)), chain: captions.chain });
+  }
+  const final = captions ? `${REGEN_PREFIX}captions` : `${REGEN_PREFIX}mix`;
+  const last = steps.find((s) => s.key === final)!;
+  last.request = { ...last.request, title: `${graph[0]?.request.batchTitle ?? "Episode"} · 1080p` };
+  return { steps, final };
+}
+
+/** The episode steps a regenerated film reads as they are (its clips, narration, timing and bed). */
+export function regenerateReuses(steps: FinishStep[]): string[] {
+  const own = new Set(steps.map((s) => s.key));
+  return [...new Set(steps.flatMap((s) => s.after ?? []).filter((k) => !own.has(k)))];
+}
 
 /** Keys that wait (directly or not) on any of `keys`. */
 export function descendants(graph: Pick<GraphStep, "key" | "after">[], keys: Iterable<string>): Set<string> {
@@ -2160,6 +2252,8 @@ export interface EpisodePlan {
   lastFinal?: string;
   /** "Upscale to 1080p": the upscaled copy of the finished film. */
   upscaled?: string;
+  /** "Regenerate to 1080p" (open engine): its steps by key, and the finished film's generation. */
+  regenerated?: { ids: Record<string, string>; final: string };
   changes: EpisodeChange[];
 }
 
@@ -2208,6 +2302,12 @@ export interface EpisodeView {
   upscaled: Generation | null;
   /** What "Upscale to 1080p" would cost (null: not offered on this engine). */
   upscale: { costUsd: number | null; demo: boolean } | null;
+  /** The film with every scene regenerated at 1080p, once asked for. */
+  regenerated: Generation | null;
+  /** While it renders: its steps done of all. */
+  regenerating: { done: number; of: number } | null;
+  /** "Regenerate to 1080p" on this engine (null: not offered, as on the cloud): free on your GPU. */
+  regenerate: { scenes: number; demo: boolean } | null;
 }
 
 /** One item in the Explainer's history or a channel's episode list. */

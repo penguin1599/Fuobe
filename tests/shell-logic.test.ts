@@ -239,6 +239,69 @@ describe("preview playback store", () => {
     expect(maxPlaying(1280)).toBe(MAX_PLAYING.wide);
   });
 
+  it("plays a card once half of it is in view, and stops it as soon as less than half is", () => {
+    const { env, card, intersect, advance } = fakeEnv({ width: 1440, height: 900 });
+    const store = createPlaybackStore(env);
+    const [a, b] = [card(700), card(700, 300)];
+    store.watch(a, "a");
+    store.watch(b, "b");
+    intersect([
+      [a, 0.5],
+      [b, 0.49],
+    ]);
+    advance(SCROLL_SETTLE);
+    expect(MIN_VISIBLE).toBe(0.5);
+    expect(store.playing()).toEqual(["a"]);
+    intersect([[a, 0.49]]);
+    expect(store.playing()).toEqual([]);
+  });
+
+  it("a phone's sideways row: the card in view plays, the one peeking in waits; swiped along, the next one takes over", () => {
+    const { env, card, intersect, scrolled, advance } = fakeEnv({ width: 390, height: 844 });
+    const store = createPlaybackStore(env);
+    // Home's rail on a narrow phone: cards 237 px wide from x 10, the second showing less than half of itself at the edge.
+    const row = Array.from({ length: 12 }, (_, i) => card(300, 10 + i * 237, 237, 190));
+    row.forEach((el, i) => store.watch(el, `c${i}`));
+    intersect([
+      [row[0], 1],
+      [row[1], 0.4],
+    ]);
+    advance(SCROLL_SETTLE);
+    expect(store.playing()).toEqual(["c0"]);
+    // A swipe: the first card slides out (it stops at once), the second comes in, and plays once the row is still.
+    scrolled();
+    intersect([
+      [row[0], 0.2],
+      [row[1], 1],
+      [row[2], 0.3],
+    ]);
+    expect(store.playing()).toEqual([]);
+    advance(SCROLL_SETTLE - 1);
+    expect(store.playing()).toEqual([]);
+    advance(1);
+    expect(store.playing()).toEqual(["c1"]);
+  });
+
+  it("with more cards in view than may play, the ones most in view win, then the nearest the middle", () => {
+    const { env, card, intersect, advance } = fakeEnv({ width: 390, height: 844 });
+    const store = createPlaybackStore(env);
+    // Three cards partly in view right at the middle of the screen, four in full view further out.
+    const partly = [0, 1, 2].map((i) => card(330, i * 130, 120, 180));
+    const full = [0, 1, 2, 3].map((i) => card(i < 2 ? 20 : 640, (i % 2) * 200, 180, 180));
+    partly.forEach((el, i) => store.watch(el, `p${i}`));
+    full.forEach((el, i) => store.watch(el, `f${i}`));
+    intersect([...partly.map((el) => [el, 0.7] as [Element, number]), ...full.map((el) => [el, 1] as [Element, number])]);
+    advance(SCROLL_SETTLE);
+    expect(store.playing()).toHaveLength(MAX_PLAYING.narrow);
+    expect(store.playing().every((id) => id.startsWith("f"))).toBe(true);
+  });
+
+  it("Home's studio cards (auto: \"always\") play by themselves where a pointer can hover too, as the preset cards do", () => {
+    expect(autoplays("clip", true, "always")).toBe(true);
+    expect(autoplays("clip", false, "always")).toBe(true);
+    expect(autoplays("still", true, "always")).toBe(false);
+  });
+
   it("ranks cards in full view first, then the ones already playing (so a scroll doesn't restart them), then the nearest the middle", () => {
     const c = (id: string, ratio: number, dist: number, playing = false) => ({ id, ratio, dist, playing });
     const cards = [c("partly", FULL_VIEW - 0.1, 0, true), c("near", 1, 10), c("playing", 1, 500, true), c("hidden", MIN_VISIBLE - 0.1, 0), c("far", 1, 600)];
@@ -437,7 +500,7 @@ describe("preview playback store", () => {
     expect([true, false].map((hover) => autoplays("still", hover))).toEqual([false, false]);
   });
 
-  it('with auto: "touch" (Home\'s studio cards) nothing plays by itself where a pointer can hover', () => {
+  it('with auto: "touch" (an area page\'s studio cards) nothing plays by itself where a pointer can hover', () => {
     for (const kind of ["clip", "procedural", "still"] as const) expect(autoplays(kind, true, "touch"), kind).toBe(false);
     // Where nothing can hover (a phone) it plays as any card does.
     expect((["clip", "procedural", "still"] as const).map((kind) => autoplays(kind, false, "touch"))).toEqual([true, true, false]);
@@ -644,11 +707,15 @@ describe("color grading for everyone", () => {
     expect(fs.statSync(file).size).toBeLessThan(300 * 1024);
   });
 
-  it("downloads the graded result straight from the browser, and only the owner saves it to the library", () => {
-    // Download needs no upload (guests and accounts can't change the owner's library); Save stays the owner's.
+  it("downloads the graded result straight from the browser; the owner saves it to the library, an account to its runs", () => {
+    // Download needs no upload. Save is the owner's library or an account's own runs; a guest's Save asks it to sign up.
     expect(view).toMatch(/onClick=\{\(\) => exportTo\("download"\)\}/);
     expect(view).toMatch(/if \(to === "download"\) downloadBlob\(file, file\.name\);/);
-    expect(view).toMatch(/\{owner && \(\s*<Button[^>]*onClick=\{\(\) => exportTo\("library"\)\}/);
+    expect(view).toMatch(/const canSave = !!owner \|\| account \|\| guest;/);
+    expect(view).toMatch(/\{canSave && \(\s*<Button[^>]*onClick=\{\(\) => exportTo\("library"\)\}/);
+    expect(view).toMatch(/if \(to === "library" && guest\) return askToSignUp\("upload"\);/);
+    // An account's graded file is uploaded as a result made in the browser (no GPU or key needed).
+    expect(view).toMatch(/uploadFile\(file, \{ kinetic: account \}\)/);
   });
 });
 

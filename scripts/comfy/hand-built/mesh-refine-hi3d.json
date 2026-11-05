@@ -1,0 +1,110 @@
+{
+  "1": {
+    "inputs": {
+      "model_root": "",
+      "cpu_offload": true,
+      "attention": "sdpa",
+      "keep_model_loaded": false,
+      "download_missing": false
+    },
+    "class_type": "Hi3DModelLoader",
+    "_meta": {
+      "title": "Hi3D Model Loader"
+    }
+  },
+  "2": {
+    "inputs": {
+      "image": "product.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "3": {
+    "inputs": {
+      "bg_removal_name": "birefnet.safetensors"
+    },
+    "class_type": "LoadBackgroundRemovalModel",
+    "_meta": {
+      "title": "Load Background Removal Model"
+    }
+  },
+  "4": {
+    "inputs": {
+      "bg_removal_model": [
+        "3",
+        0
+      ],
+      "image": [
+        "2",
+        0
+      ]
+    },
+    "class_type": "RemoveBackground",
+    "_meta": {
+      "title": "Remove Background"
+    }
+  },
+  "5": {
+    "inputs": {
+      "mesh_file": "coarse.glb"
+    },
+    "class_type": "Hi3DLoadMesh",
+    "_meta": {
+      "title": "Hi3D Load Mesh"
+    }
+  },
+  "6": {
+    "inputs": {
+      "resolution": 1024,
+      "steps": 25,
+      "seed": 0,
+      "model": [
+        "1",
+        0
+      ],
+      "image": [
+        "2",
+        0
+      ],
+      "mesh": [
+        "5",
+        0
+      ],
+      "mask": [
+        "8",
+        0
+      ]
+    },
+    "class_type": "Hi3DRefine",
+    "_meta": {
+      "title": "Hi3D Refine"
+    }
+  },
+  "7": {
+    "inputs": {
+      "filename_prefix": "fuobe/mesh-refine-hi3d",
+      "mesh": [
+        "6",
+        0
+      ]
+    },
+    "class_type": "SaveGLB",
+    "_meta": {
+      "title": "Save GLB"
+    }
+  },
+  "8": {
+    "inputs": {
+      "mask": [
+        "4",
+        0
+      ]
+    },
+    "class_type": "InvertMask",
+    "_meta": {
+      "title": "Invert Mask (1 = background, as Hi3D reads it)"
+    }
+  }
+}

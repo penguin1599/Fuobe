@@ -38,7 +38,7 @@ function RoleSelect({ value, onChange, label, auto }: { value: SwapRole | null; 
 export function WordsStage({ id, project, clip, gens, estimate, edit }: StageProps) {
   const transcribe = useTranscribe(id);
   // "Clean the voice first": on for the clip's speech on your GPU, off in the cloud (a paid step there).
-  const voiceFirstShown = useVoiceFirstShown();
+  const voiceFirstShown = useVoiceFirstShown(true);
   const voiceFirstLive = useVoiceFirstLive();
   const [voiceFirst, setVoiceFirst] = useState<boolean | null>(null);
   const cleanFirst = voiceFirstShown && (voiceFirst ?? (project.engine === "open" && voiceFirstDefault("video", voiceFirstLive)));

@@ -14,8 +14,9 @@
  * (`nextScene`); in the cloud fal's hosted Qwen-Image-Edit 2509 with the 2509 LoRA (sent as a URL), as fal's hosted Qwen-Image
  * 2.1 takes no LoRAs. Nano Banana Pro stays a separate choice in the cloud (`partner`), every frame on it as boards ran before.
  */
+import { LAYOUT_PARAM, type LayoutDraft } from "@/lib/layout-prompt";
 import { loraEntry, loraRef } from "./loras";
-import type { ChainSlot, Engine, GenerationRequest, LoraRef } from "./types";
+import type { ChainSlot, Engine, GenerationRequest, GenerationStatus, LoraRef } from "./types";
 
 export const MAX_FRAMES = 8;
 
@@ -182,4 +183,177 @@ export function planStoryboard(input: StoryboardPlanInput): FrameRequest[] {
       ...(input.batchTitle && { batchTitle: input.batchTitle }),
     };
   });
+}
+
+// ---------------------------------------------------------------------------
+// One sheet (research new-models-7.md §4.10): the whole board as one page on MOSS-Image, one layout box per panel with its
+// shot, then cropped into frames in the browser. Every panel is drawn in one pass, so the cast, wardrobe and light match.
+
+/** The model a one-sheet board is drawn on: MOSS-Image on your GPU, and the same model hosted on fal. */
+export const SHEET_MODELS: Record<Engine, string> = { open: "oss-moss-image", cloud: "moss-image" };
+
+/** Sheet shapes both MOSS-Image halves take (the open graph's and fal's aspect ratios). */
+export const SHEET_ASPECTS = ["1:1", "4:3", "3:4", "16:9", "9:16", "3:2", "2:3", "21:9", "5:4", "4:5"] as const;
+
+/** The gap between panels and around them, as a share of the sheet's height. */
+export const SHEET_GUTTER = 0.03;
+
+/**
+ * What a render on a GPU showed about one-sheet boards (how many panels still read as consistent frames). Until one is
+ * recorded the option is the owner's alone, said to be untested; once it is, everyone gets it up to that many panels.
+ */
+export interface SheetTest {
+  /** The day it was rendered (YYYY-MM-DD). */
+  date: string;
+  /** The card it ran on ("RTX 4090 24 GB"). */
+  gpu: string;
+  /** The most panels that still came out usable. */
+  maxPanels: number;
+}
+export const ONE_SHEET_GPU_TEST: SheetTest | null = { date: "2026-11-05", gpu: "RTX 5090 32 GB", maxPanels: 8 };
+
+/** How many panels a one-sheet board may have for this viewer: 0 hides the option. */
+export function sheetPanelLimit(owner: boolean, test: SheetTest | null = ONE_SHEET_GPU_TEST): number {
+  if (test) return Math.max(0, Math.min(MAX_FRAMES, test.maxPanels));
+  return owner ? MAX_FRAMES : 0;
+}
+
+/** Where a sheet is, in the board's header: one generation draws every panel, so it is done, failed or still coming. */
+export function sheetState(status: GenerationStatus): string {
+  if (status === "succeeded") return "done";
+  if (status === "failed") return "failed";
+  if (status === "canceled") return "cancelled";
+  return "on the way";
+}
+
+/** A box on the sheet: [x0, y0, x1, y1] as 0-1 fractions, from its top-left corner (a layout box). */
+export type SheetBox = [number, number, number, number];
+
+export interface SheetGrid {
+  cols: number;
+  rows: number;
+  /** The sheet's aspect ratio, one of {@link SHEET_ASPECTS}. */
+  aspect: string;
+  /** Each panel's box, in reading order. */
+  boxes: SheetBox[];
+}
+
+const ratio = (a: string): number => {
+  const [w, h] = a.split(":").map(Number);
+  return w > 0 && h > 0 ? w / h : 1;
+};
+const r6 = (v: number) => Math.round(v * 1e6) / 1e6;
+
+/**
+ * The grid of n panels of `panelAspect` on a sheet: the columns, rows and sheet shape that give the panels the most of the
+ * sheet (so each is drawn as large as it can be), then the fewest empty cells. Panels sit in their cells at their own shape,
+ * gutters between them; a short last row is centred.
+ */
+export function sheetGrid(n: number, panelAspect: string, aspects: readonly string[] = SHEET_ASPECTS): SheetGrid {
+  const count = Math.max(1, Math.min(MAX_FRAMES, Math.floor(n)));
+  const a = ratio(panelAspect);
+  const g = SHEET_GUTTER;
+  let best: { cols: number; rows: number; aspect: string; pw: number; ph: number; s: number; score: number; empty: number } | undefined;
+  for (let cols = 1; cols <= count; cols++) {
+    const rows = Math.ceil(count / cols);
+    for (const aspect of aspects) {
+      const s = ratio(aspect);
+      // A sheet s wide and 1 high: each cell after the gutters, the panel at its shape inside it.
+      const cw = (s - g * (cols + 1)) / cols;
+      const ch = (1 - g * (rows + 1)) / rows;
+      if (cw <= 0 || ch <= 0) continue;
+      const pw = Math.min(cw, ch * a);
+      const ph = pw / a;
+      const score = r6((count * pw * ph) / s);
+      const empty = cols * rows - count;
+      if (!best || score > best.score || (score === best.score && empty < best.empty)) best = { cols, rows, aspect, pw, ph, s, score, empty };
+    }
+  }
+  const { cols, rows, aspect, pw, ph, s } = best!;
+  const cw = (s - g * (cols + 1)) / cols;
+  const ch = (1 - g * (rows + 1)) / rows;
+  const boxes: SheetBox[] = [];
+  for (let i = 0; i < count; i++) {
+    const row = Math.floor(i / cols);
+    const inRow = row === rows - 1 ? count - row * cols : cols;
+    const col = i % cols;
+    // A short last row moves right by half the cells it leaves empty.
+    const shift = ((cols - inRow) * (cw + g)) / 2;
+    const x0 = g + col * (cw + g) + (cw - pw) / 2 + shift;
+    const y0 = g + row * (ch + g) + (ch - ph) / 2;
+    boxes.push([r6(x0 / s), r6(y0), r6((x0 + pw) / s), r6(y0 + ph)]);
+  }
+  return { cols, rows, aspect, boxes };
+}
+
+/** A panel's crop of the sheet as it came out: [x, y, w, h] in whole pixels, inside the box (no gutter), on the image. */
+export function sheetCrop(box: SheetBox, width: number, height: number): [number, number, number, number] {
+  const x0 = Math.max(0, Math.ceil(r6(box[0] * width)));
+  const y0 = Math.max(0, Math.ceil(r6(box[1] * height)));
+  const x1 = Math.min(width, Math.floor(r6(box[2] * width)));
+  const y1 = Math.min(height, Math.floor(r6(box[3] * height)));
+  return [x0, y0, Math.max(1, x1 - x0), Math.max(1, y1 - y0)];
+}
+
+/** Every panel's crop of the sheet. */
+export const sheetCrops = (boxes: SheetBox[], width: number, height: number) => boxes.map((b) => sheetCrop(b, width, height));
+
+/**
+ * A panel shown from the sheet without cutting it out (a tile's background): the image scaled so the panel fills the tile,
+ * and moved so the panel is in view, as CSS background-size and background-position percentages.
+ */
+export function sheetPanelStyle(box: SheetBox): { backgroundSize: string; backgroundPosition: string } {
+  const w = box[2] - box[0];
+  const h = box[3] - box[1];
+  const pos = (start: number, span: number) => (span >= 1 ? 0 : r6((start / (1 - span)) * 100));
+  return { backgroundSize: `${r6(100 / w)}% ${r6(100 / h)}%`, backgroundPosition: `${pos(box[0], w)}% ${pos(box[1], h)}%` };
+}
+
+/** What a one-sheet board keeps on its one picture (request.frame.sheet): the panels, their shots and boxes. */
+export interface SheetFrames {
+  cols: number;
+  rows: number;
+  /** The shape of each panel ("16:9"). */
+  aspect: string;
+  panels: { scene: string; box: SheetBox }[];
+}
+
+const SHEET_META = ["storyboard", "film stills", "multi-panel sheet"];
+
+/** The sheet's whole-picture caption: one film, the same cast and light, gutters between panels. */
+export function sheetCaption(n: number, grid: Pick<SheetGrid, "cols" | "rows">, style?: string): string {
+  const look = style?.trim() ? ` Style: ${style.trim().replace(/[.\s]+$/, "")}.` : "";
+  return `A storyboard sheet of ${n} cinematic panels in a ${grid.cols} by ${grid.rows} grid, read left to right and top to bottom: consecutive shots of one film with the same characters, faces, wardrobe, props, location and lighting in every panel. Plain white gutters between the panels, no captions, numbers or borders drawn.${look}`;
+}
+
+/**
+ * A one-sheet board's single request: MOSS-Image with a multi-panel layout (one object box per panel with its shot), the
+ * sheet shaped so the panels are as large as they can be. The layout goes as params.extra.layout, which the plan compiles
+ * at the size the model renders and keeps from being rewritten; the panels go in request.frame.sheet for the crop.
+ */
+export function planOneSheet(input: Omit<StoryboardPlanInput, "partner" | "nextScene" | "look">, test: SheetTest | null = ONE_SHEET_GPU_TEST): FrameRequest {
+  // The most panels a sheet may have: the owner's whole board until a GPU render is recorded, then what that render showed.
+  const limit = sheetPanelLimit(true, test);
+  if (!limit) throw new Error("One sheet isn't available yet: make the board frame by frame");
+  const scenes = input.scenes.map((s) => s.trim()).filter(Boolean).slice(0, MAX_FRAMES);
+  if (scenes.length > limit) throw new Error(`A one-sheet board has at most ${limit} panels: remove some scenes, or make it frame by frame`);
+  if (!scenes.length) throw new Error("Describe the story or write at least one scene");
+  if (input.references?.length) throw new Error("A one-sheet board is drawn from your words alone: remove the references, or make it frame by frame");
+  const panelAspect = input.aspectRatio && input.aspectRatio !== "auto" ? input.aspectRatio : "16:9";
+  const grid = sheetGrid(scenes.length, panelAspect);
+  const caption = sheetCaption(scenes.length, grid, input.style);
+  const draft: LayoutDraft = {
+    summary: { caption, meta: SHEET_META, canvas: "multi_panel" },
+    items: scenes.map((scene, i) => ({ label: "object", caption: `Panel ${i + 1}, ${scene.replace(/[.\s]+$/, "")}.`, box: grid.boxes[i] })),
+    aspect: grid.aspect,
+  };
+  const sheet: SheetFrames = { cols: grid.cols, rows: grid.rows, aspect: panelAspect, panels: scenes.map((scene, i) => ({ scene, box: grid.boxes[i] })) };
+  return {
+    feature: "storyboard",
+    modelId: SHEET_MODELS[input.engine],
+    prompt: caption,
+    params: { aspectRatio: grid.aspect, ...(input.resolution && { resolution: input.resolution }), numOutputs: 1, extra: { [LAYOUT_PARAM]: draft } },
+    frame: { scene: scenes[0], index: 0, of: 1, sheet },
+    ...(input.batchTitle && { batchTitle: input.batchTitle }),
+  };
 }

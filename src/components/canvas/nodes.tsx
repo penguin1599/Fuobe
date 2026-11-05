@@ -132,7 +132,7 @@ import { KineticNodeBody } from "./kinetic-node";
 import { ExactOrbitControls } from "@/components/exact-orbit-controls";
 import { PATH_PRESETS } from "@/lib/camera-path";
 import { exactDefaults } from "@/lib/exact-orbit";
-import { NodeIcon, PORT_COLOR, useEditorActions, useEditorGlobals, useEditorSelector, useNodeResults, useNodeView, type EditorSnapshot, type NodeResults } from "./canvas-context";
+import { EXAMPLE_FEATURE, NodeIcon, PORT_COLOR, useEditorActions, useEditorGlobals, useEditorSelector, useNodeResults, useNodeView, type EditorSnapshot, type NodeResults } from "./canvas-context";
 
 /** A node on the board: a graph node, or a group, comment pin or drawing (./board.tsx). */
 export type FlowNode = Node<CanvasNodeData, CanvasNodeType | BoardType>;
@@ -796,23 +796,27 @@ const GeneratorNode = memo(function GeneratorNode({ id, type: flowType, data, se
   const [addWords, setAddWords] = useState(false);
   const showPrompt = !!promptPort && (!v.counts.prompt || !!data.prompt || addWords);
   const step = v.step;
+  // A ready board's last step on a visitor's board shows the board's published example until it is changed.
+  const example = !!g.visitor && r.outputs[0]?.g.feature === EXAMPLE_FEATURE;
   const stateHint = data.pinned
     ? "Pinned"
     : running
       ? "Running"
       : step === "changed"
         ? "Changed"
-        : r.state === "failed"
-          ? "Failed"
-          : r.state === "canceled"
-            ? "Canceled"
-            : step === "upstream"
-              ? "Inputs changed"
-              : step
-                ? "Not run yet"
-                : v.reused
-                  ? "Up to date"
-                  : "";
+        : example
+          ? "Example"
+          : r.state === "failed"
+            ? "Failed"
+            : r.state === "canceled"
+              ? "Canceled"
+              : step === "upstream"
+                ? "Inputs changed"
+                : step
+                  ? "Not run yet"
+                  : v.reused
+                    ? "Up to date"
+                    : "";
 
   return (
     <NodeShell
@@ -839,7 +843,7 @@ const GeneratorNode = memo(function GeneratorNode({ id, type: flowType, data, se
       footer={
         <div className="flex h-10 items-center gap-2 border-t px-3">
           <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground">
-            {[stateHint, step || r.state === "idle" ? costLabel(g.isDemo, model, v.costUsd) : ""].filter(Boolean).join(" · ")}
+            {[stateHint, !g.visitor && (step || r.state === "idle") ? costLabel(g.isDemo, model, v.costUsd) : ""].filter(Boolean).join(" · ")}
           </span>
           {!g.readOnly && (
             <Tooltip>

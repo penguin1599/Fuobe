@@ -1,0 +1,238 @@
+{
+  "2": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+      "weight_dtype": "default"
+    },
+    "_meta": {
+      "title": "H3 FL2VA (pruned int8)"
+    }
+  },
+  "6": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+      "type": "minimax",
+      "device": "default"
+    },
+    "_meta": {
+      "title": "Qwen3-VL 32B (H3 text encoder)"
+    }
+  },
+  "7": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "minimax_h3_video_vae_fp16.safetensors"
+    },
+    "_meta": {
+      "title": "H3 video VAE"
+    }
+  },
+  "8": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "minimax_h3_audio_vae_fp32.safetensors"
+    },
+    "_meta": {
+      "title": "H3 audio VAE"
+    }
+  },
+  "9": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "lora_name": "minimax_h3_fl2v_turbo_4step_v1.2_768p_comfyui_bf16.safetensors",
+      "strength_model": 1,
+      "model": [
+        "2",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "LightX2V Turbo 4-step v1.2 (768p)"
+    }
+  },
+  "10": {
+    "class_type": "MiniMaxH3ImageToVideo",
+    "inputs": {
+      "prompt": "",
+      "width": 1344,
+      "height": 768,
+      "length": 124,
+      "clip": [
+        "6",
+        0
+      ],
+      "vae": [
+        "7",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "H3 768p draft conditioning"
+    }
+  },
+  "11": {
+    "class_type": "RandomNoise",
+    "inputs": {
+      "noise_seed": 42
+    },
+    "_meta": {
+      "title": "Seed"
+    }
+  },
+  "12": {
+    "class_type": "KSamplerSelect",
+    "inputs": {
+      "sampler_name": "er_sde"
+    },
+    "_meta": {
+      "title": "er_sde"
+    }
+  },
+  "13": {
+    "class_type": "BasicScheduler",
+    "inputs": {
+      "scheduler": "simple",
+      "steps": 6,
+      "denoise": 1,
+      "model": [
+        "9",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "Scheduler (simple, 6 steps)"
+    }
+  },
+  "14": {
+    "class_type": "BasicGuider",
+    "inputs": {
+      "model": [
+        "9",
+        0
+      ],
+      "conditioning": [
+        "10",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "Basic Guider (CFG 1)"
+    }
+  },
+  "15": {
+    "class_type": "SamplerCustomAdvanced",
+    "inputs": {
+      "noise": [
+        "11",
+        0
+      ],
+      "guider": [
+        "14",
+        0
+      ],
+      "sampler": [
+        "12",
+        0
+      ],
+      "sigmas": [
+        "13",
+        0
+      ],
+      "latent_image": [
+        "10",
+        1
+      ]
+    },
+    "_meta": {
+      "title": "768p draft"
+    }
+  },
+  "16": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "20",
+        0
+      ],
+      "vae": [
+        "7",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "Decode video"
+    }
+  },
+  "17": {
+    "class_type": "VAEDecodeAudio",
+    "inputs": {
+      "samples": [
+        "15",
+        0
+      ],
+      "vae": [
+        "8",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "Decode audio"
+    }
+  },
+  "18": {
+    "class_type": "CreateVideo",
+    "inputs": {
+      "fps": 24,
+      "bit_depth": "auto",
+      "color_space": "sRGB",
+      "codec": "none",
+      "images": [
+        "16",
+        0
+      ],
+      "audio": [
+        "17",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "Create Video"
+    }
+  },
+  "19": {
+    "class_type": "SaveVideo",
+    "inputs": {
+      "filename_prefix": "fuobe/video-h3-t2v-2k",
+      "format": "auto",
+      "format.codec": "auto",
+      "codec": "auto",
+      "video": [
+        "18",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "Save Video"
+    }
+  },
+  "20": {
+    "class_type": "OpenH3SaveRefinedLatent",
+    "inputs": {
+      "frame_count": 0,
+      "filename_prefix": "fuobe_h3_draft",
+      "samples": [
+        "15",
+        0
+      ],
+      "audio": [
+        "17",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "Save the 768p latent (Finish in 2K decodes from it)"
+    }
+  }
+}

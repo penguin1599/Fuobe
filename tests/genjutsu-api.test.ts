@@ -141,6 +141,13 @@ describe("Genjutsu: estimates", () => {
     expect(e.notes.join(" ")).toMatch(/Qwen-Image 2.1 first puts your character into the part's first frame/);
   });
 
+  it("a clip run as windows says how it is joined, with no test status in the notes", async () => {
+    const e = await (await estimateRoute.POST(json(body({ engine: "open", mode: "swap", subject: "the skateboard", source: { url: clip, ...src } })))).json();
+    const said = e.notes.join(" ");
+    expect(said).toMatch(/runs as 3 windows, joined with the clip's own sound/);
+    expect(said).not.toMatch(/tested|validat|install-comfyui|scripts\//i);
+  });
+
   describe("key mixes: a run is all real or all a demo, so a missing key is said before anything is paid for", () => {
     const say = async (b: Record<string, unknown>, route: { POST: (r: Request) => Promise<Response> } = estimateRoute) => {
       const res = await route.POST(json(b));
@@ -260,10 +267,10 @@ describe("Character swap helpers: Describe my character and the clip's words", (
     await new Promise((r) => server.close(r));
   });
 
-  it("describes the character from their picture with the engine's text model (Ollama sees the picture)", async () => {
-    const res = await describeRoute.POST(json({ engine: "open", image: hero }));
+  it("describes the character from their picture with the site's text model on the cloud engine (Ollama sees the picture)", async () => {
+    const res = await describeRoute.POST(json({ engine: "cloud", image: hero }));
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ description: "A tall knight in silver armour with a red cape" });
+    expect(await res.json()).toEqual({ description: "a tall knight in silver armour with a red cape" });
     expect(seen.images).toHaveLength(1);
     expect(seen.system).toMatch(/who they are and what they wear/);
   });
@@ -272,11 +279,21 @@ describe("Character swap helpers: Describe my character and the clip's words", (
     setSetting("demoMode", "on");
     expect(await (await describeRoute.POST(json({ engine: "cloud", image: hero }))).json()).toMatchObject({ error: expect.stringMatching(/needs a text model/) });
     setSetting("demoMode", "auto");
-    changeAccess([{ kind: "model", id: "oss-text-llm", on: false }]);
-    expect(await (await describeRoute.POST(json({ engine: "open", image: hero }))).json()).toMatchObject({ error: expect.stringMatching(/text model is switched off/) });
+    changeAccess([{ kind: "model", id: "text-llm", on: false }]);
+    expect(await (await describeRoute.POST(json({ engine: "cloud", image: hero }))).json()).toMatchObject({ error: expect.stringMatching(/text model is switched off/) });
     changeAccess([{ kind: "reset" }]);
+    expect((await describeRoute.POST(json({ engine: "cloud", image: clip }))).status).toBe(422);
     expect((await describeRoute.POST(json({ engine: "open", image: clip }))).status).toBe(422);
     expect((await describeRoute.POST(json({ engine: "open", image: "https://example.com/x.png" }))).status).toBe(400);
+  });
+
+  it("on the open engine the GPU describer writes it; with no GPU to run it, it says so instead of a made-up answer", async () => {
+    const res = await describeRoute.POST(json({ engine: "open", image: hero }));
+    expect(res.status).toBe(422);
+    expect(await res.json()).toMatchObject({ error: expect.stringMatching(/needs your GPU/) });
+    changeAccess([{ kind: "model", id: "oss-character-describe", on: false }]);
+    expect(await (await describeRoute.POST(json({ engine: "open", image: hero }))).json()).toMatchObject({ error: expect.stringMatching(/switched off/) });
+    changeAccess([{ kind: "reset" }]);
   });
 
   it("transcribes the clip once, as a Genjutsu step, on the engine's transcriber (timed lines for any part)", async () => {

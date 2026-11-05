@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -10,10 +9,12 @@ import { getTemplate } from "@/lib/catalog/canvas";
 import { FORBIDDEN_WORDS } from "@/lib/examples/catalog";
 import { HUB_MODES } from "@/lib/hubs";
 import { studioCount } from "@/lib/nav-model";
-import { HOME_BENTO_MEDIA, HOME_BENTO_WAVE } from "@/lib/home-bento.generated";
+import { HOME_BENTO_MEDIA } from "@/lib/home-bento.generated";
 import { contentVersion } from "../scripts/eval/lib/covers.mjs";
+import { WIPES, lineAt } from "../scripts/gen-home-bento.mjs";
 import sharp from "sharp";
 import type { BentoPicture } from "@/lib/home-bento";
+import { DEMO_MEDIA, DEMO_START, demoReducer } from "@/lib/av/clean-voice-demo";
 import { coverWidth, pickWidth } from "@/lib/media-pick";
 import { mp4Seconds, mp4Size } from "./helpers/mp4-length";
 
@@ -30,10 +31,11 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
-const { BENTO_BOARD, BENTO_CLIPS, BENTO_CLIP_WIDTHS, BENTO_GENJUTSU, BENTO_GENJUTSU_WIDTHS, BENTO_HREFS, BENTO_IMAGE_EXAMPLE, BENTO_REEL, BENTO_REEL_ID, GENJUTSU_ORIGINAL, livePhrases, openModelsOf } =
+const { BENTO_BOARD, BENTO_CLIPS, BENTO_CLIP_WIDTHS, BENTO_GENJUTSU, BENTO_GENJUTSU_WIDTHS, BENTO_HREFS, BENTO_IMAGE_EXAMPLE, BENTO_REEL, BENTO_REEL_ID, BENTO_VOICE, livePhrases, openModelsOf } =
   await import("@/lib/home-bento");
 const { HOME_BEFORE_AFTER, HOME_EFFECTS, HOME_MOTIONS, HOME_REVEALS, HOME_STUDIOS, homeShowcase, navLabel } = await import("@/lib/home-showcase");
 const { HomeBento } = await import("@/components/home/home-bento");
+const { voiceButton } = await import("@/components/home/bento-voice");
 
 const root = process.cwd();
 const file = (url: string) => path.join(root, "public", url.split("?")[0]);
@@ -85,24 +87,56 @@ describe("Home's first screen", () => {
     }
   });
 
-  it("plays Genjutsu's group swap in the widths its render covers, cut as it is (no crossfade), beside the original", () => {
+  it("shows Genjutsu's swaps as they happen: a divider sweeps each swapped take in over the original, in step", () => {
     const g = bento.genjutsu;
     expect(g.id).toBe(BENTO_GENJUTSU.id);
     // Its own id in the playback store: the studio's card lower down may play the same cover.
     expect(g.id).not.toBe(BENTO_GENJUTSU.cover);
-    expect(g.clips.map((c) => c.w)).toEqual([...BENTO_GENJUTSU_WIDTHS]);
-    for (const c of g.clips) {
-      expect(c.src).toMatch(new RegExp(`^/previews/home/genjutsu-${c.w}\\.mp4\\?v=[0-9a-f]{8}$`));
-      expect(mp4Size(file(c.src))).toEqual({ w: c.w, h: (c.w * 3) / 4 });
-      // Five seconds of the take (120 frames at 24 fps), looped as it is.
-      expect(mp4Seconds(file(c.src))).toBeCloseTo(5, 1);
+    // The couple's group swap first (the studio's own example), then the character swap by the lake.
+    expect(g.reel.map((c) => c.id)).toEqual(["genjutsu-couple", "genjutsu-lakeside"]);
+    expect(g.wipes).toHaveLength(g.reel.length);
+    for (const [i, c] of g.reel.entries()) {
+      expect(c.clips.map((x) => x.w)).toEqual([...BENTO_GENJUTSU_WIDTHS]);
+      for (const x of c.clips) {
+        expect(x.src).toMatch(new RegExp(`^/previews/home/${c.id}-${x.w}\\.mp4\\?v=[0-9a-f]{8}$`));
+        expect(mp4Size(file(x.src))).toEqual({ w: x.w, h: (x.w * 3) / 4 });
+        // The whole take (124 frames at 24 fps), then its last frame held a third of a second as it fades to dark.
+        expect(mp4Seconds(file(x.src))).toBeCloseTo(132 / 24, 1);
+      }
+      // It rests on its dark last frame before the next one fades in: two faces are never laid over each other.
+      expect(c.hold).toBeGreaterThan(0);
+      // The tile's stylesheet frames it (the same framing as its still).
+      expect(c.position).toBeUndefined();
+      const w = g.wipes[i];
+      expect(w.labels).toEqual(["Original", "Swapped"]);
+      expect(w.fps).toBe(24);
+      expect(w.line).toHaveLength(132);
+      expect(w.fadeFrom).toBe(124);
+      // The divider starts off the frame (the original whole, as the poster shows it), sweeps one way only, and ends off
+      // it (the swap whole); on every frame where the script drew it.
+      expect(w.line[0]).toBeLessThan(0);
+      expect(w.line.at(-1)).toBeGreaterThan(1);
+      for (let f = 1; f < w.line.length; f++) expect(w.line[f]).toBeGreaterThanOrEqual(w.line[f - 1]);
+      const made = WIPES.find((m) => m.name === c.id)!;
+      for (let f = 0; f < w.line.length; f++) expect(w.line[f]).toBeCloseTo(lineAt(made.sweep, Math.min(f, made.frames - 1)), 4);
     }
-    expect(g.poster.avif.map((a) => a.w)).toEqual([...BENTO_GENJUTSU_WIDTHS]);
-    for (const a of g.poster.avif) expect(a.src).toMatch(new RegExp(`^/previews/home/genjutsu-${a.w}\\.avif\\?v=`));
-    expect(g.poster.fallback).toMatch(/^\/previews\/home\/genjutsu-1024\.jpg\?v=/);
-    // The window: the original clip's first frame, the example's own published input.
-    expect(g.original.fallback.split("?")[0]).toBe(GENJUTSU_ORIGINAL);
+    // The couple's divider rests half way, between the two (one swapped, one not): the reduced-motion still is a frame of it.
+    const still = WIPES[0].still!;
+    expect(g.wipes[0].line[still]).toBe(0.5);
+    for (const [pic, name] of [
+      [g.poster, "genjutsu-couple"],
+      [g.still, "genjutsu-couple-split"],
+    ] as const) {
+      expect(pic.avif.map((a) => a.w)).toEqual([...BENTO_GENJUTSU_WIDTHS]);
+      for (const a of pic.avif) expect(a.src).toMatch(new RegExp(`^/previews/home/${name}-${a.w}\\.avif\\?v=`));
+      expect(pic.fallback).toMatch(/^\/previews\/home\/genjutsu-couple-1024\.jpg\?v=/);
+    }
+    // The words either side of the divider, in the HTML from the first paint; the still under reduced motion.
     expect(html).toContain(">Original<");
+    expect(html).toContain(">Swapped<");
+    expect(html).toContain('<source media="(prefers-reduced-motion: reduce)" type="image/avif" srcSet="/previews/home/genjutsu-couple-split-640.avif?v=');
+    // No small window beside it any more: the swap fills the tile.
+    expect(html).not.toContain("hb-original");
     expect(bento.tiles.genjutsu.href).toBe("/genjutsu");
   });
 
@@ -132,7 +166,7 @@ describe("Home's first screen", () => {
   });
 
   it("lists every picture at its real width", async () => {
-    const pictures: BentoPicture[] = [bento.video.poster, bento.threeD.poster, bento.image, bento.genjutsu.poster, bento.genjutsu.original, ...bento.live.frames];
+    const pictures: BentoPicture[] = [bento.video.poster, bento.threeD.poster, bento.image, bento.genjutsu.poster, bento.genjutsu.still, bento.voice.room, bento.voice.quiet, ...bento.live.frames];
     for (const p of pictures)
       for (const a of p.avif) {
         const m = await sharp(file(a.src)).metadata();
@@ -165,15 +199,23 @@ describe("Home's first screen", () => {
     }
     // The live tile, the next biggest, covers a 3x phone (358 px wide) and its tile on a 2x 1440 screen (405 px under cover).
     for (const f of bento.live.frames) expect(Math.max(...f.avif.map((a) => a.w))).toBeGreaterThanOrEqual(Math.max(358 * 3, 405 * 2));
-    // Genjutsu's clip is its render's own 1024 px, never made up past that: a 2x laptop's tile (376 px) gets it.
-    expect(pickWidth(bento.genjutsu.clips, 376 * 2).w).toBe(1024);
-    // The original's window (at most 132 px) is covered on a 3x screen.
-    expect(Math.max(...bento.genjutsu.original.avif.map((a) => a.w))).toBeGreaterThanOrEqual(132 * 3);
+    // Genjutsu's clips are never made up past their renders' own 1024 px: its tile on a 1x 1440 screen (319 x 308, so
+    // 411 px under cover) gets 640, a box that needs 700 px 768, and a 2x laptop and a 3x phone 1024.
+    for (const c of bento.genjutsu.reel) {
+      expect(pickWidth(c.clips, coverWidth(319, 308, 4 / 3, 1)).w).toBe(640);
+      expect(pickWidth(c.clips, 700).w).toBe(768);
+      expect(pickWidth(c.clips, coverWidth(319, 308, 4 / 3, 2)).w).toBe(1024);
+      expect(pickWidth(c.clips, 358 * 3).w).toBe(1024);
+    }
   });
 
   it("opens a real page from every tile, named by the navigation or the catalog", () => {
     const route = (href: string) => {
       const seg = href.split(/[?#]/)[0].replace(/^\//, "");
+      const [hub, mode] = seg.split("/");
+      // A hub's mode on its own page (/audio/clean): the hub's [mode] page, for a mode it has.
+      if (mode && hub in HUB_MODES)
+        return HUB_MODES[hub as keyof typeof HUB_MODES].some((m) => m.id === mode) && fs.existsSync(path.join(root, "src", "app", "(studio)", hub, "[mode]", "page.tsx"));
       return fs.existsSync(path.join(root, "src", "app", "(studio)", seg, "page.tsx"));
     };
     for (const href of [BENTO_HREFS.video, BENTO_HREFS.image, BENTO_HREFS.audio, BENTO_HREFS.threeD, BENTO_HREFS.genjutsu, BENTO_HREFS.live, BENTO_HREFS.canvas])
@@ -186,7 +228,9 @@ describe("Home's first screen", () => {
     const t = bento.tiles;
     expect(t.video.cta).toBe(`Open ${navLabel("/cinema")}`);
     expect(t.image.cta).toBe(`Open ${navLabel("/image")}`);
-    expect(t.audio.cta).toBe(`Open ${navLabel("/audio")}`);
+    // The Audio tile plays Clean up voice's demo, and opens that mode's own page.
+    expect(BENTO_HREFS.audio).toBe("/audio/clean");
+    expect(t.audio.cta).toBe(`Open ${HUB_MODES.audio.find((m) => m.id === "clean")!.label}`);
     expect(t.threeD.cta).toBe(`Open ${navLabel("/image-to-3d")}`);
     expect(t.live.cta).toBe(`Open ${navLabel("/live-edit")}`);
     expect(t.canvas.cta).toBe(`Open ${navLabel("/canvas")}`);
@@ -196,8 +240,13 @@ describe("Home's first screen", () => {
   it("makes every tile one link with a name, in the grid's reading order", () => {
     const links = [...html.matchAll(/<a [^>]*>/g)].map((m) => m[0]);
     const tiles = links.filter((a) => a.includes("data-tile="));
-    expect(tiles.map((a) => /data-tile="([^"]+)"/.exec(a)![1])).toEqual(["video", "live", "image", "threeD", "genjutsu", "audio", "numbers", "canvas"]);
-    for (const a of tiles) {
+    // Every tile is its link but the Audio tile, which holds the demo's buttons: its words are its link.
+    expect([...html.matchAll(/<(?:a|div) [^>]*data-tile="([^"]+)"/g)].map((m) => m[1])).toEqual(["video", "live", "genjutsu", "image", "threeD", "audio", "numbers", "canvas"]);
+    expect(tiles.map((a) => /data-tile="([^"]+)"/.exec(a)![1])).toEqual(["video", "live", "genjutsu", "image", "threeD", "numbers", "canvas"]);
+    const audioLink = links.find((a) => a.includes(`href="${BENTO_HREFS.audio}"`));
+    expect(audioLink).toBeTruthy();
+    expect(links).toHaveLength(8);
+    for (const a of [...tiles, audioLink!]) {
       const label = /aria-label="([^"]+)"/.exec(a)?.[1];
       expect(label, a).toBeTruthy();
       expect(label!.length).toBeGreaterThan(10);
@@ -210,8 +259,8 @@ describe("Home's first screen", () => {
     // The numbers tile opens the studios list in place, and says so.
     expect(bento.tiles.numbers.label).toBe(`${bento.numbers[0].value} studios, ${bento.numbers[1].value} apps, ${bento.numbers[2].value} effects and camera moves. Opens all studios`);
     expect(tiles.find((a) => a.includes('data-tile="numbers"'))).toContain('aria-haspopup="dialog"');
-    // No link or button inside a tile: the whole tile is the one target.
-    for (const chunk of html.split("data-tile=").slice(1)) expect(chunk.split("</a>")[0]).not.toMatch(/<(a|button)\b/);
+    // No link or button inside a tile: the whole tile is the one target (the Audio tile is a group of its own).
+    for (const chunk of html.split("data-tile=").slice(1).filter((c) => !c.startsWith('"audio"'))) expect(chunk.split("</a>")[0]).not.toMatch(/<(a|button)\b/);
     // The page's only h1: the headline, in its own words; "finished film," and "one place." never break apart.
     expect(html.match(/<h1\b/g)).toHaveLength(1);
     const h1 = /<h1\b[^>]*>([\s\S]*?)<\/h1>/.exec(html)![1].replace(/<[^>]+>/g, "");
@@ -279,20 +328,51 @@ describe("Home's first screen", () => {
     expect(home).not.toHaveProperty("wall");
   });
 
-  it("draws the Audio tile from the sample's own loudness", () => {
-    expect(bento.wave.bars).toHaveLength(48);
-    for (const b of bento.wave.bars) {
-      expect(b).toBeGreaterThanOrEqual(0.12);
-      expect(b).toBeLessThanOrEqual(1);
+  it("plays Clean up voice's demo in the Audio tile: tap to listen, Noise on / Noise off, and its words open the studio", () => {
+    const tile = /<div [^>]*data-tile="audio"[\s\S]*?<\/a>/.exec(html)![0];
+    // A named group: the demo's buttons, then the link to the studio, named as every tile's link is.
+    expect(tile).toMatch(/^<div role="group" aria-label="Clean up voice: a woman talking in a noisy restaurant"/);
+    expect(tile).toContain('data-phase="idle"');
+    const buttons = [...tile.matchAll(/<button\b[^>]*>([\s\S]*?)<\/button>/g)].map((m) => [m[0], m[1].replace(/<[^>]+>/g, "")] as const);
+    expect(buttons.map(([, text]) => text)).toEqual(["Noise on", "Noise off", "Tap to listen"]);
+    expect(buttons.every(([b]) => b.includes('type="button"'))).toBe(true);
+    // Noise on is pressed before anything plays; the chip says what is heard, in a live region.
+    expect(buttons[0][0]).toContain('aria-pressed="true"');
+    expect(buttons[1][0]).toContain('aria-pressed="false"');
+    expect(tile).toMatch(/<span [^>]*aria-live="polite"[^>]*>[\s\S]*?<span data-demo-state="true">Noisy restaurant<\/span>/);
+    expect(tile).toContain(`href="${BENTO_HREFS.audio}"`);
+    expect(tile).toContain(`aria-label="${bento.tiles.audio.label}"`);
+    expect(bento.tiles.audio.label).toBe("Audio: Studio-clean voice. Open Clean up voice");
+    // Nothing plays or downloads before a tap: no sound in the HTML, and the softened photo only once reached for.
+    for (const f of [DEMO_MEDIA.noisy, DEMO_MEDIA.clean]) expect(html).not.toContain(f);
+    expect(html).not.toMatch(/<audio\b/);
+    expect(tile).toContain(`/previews/home/${BENTO_VOICE.room}-480.avif?v=`);
+    expect(tile).not.toContain(`/previews/home/${BENTO_VOICE.quiet}-`);
+    // Its photos: the demo's own, in three widths, and a JPEG for a browser without AVIF.
+    for (const [pic, name] of [
+      [bento.voice.room, BENTO_VOICE.room],
+      [bento.voice.quiet, BENTO_VOICE.quiet],
+    ] as const) {
+      expect(pic.avif.map((a) => a.w)).toEqual([...BENTO_VOICE.widths]);
+      for (const a of pic.avif) expect(a.src).toMatch(new RegExp(`^/previews/home/${name}-${a.w}\\.avif\\?v=`));
+      expect(pic.fallback).toMatch(new RegExp(`^/previews/home/${name}-1024\\.jpg\\?v=`));
     }
-    expect(Math.max(...bento.wave.bars)).toBe(1);
-    // Made from the sample as it is now: a new sample needs node scripts/gen-home-bento.mjs again.
-    expect(contentVersion([file(HOME_BENTO_WAVE.src)])).toBe(HOME_BENTO_WAVE.source);
-    const ffmpeg = spawnSync("ffmpeg", ["-v", "error", "-i", file(HOME_BENTO_WAVE.src), "-ac", "1", "-ar", "8000", "-f", "s16le", "-"], { maxBuffer: 64 << 20 });
-    if (ffmpeg.status === 0) {
-      const samples = new Int16Array(ffmpeg.stdout.buffer, ffmpeg.stdout.byteOffset, Math.floor(ffmpeg.stdout.length / 2));
-      expect(samples.length / 8000).toBeCloseTo(HOME_BENTO_WAVE.seconds, 1);
-    }
+    // A 3x phone's full row (358 px) gets the widest copy; a 2x laptop's tile (320 px wide) the 768.
+    expect(pickWidth(bento.voice.room.avif, 358 * 3).w).toBe(1024);
+    expect(pickWidth(bento.voice.room.avif, coverWidth(319, 148, 4 / 3, 2)).w).toBe(768);
+  });
+
+  it("names the Audio tile's play button for each moment of the demo", () => {
+    const tap = { type: "tap" } as const;
+    const loading = demoReducer(DEMO_START, tap);
+    const playing = demoReducer(loading, { type: "started" });
+    const paused = demoReducer(playing, tap);
+    const done = demoReducer(playing, { type: "ended" });
+    const failed = demoReducer(loading, { type: "failed" });
+    expect([DEMO_START, loading, playing, paused, done, failed].map((st) => voiceButton(st).label)).toEqual(["Tap to listen", "Loading…", "Pause", "Resume", "Play again", "Try again"]);
+    // Only loading shows the spinner.
+    expect(voiceButton(loading).spin).toBe(true);
+    expect([DEMO_START, playing, paused].some((st) => voiceButton(st).spin)).toBe(false);
   });
 
   it("types the Live edit session's own words before the pictures they made", () => {

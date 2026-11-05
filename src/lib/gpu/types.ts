@@ -4,6 +4,8 @@
  * (readiness, badges, fix plans). Shared by the server and the browser: no server-only imports.
  */
 
+import type { GpuNeed } from "./rtx";
+
 /** A model file as `folder/file` (the file's base name, never a subfolder). */
 export type FileKey = `${string}/${string}`;
 
@@ -69,6 +71,8 @@ export interface IndexFile {
   gated: boolean;
   /** The pack that registers this file's folder. */
   packFolder?: string;
+  /** The name ComfyUI lists the folder under when its pack registers it as another (kandinsky6: audio_vae → kandinsky6_audio_vae). */
+  listFolder?: string;
   presence: Presence;
   /** [class_type, input] of the loader nodes that pick this file (presence "loader"). */
   loaders?: [cls: string, input: string][];
@@ -89,6 +93,8 @@ export interface IndexWorkflow {
   firstRun: string[];
   /** On a graph a real ComfyUI accepted. */
   validated?: true;
+  /** The card its nodes need (the NVIDIA RTX Video nodes): checked against the GPU's name. */
+  gpu?: GpuNeed;
 }
 
 // ---------------------------------------------------------------------------
@@ -226,8 +232,10 @@ export interface ToolReadiness {
   unobservable: string[];
   /** The same tool on the cloud engine (never offered to accounts). */
   cloud?: { modelId: string };
-  /** Why it is unsupported (isolated workflows on an account's GPU). */
+  /** Why it is unsupported (isolated workflows on an account's GPU, a card that isn't an NVIDIA RTX one). */
   reason?: string;
+  /** Unsupported because the card isn't the one its nodes need (an NVIDIA RTX card). */
+  gpuNeed?: GpuNeed;
 }
 
 export interface InventorySummary {
@@ -330,6 +338,10 @@ export interface FixPlan {
   alternatives: { cloud?: { modelId: string }; fits?: { ref: ToolRef; name: string; state: Readiness }[] };
   /** The viewer's GPU, for the copy ("Your RTX 4070 has 12 GB"). */
   gpu?: string;
+  /** Why it can't run on this ComfyUI (state "unsupported"). */
+  reason?: string;
+  /** Unsupported because it needs an NVIDIA RTX card this one isn't. */
+  gpuNeed?: GpuNeed;
   /** ComfyUI's OS ("nt", "posix"): which command tab comes first. */
   os?: string;
 }

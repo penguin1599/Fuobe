@@ -2,7 +2,7 @@
 
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { useGenerationEvents } from "@/lib/api";
+import { COMPUTER_KICK_EVENT, useGenerationEvents } from "@/lib/api";
 import type { DubPrice, DubSessionView, OneShotModel, VoiceSplit } from "@/lib/av/dub";
 import type { Cue } from "@/lib/cues";
 import type { Engine, Generation } from "@/lib/catalog/types";
@@ -13,6 +13,12 @@ async function json<T>(res: Response): Promise<T> {
   if (!res.ok) throw responseError(res, body.error ?? "Something went wrong. Please try again.");
   return body;
 }
+
+/**
+ * A dub's steps started: the tab that runs this person's jobs on the ComfyUI on this computer (an account's "Your GPU")
+ * asks for them at once, as after a studio run.
+ */
+const kick = () => window.dispatchEvent(new Event(COMPUTER_KICK_EVENT));
 
 const active = (gs: Generation[]) => gs.some((g) => g.status === "queued" || g.status === "running");
 
@@ -87,6 +93,7 @@ export function useDubActions() {
   const create = useMutation({
     mutationFn: async (body: NewDub) => json<DubSessionView>(await fetch("/api/dub", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })),
     onSuccess: (s) => {
+      kick();
       put(s);
       void qc.invalidateQueries({ queryKey: ["generations"] });
     },
@@ -105,6 +112,7 @@ export function useDubActions() {
     mutationFn: async ({ id, lang, cues, lipsync }: { id: string; lang: string; cues?: Cue[]; lipsync?: boolean }) =>
       json<DubSessionView>(await fetch(`/api/dub/${id}/voice`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ lang, cues, lipsync }) })),
     onSuccess: (s) => {
+      kick();
       put(s);
       void qc.invalidateQueries({ queryKey: ["generations"] });
     },

@@ -8,6 +8,7 @@ import "server-only";
 import { getPreset } from "@/lib/catalog";
 import { HOME_EFFECTS, HOME_MOTIONS, HOME_REVEALS, HOME_WALL, homeCard, presetHref } from "@/lib/home-showcase";
 import { PRESET_BEFORE_AFTER } from "@/lib/preset-before-after.generated";
+import { STUDIO_COVERS, isStudioCover } from "@/lib/studio-covers";
 import type { PresetType } from "@/lib/catalog/types";
 import type { PresetCardData } from "@/lib/preset-cards";
 
@@ -39,7 +40,8 @@ const SEE = "See what it makes";
  * Each studio's row: the line above it, and its tiles in the order they show (four; Mixed Media's "How it works" has
  * one). A tile's line is its own here, else EXAMPLE_LINES', else Home's (HOME_CAPTION_MAX.card holds any of them whole
  * on a phone's tile). Video's tiles pick their move in the studio itself; Image's, Edit's and Upscale's are apps, each on a page
- * of its own, and their heading says so. Ads Studio and Ad Multiplier share the "ads" row.
+ * of its own, and their heading says so. A tile can also be a studio's own cover (studio-covers.ts), which opens its
+ * studio: Genjutsu's group swap. Ads Studio and Ad Multiplier share the "ads" row.
  */
 export const STUDIO_EXAMPLES: Record<ExampleStudio, { heading: string; tiles: { id: string; caption?: string }[] }> = {
   image: {
@@ -74,7 +76,7 @@ export const STUDIO_EXAMPLES: Record<ExampleStudio, { heading: string; tiles: { 
   "video-tools": { heading: SEE, tiles: [{ id: "app-remove-background" }, { id: "app-object-remover" }, { id: "app-relight" }, { id: "app-match-colors" }] },
   audio: { heading: SEE, tiles: [{ id: "app-clean-up-voice" }, { id: "app-talking-photo" }, { id: "app-rap-god" }, { id: "app-asmr-classic" }] },
   layers: { heading: SEE, tiles: [{ id: "app-text-edit" }, { id: "app-relight" }, { id: "app-object-remover" }, { id: "app-change-background" }] },
-  genjutsu: { heading: SEE, tiles: [{ id: "app-recast" }, { id: "app-character-swap" }, { id: "app-video-face-swap" }, { id: "effect-turning-metal" }] },
+  genjutsu: { heading: SEE, tiles: [{ id: "app-recast" }, { id: "app-character-swap" }, { id: "app-video-face-swap" }, { id: "genjutsu-group-swap" }] },
   "character-swap": { heading: SEE, tiles: [{ id: "app-character-swap" }, { id: "app-recast" }, { id: "app-face-swap" }, { id: "app-video-face-swap" }] },
   "image-to-3d": { heading: SEE, tiles: [{ id: "app-image-to-3d" }, { id: "app-3d-rotation" }, { id: "app-product-360" }, { id: "app-3d-figure" }] },
   katana: { heading: SEE, tiles: [{ id: "app-clipcut" }, { id: "app-urban-cuts" }, { id: "app-sticker-match-cut" }, { id: "effect-jump-transition" }] },
@@ -83,7 +85,7 @@ export const STUDIO_EXAMPLES: Record<ExampleStudio, { heading: string; tiles: { 
   "mixed-media": { heading: "See a look play out", tiles: [{ id: "effect-paper" }] },
 };
 
-/** What each cover shows, for the presets Home has no line for (one line per preset, whichever studio shows it). */
+/** What each cover shows, for the presets and studio covers Home has no line for (one line each, whichever studio shows it). */
 export const EXAMPLE_LINES: Record<string, string> = {
   "app-recast": "A new dancer takes the stage",
   "app-video-face-swap": "A new face in the back seat",
@@ -112,7 +114,6 @@ export const EXAMPLE_LINES: Record<string, string> = {
   "app-remove-background": "Cut out clean, every curl kept",
   "app-relight": "Grey skies to golden hour",
   "app-character-swap": "He steps into her place by the lake",
-  "effect-turning-metal": "His skin turns to liquid chrome",
   "app-face-swap": "A new face, same suit and light",
   "app-image-to-3d": "A teapot photo, now a 3D model",
   "app-3d-rotation": "A black gown turns full circle",
@@ -127,8 +128,9 @@ export const EXAMPLE_LINES: Record<string, string> = {
   "app-billboard-ad": "A perfume ad over the skyline",
   "app-giant-product": "A lipstick towers over the city",
   "app-packshot": "A handbag, cut out on clean white",
-  "app-clean-up-voice": "A noisy brasserie, a clear voice",
+  "app-clean-up-voice": "A noisy restaurant, a clear voice",
   "effect-paper": "Whale and sea, redrawn in cut paper",
+  "genjutsu-group-swap": "Two people swapped in one take",
 };
 
 /** A tile of the studio's row: its cover, what kind of preset it is, its line, and where it opens. */
@@ -154,10 +156,15 @@ const KIND: Record<PresetType, string> = { app: "App", motion: "Camera motion", 
 const BEFORE_AFTER = "App · before → after";
 
 export function exampleKind(id: string): string {
-  const type = getPreset(id)!.type;
+  const type = getPreset(id)?.type;
+  // A studio's own cover (no preset has its id) names its studio.
+  if (!type) return isStudioCover(id) ? STUDIO_COVERS[id].category : KIND.app;
   if (type !== "app") return KIND[type];
   return homeKinds.get(id) ?? (PRESET_BEFORE_AFTER[id] ? BEFORE_AFTER : KIND.app);
 }
+
+/** Where a tile opens: a studio's cover its studio, a preset its own page (presetHref). */
+const exampleHref = (id: string) => (isStudioCover(id) ? STUDIO_COVERS[id].href : presetHref(id));
 
 /** The studio's row, as cards (each resting on its peak frame, as on Home). */
 export function studioExamples(studio: ExampleStudio): StudioExampleRow {
@@ -165,11 +172,11 @@ export function studioExamples(studio: ExampleStudio): StudioExampleRow {
   return {
     heading,
     tiles: tiles.map(({ id, caption }) => {
-      // homeCard throws for an id the catalog doesn't have, so the build fails rather than the page.
+      // homeCard throws for an id that is neither in the catalog nor a studio's cover, so the build fails rather than the page.
       const card = homeCard(id);
       const line = caption ?? EXAMPLE_LINES[id] ?? homeCaptions.get(id);
       if (!line) throw new Error(`The ${studio} studio's example ${id} has no line`);
-      return { card, kind: exampleKind(id), caption: line, href: presetHref(id) };
+      return { card, kind: exampleKind(id), caption: line, href: exampleHref(id) };
     }),
   };
 }

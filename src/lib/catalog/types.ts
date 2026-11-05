@@ -9,6 +9,7 @@
  */
 import type { CameraKey } from "@/lib/camera-path";
 import type { SignatureRecord } from "./palettes";
+import type { RunTrouble } from "@/lib/diagnose";
 
 export type Engine = "cloud" | "open";
 
@@ -41,6 +42,7 @@ export type Operation =
   | "grade" // colour grade, rendered in the browser
   | "relight" // the Relight tool's blend of a photo and its relit picture, rendered in the browser
   | "motion" // motion graphics, rendered in the browser
+  | "mix" // stems → one track at the levels set in the browser (Split soundtrack's Export mix)
   | "reframe" // video → same video at a new aspect ratio (AI-filled edges)
   | "finalize" // draft video → full-quality render of the same take
   | "dialogue" // several speakers → one audio track
@@ -81,6 +83,7 @@ export type Operation =
   | "splat" // image → a Gaussian splat of the subject (meta.format "ply" | "spz")
   | "text-to-3d" // prompt → 3D model
   | "rig-3d" // 3D model (+ params.animation) → rigged / animated model
+  | "refine-3d" // 3D model + the photo it was made from (+ params.extra.meshResolution) → the same model with finer geometry (Hi3D)
   | "extract-frames" // video → an image every params.frameInterval frames (meta.index)
   | "images-to-video" // images in order → a video at params.fps
   | "overlay" // image + a second image (logo) → composited (params.position, params.scale)
@@ -107,10 +110,14 @@ export type Operation =
   // Hosted tools: insert a moment, retexture
   | "insert-moment" // video + params.startTime / params.endTime (+ prompt, reference images and clips, params.duration: the new scene's length) → the clip with a new scene between them
   | "retexture-3d" // 3D model (inputs.model3d) + prompt or a style image → the same model with new textures
+  // Edit speech
+  | "speech-edit" // audio or video (its soundtrack) + params.extra.speechWindows (src/lib/speech-edit.ts) → the recording with those parts changed (AuK)
   // A song's cloud tools (Mureka). The song is inputs.audio, or one of Mureka's own (params.extra.songId)
   | "song-extend" // song + lyrics for the new part (+ params.startTime: where it begins; params.extra.extend_type tail | head) → the song, longer
   | "song-remix" // song + a style (prompt) + the whole song's lyrics → a new arrangement of it
-  | "song-stems"; // song → its vocal and instrument tracks (meta.stem), one file each
+  | "song-stems" // song → its vocal and instrument tracks (meta.stem), one file each
+  // Worlds (Hy-Nomas)
+  | "world-turn"; // params.extra.world (src/lib/world.ts: the opening and the turns) + params.extra.turn → that turn's clip of the world (Hy-Nomas)
 
 export const OPERATION_LABELS: Record<Operation, string> = {
   t2i: "Text to image",
@@ -138,11 +145,13 @@ export const OPERATION_LABELS: Record<Operation, string> = {
   grade: "Color grade",
   relight: "Relight",
   motion: "Motion graphics",
+  mix: "Mix",
   reframe: "Reframe",
   finalize: "Final render",
   dialogue: "Dialogue",
   "voice-change": "Voice change",
   "voice-design": "Design a voice",
+  "speech-edit": "Edit speech",
   dub: "Translate & dub",
   "bg-remove-video": "Video background removal",
   "depth-video": "Video depth map",
@@ -178,6 +187,7 @@ export const OPERATION_LABELS: Record<Operation, string> = {
   splat: "Gaussian splat",
   "text-to-3d": "Text to 3D",
   "rig-3d": "Rig 3D model",
+  "refine-3d": "Refine 3D model",
   "extract-frames": "Extract frames",
   "images-to-video": "Images to video",
   overlay: "Overlay image",
@@ -199,6 +209,7 @@ export const OPERATION_LABELS: Record<Operation, string> = {
   "song-extend": "Extend a song",
   "song-remix": "Remix a song",
   "song-stems": "Song stems",
+  "world-turn": "World turn",
 };
 
 export const OPERATION_OUTPUT: Record<Operation, MediaKind> = {
@@ -227,11 +238,13 @@ export const OPERATION_OUTPUT: Record<Operation, MediaKind> = {
   grade: "image",
   relight: "image",
   motion: "video",
+  mix: "audio",
   reframe: "video",
   finalize: "video",
   dialogue: "audio",
   "voice-change": "audio",
   "voice-design": "audio",
+  "speech-edit": "audio",
   dub: "video",
   "bg-remove-video": "video",
   "depth-video": "video",
@@ -268,6 +281,7 @@ export const OPERATION_OUTPUT: Record<Operation, MediaKind> = {
   splat: "model3d",
   "text-to-3d": "model3d",
   "rig-3d": "model3d",
+  "refine-3d": "model3d",
   "extract-frames": "image",
   "images-to-video": "video",
   overlay: "image",
@@ -289,6 +303,7 @@ export const OPERATION_OUTPUT: Record<Operation, MediaKind> = {
   "song-extend": "audio",
   "song-remix": "audio",
   "song-stems": "audio",
+  "world-turn": "video",
 };
 
 /**
@@ -297,10 +312,13 @@ export const OPERATION_OUTPUT: Record<Operation, MediaKind> = {
  * The open engine's HDR is also written as 10-bit H.264 in BT.2020 with the HLG or PQ (HDR10) curve
  * (core ComfyUI has no H.265 encoder).
  */
-export type VideoFormat = "h264" | "h265_10bit" | "prores_422_hq" | "prores_4444" | "ffv1" | "exr" | "hlg_10bit" | "pq_10bit";
+export type VideoFormat = "h264" | "h265_10bit" | "prores_422_hq" | "prores_4444" | "ffv1" | "exr" | "hlg_10bit" | "pq_10bit" | "webm_alpha";
 
-/** What Remove background makes: the subject on a transparent background, or its black-and-white alpha mask. */
-export type MatteOutput = "cutout" | "matte";
+/**
+ * What Remove background makes: the subject on a transparent background, or its black-and-white alpha mask. A green-screen
+ * key also makes the clean foreground: the subject's colours with the green spill taken out, for a compositor to use with the mask.
+ */
+export type MatteOutput = "cutout" | "matte" | "foreground";
 
 /** Depth map colour maps, in Higgsfield's order (grayscale first: every depth model draws it). */
 export const COLORMAPS = ["grayscale", "turbo", "inferno", "magma", "viridis"] as const;
@@ -321,7 +339,8 @@ export interface FocusPoint {
 }
 
 /** "llm" runs text steps (translate, write) on the configured LLM (Claude or a local model) inside the server. */
-export type ProviderId = "fal" | "replicate" | "openai" | "google" | "comfyui" | "mock" | "local" | "llm";
+/** "worldcast" is the WorldCast worker on the owner's GPU, outside ComfyUI (build plan N7-9; docs/workers/worldcast.md). */
+export type ProviderId = "fal" | "replicate" | "openai" | "google" | "comfyui" | "mock" | "local" | "llm" | "worldcast";
 
 /** Duration encodings differ between APIs ("5" vs 5 vs "5s"). */
 export interface DurationField {
@@ -594,7 +613,8 @@ export interface FieldMap {
   /**
    * An upscaler that takes a factor, not a size (Topaz, FLUX Upscale): params.resolution ("1080p", "4K",
    * "Original" = 1) becomes target ÷ the clip's shorter edge (GenInput.sourceSize), kept within min–max.
-   * Nothing is sent when the clip's size is unknown (the API's default factor applies).
+   * Nothing is sent when the clip's size is unknown (the API's default factor applies). A factor tier ("2x", "2.25x",
+   * "4x": Kandinsky VSR) is sent as that factor.
    */
   upscaleFactor?: { key: string; min?: number; max?: number };
 }
@@ -612,6 +632,12 @@ export interface ModelRoute {
   preview?: Pick<FieldMap, "upscaleFactor" | "numFrames" | "size">;
   /** Optional note shown in the UI (e.g. "uses Lightx2v 4-step LoRA"). */
   note?: string;
+  /**
+   * The route runs only when a setting has this value (params.extra[param], after a control's `sets`): Kandinsky 6.0 on fal
+   * is one model in Fuobe whose Quality picks Pro's or Lite's endpoint. Routes without `when` always qualify; a run whose
+   * setting is unset takes the first route (routesFor).
+   */
+  when?: { param: string; value: string };
   /**
    * Same model with LoRA support (fal's `/lora` variants): the run switches to it when it carries LoRAs
    * (a trained identity, a preset's look or motion). `map.loras` says how they go in its payload.
@@ -663,6 +689,12 @@ export interface ModelOptions {
   inbetween?: true;
   aspectRatios?: string[];
   resolutions?: string[];
+  /**
+   * Tiers a finishing pass reaches after the model's own render, offered only where the brief puts them (the Video
+   * studio and Cinema, through studioResolutions): MiniMax H3's 2K on your GPU is a 768p draft redrawn by Open-H3
+   * Regenerate. Tier pickers elsewhere (Faceless, Canvas, Assist, Ad Multiplier) keep to `resolutions`.
+   */
+  finishTiers?: string[];
   durations?: number[];
   /** Max outputs per request the model supports natively. */
   maxOutputs?: number;
@@ -745,10 +777,22 @@ export interface ModelOptions {
    * "minimax-h3" = MiniMax H3's layout: an alignment line for the start (and end) frame, then integrated_multimodal_description,
    * overall_soundscape and non_diegetic_music. The server wraps the words in it (src/lib/h3-prompt.ts) and keeps the result
    * as the run's prompt; words already in the layout pass through.
+   * "kandinsky6" = Kandinsky 6.0's tags: words in quotes become spoken lines (<S>…<E>) and a "Sound:" line the sound caption
+   * (<AUDCAP>…<ENDAUDCAP>), on both engines (src/lib/kandinsky-prompt.ts); the run keeps the words as typed.
    * "qma" = the QMA camera-angles LoRA's "<qma> {azimuth} {elevation} {distance}": the plan writes it from the run's pose
    * (params.extra horizontal_angle / vertical_angle / zoom, src/lib/qma.ts), the words after it.
    */
-  promptFormat?: "ideogram4" | "minimax-h3" | "qma";
+  promptFormat?: "ideogram4" | "minimax-h3" | "kandinsky6" | "qma";
+  /**
+   * The longest clip it takes, in seconds (Kandinsky VSR: 121 frames at 24 fps on both engines): a longer one is refused
+   * before it runs, never cut short.
+   */
+  maxSourceSeconds?: number;
+  /**
+   * Factors that need the clip's sides in multiples of a number (fal's Kandinsky VSR: 16 at 2x and 4x; the open pack pads
+   * the clip itself): such a clip is refused before it runs, with the factor that takes it.
+   */
+  sideMultiple?: { of: number; factors: string[] };
   /**
    * LoRAs the model's recipe always loads (Fuobe Try-On's try-on LoRA): every run carries them before the user's own
    * (an API's LoRA cap leaves out the user's first), their trigger words leading the prompt. A ComfyUI graph that loads
@@ -783,6 +827,13 @@ export interface ModelOptions {
   matteOutputs?: MatteOutput[];
   /** Remove background keeps only what you name (SAM): words, or points clicked on the first frame, are needed. */
   keepsNamed?: boolean;
+  /**
+   * A keyer for footage shot on a green screen (CorridorKey 2.0, Bria green screen): listed in Video tools → Green
+   * screen, kept out of Remove background's list.
+   */
+  greenScreen?: boolean;
+  /** A cut-out that takes optional words about what to keep or drop (Bria's guided cut-out): the cut-out tools show a box for them. */
+  guided?: boolean;
   /**
    * Frame rates it can reach (params.targetFps): FPS Boost's 24–120, an upscaler's 24 / 30 / 60. Without a
    * default target (`defaults.targetFps`) the clip's own frame rate is the first choice ("Original").
@@ -836,6 +887,19 @@ export interface Pricing {
   videoMegapixel?: { usd: number; withLoras?: number };
   /** Per-megapixel prices billed on whole megapixels (fal's Qwen-Image 2512); per-minute prices on started minutes (ElevenLabs Music v2.5). */
   roundUp?: true;
+  /**
+   * Billed per clip by the steps it takes, on the variant a setting picks (fal's Kandinsky 6.0, a 5 s 480p clip: Pro $0.24 at
+   * 8 steps, $0.56 at 20, $1.35 at 50; Lite $0.08 at 4, $0.16 at 10, $0.24 at 16). `prices[variant][op]` maps the step counts fal
+   * publishes to a clip's price (linear between them); the variant is params.extra[variantKey], the steps params.extra[stepsKey],
+   * each from the controls' `sets` when the run leaves them out. Replaces `usd` (the default's price) for a clip.
+   */
+  steps?: { variantKey: string; stepsKey: string; prices: Record<string, Partial<Record<Operation, Record<string, number>>>> };
+  /**
+   * Billed per megapixel of every frame made (fal's Kandinsky VSR: $0.00036 per output megapixel per frame): the clip's
+   * size (params.sourceSize) times the factor asked (params.resolution "2x" / "2.25x" / "4x"), its frames at `fps` up to
+   * `maxFrames` (params.sourceDuration). A clip whose size isn't known yet is priced as `assume` (480p, 16:9).
+   */
+  outputFrames?: { usd: number; fps: number; maxFrames: number; assume: { width: number; height: number } };
   /** The price per request when the run brings its own lyrics (params.extra.lyrics): Mureka bills a song from lyrics less than one it writes. */
   withLyrics?: number;
   /** What sending the song first costs when it isn't one of the provider's own (params.extra.songId): Mureka's files/upload, $0.01. */
@@ -934,6 +998,8 @@ export interface ModelDef {
 
 /** User-facing generation parameters (canonical, provider-agnostic). */
 export interface GenParams {
+  /** The input clip's size, when the caller knows it (Upscale's header read): what an upscale billed per output frame costs. */
+  sourceSize?: { width: number; height: number };
   aspectRatio?: string;
   resolution?: string;
   duration?: number;
@@ -1143,7 +1209,7 @@ export interface GenerationRequest {
     videos?: string[];
     /** Reference audio clips (reference-to-video: voices, music or sound the clip should follow). */
     audios?: string[];
-    /** A 3D model file (.glb) to work on (rig-3d). */
+    /** A 3D model file (.glb) to work on (rig-3d, refine-3d). */
     model3d?: string;
   };
   params?: GenParams;
@@ -1184,7 +1250,15 @@ export interface GenerationRequest {
    * A storyboard frame. `look`: the board's Fuobe Soul look, whose grade and overlay every frame gets after it is made
    * (as meta, like a Soul picture); `crop`: a look board asked for 21:9 is made at 16:9 and cropped after.
    */
-  frame?: { scene: string; index: number; of: number; look?: string; crop?: "21:9" };
+  frame?: {
+    scene: string;
+    index: number;
+    of: number;
+    look?: string;
+    crop?: "21:9";
+    /** A one-sheet board (src/lib/catalog/storyboard.ts planOneSheet): every panel on this one picture, cropped in the browser. */
+    sheet?: { cols: number; rows: number; aspect: string; panels: { scene: string; box: [number, number, number, number] }[] };
+  };
   /** Part of a multi-step job (a shot of a multi-shot film, a step of an extend): shown on its tile. */
   step?: { label: string; index: number; of: number };
   /**
@@ -1192,6 +1266,11 @@ export interface GenerationRequest {
    * (src/server/chains.ts createMosaicRun), so it doesn't start another.
    */
   postMade?: boolean;
+  /**
+   * Server-set: the take this run finishes in 2K (MiniMax H3's 2K tier, or "Finish in 2K" on a take; package n7-10), so a
+   * take that has a 2K finish under way or made isn't offered another (src/server/cinema.ts finishTake).
+   */
+  finishOf?: string;
   /** Server-set: what the user calls this result, shown instead of the prompt (Library, feeds). */
   title?: string;
   /** Server-set: the name of the batch it belongs to (an Assist plan's summary): the Library stack's title. */
@@ -1380,6 +1459,11 @@ export interface Generation {
    * "Fix it", which opens the GPU pre-flight's guided fix.
    */
   fix?: GenerationFix | null;
+  /**
+   * An account's failed run on its own GPU or key: why (the cause), a details line for the curious, and the buttons that
+   * help (Start your pod, Check my GPU, Replace key…; src/lib/diagnose.ts). The plain sentence is `error`.
+   */
+  trouble?: RunTrouble;
   /** Failed or stopped before its paid provider took the job (no external id): the card says "Not billed", not its price. */
   notBilled?: true;
   /** Ran on this install's GPUs (hosted runs), not the account's own. */

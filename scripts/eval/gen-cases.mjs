@@ -6,6 +6,7 @@
 //   cases/dop.json   one case per DoP motion / effect that the research gives a LoRA, a camera pose or a camera LoRA
 //   cases/dop-mix.json  Fuobe DoP's Mix: a move and an effect on one run, against the move alone
 //   cases/dop-mixed-media.json  DoP's Mixed Media effects in the cloud, blind: Fuobe DoP against Kling 2.5 Turbo
+//   cases/separation.json  soundtrack separation (DBS D4): DBS-TIGER vs DBS-BSRNN, mono vs each channel, DBS vs MelBand for the dub, Demucs
 //   cases/case.schema.json  the suite format as JSON Schema (for editors)
 // The prompts are Fuobe's own (never Higgsfield's). Run: node scripts/eval/gen-cases.mjs [--check]
 import fs from "node:fs";
@@ -451,6 +452,86 @@ function dopMixedMediaSuite() {
   };
 }
 
+/**
+ * The separation suite's test mixes (scripts/eval/fixtures/make-separation.py writes them, with their known stems, into
+ * local/separation/<id>/): what each one checks. "real" is your own clip, for the blind A/B page only.
+ */
+const SEPARATION_MIXES = [
+  { id: "centre", title: "Dialogue in the centre over music and effects", checks: "the reference mix: every stem against its known part" },
+  { id: "off-centre", title: "Dialogue panned left over the same music and effects", checks: "the fast stereo bed (mono speech subtracted from each channel) leaves part of off-centre speech in the bed" },
+  { id: "hum", title: "Dialogue with a steady 50 Hz mains hum", checks: "where steady hum goes (noiseInVoice: the share left in the dialogue)" },
+  { id: "hiss", title: "Dialogue with steady tape hiss", checks: "where steady hiss goes" },
+  { id: "loud", title: "A loud master that peaks at −0.1 dBFS", checks: "a loud master whose peaks are the dialogue's: the bed stays well under full scale (bedLevel, bedPeak)" },
+  { id: "loud-bed", title: "A loud master whose music and effects reach full scale", checks: "AudioMerge scales a bed that peaks over full scale down as a whole (bedScale, bedLevel, bedPeak; the known bed's own peak is in meta.json)" },
+  { id: "video", title: "The centre mix inside a video (H.264 + AAC)", checks: "a video source: the soundtrack read straight from the clip", video: true },
+];
+
+/** The DBS weights' licence from the research (information, recorded with the suite). */
+function dbsLicences() {
+  const doc = JSON.parse(fs.readFileSync(path.join(REPO_DIR, "docs/research/dbs-separation-7.json"), "utf8"));
+  return doc.models.map((m) => `${m.name} ${m.licence} (${m.repo}@${m.revision.slice(0, 8)}; trained on ${m.trainedOn})`).join("; ");
+}
+
+export const SEPARATION_RULE =
+  "Defaults change only on these numbers, in a reviewed code change: the open split's model per host (src/lib/av/split.ts) is the faster model unless the other wins dialogue SI-SDR by more than 1 dB on most mixes at a speed the host can live with (a minute of audio in under 5 minutes on a CPU); stereo stems (each channel) become the default only if the fast stereo bed loses its stereo image (bed stereo gap over 0.1) or its level (over 1 dB) on the centred mixes; the dub's voice split (src/lib/av/dub.ts DEFAULT_VOICE_SPLIT) moves to DBS when its dialogue WER is no worse than MelBand RoFormer's and its bed keeps the music and effects (background SI-SDR at least 3 dB higher).";
+
+function separationSuite() {
+  const asr = { asrModel: "Qwen/Qwen3-ASR-0.6B-hf" };
+  const cases = SEPARATION_MIXES.map((m) => ({
+    id: `separation/${m.id}`,
+    title: m.title,
+    inputs: m.video ? { video: `local/separation/${m.id}/clip.mp4` } : { audio: `local/separation/${m.id}/mix.flac` },
+    demoInputs: { audio: "fixtures/voice.wav" },
+    references: `local/separation/${m.id}`,
+    tags: ["synthetic", ...(m.video ? ["video"] : ["audio-only"])],
+    note: m.checks,
+  }));
+  cases.push({
+    id: "separation/real",
+    title: "Your own clip (a film scene, a vlog, a podcast with music): for the blind A/B page",
+    inputs: { video: "local/separation/real/clip.mp4" },
+    demoInputs: { audio: "fixtures/voice.wav" },
+    metrics: ["separation"],
+    tags: ["real", "video"],
+    note: "No known stems: the scores are speed and whether the stems add up; listen on pnpm eval:review. Use a clip you own or may use.",
+  });
+  return {
+    $schema: "./case.schema.json",
+    suite: "separation",
+    title: "Soundtrack separation · dialogue, music and effects",
+    description: `${HEADER} Synthetic 12 s mixes with known stems (python3 -I scripts/eval/fixtures/make-separation.py --speech <folder> --speech-licence "<source, licence>" writes them into local/separation/; the speech is yours to bring with its words and its licence, the music, effects, hum and hiss are synthesized there, CC0; the measured runs used LibriSpeech dev-clean speaker 1272, CC BY 4.0) and your own clip for the blind review. Scores each stem against its known part (SI-SDR, SDR), whether voice + bed add back up to the input, the bed's level, peak and stereo image against the known bed, where a steady hum or hiss goes, the dialogue's word error rate (Whisper base.en, pnpm eval:setup --asr; werInput is the same ASR on the input as it is, which is "Clean the voice first" off) and the speed from ComfyUI-DBS's report. Clean up dialogue (clean-dialogue: one file with the bed at −18 dB) is scored against the voice plus the known bed at that level (remixSiSdr), with the bed's level in it (bedLevel), the noise left in it and its WER. Licences (information): ${dbsLicences()}; ComfyUI-DBS MIT; MelBand RoFormer MIT; Demucs MIT; DeepFilterNet 3 MIT OR Apache-2.0; VEED Clean Audio a hosted paid API; the test mixes' sources are recorded in each mix's meta.json. SAM Audio isn't here: it is not offered on the cloud engine.`,
+    original: ["oss-dbs-separate", "oss-dbs-voice-separate"],
+    kind: "audio",
+    decides: SEPARATION_RULE,
+    targets: {
+      open: { models: ["oss-dbs-separate"], op: "separate-audio" },
+      cloud: { models: ["demucs"], op: "separate-audio" },
+      demo: { models: ["oss-dbs-separate"], op: "separate-audio" },
+    },
+    defaults: {
+      seeds: [1001],
+      metrics: ["separation", "wer"],
+      variant: "bsrnn-mono",
+      candidate: "bsrnn-mono",
+      timeoutSeconds: 3600,
+    },
+    variants: {
+      "bsrnn-mono": { description: "DBS-BSRNN (fast), mono: stems from the channels' mean, the bed is the original minus the speech (the fast stereo bed)", extra: { separationModel: "DBS-BSRNN-DnR", channels: "mono" }, engines: ["open", "demo"] },
+      "bsrnn-stereo": { description: "DBS-BSRNN, each channel: every channel separated on its own (twice the time for stereo)", extra: { separationModel: "DBS-BSRNN-DnR", channels: "each channel" }, engines: ["open"] },
+      "tiger-mono": { description: "DBS-TIGER (best), mono", extra: { separationModel: "DBS-TIGER-DnR", channels: "mono" }, engines: ["open"] },
+      "tiger-stereo": { description: "DBS-TIGER, each channel", extra: { separationModel: "DBS-TIGER-DnR", channels: "each channel" }, engines: ["open"] },
+      "dbs-dub": { description: "The dub's first step with DBS (graph B: DBS-BSRNN voice and bed, then Qwen3-ASR 0.6B on the voice)", models: { open: ["oss-dbs-voice-separate"] }, extra: { separationModel: "DBS-BSRNN-DnR", ...asr }, engines: ["open"] },
+      melband: { description: "The dub's first step with MelBand RoFormer (a vocals model; voice and background only, then Qwen3-ASR 0.6B)", models: { open: ["oss-voice-separate"] }, extra: asr, engines: ["open"] },
+      demucs: { description: "Demucs (htdemucs on fal, as today's cloud dub uses it): vocals against drums, bass and other, summed into the bed", models: { cloud: ["demucs"] }, engines: ["cloud"] },
+      // Clean up dialogue (D5): graph C gives one file, the dialogue with the music and effects back under it at −18 dB.
+      "clean-dialogue": { description: "Clean up dialogue, open (graph C: DBS-BSRNN dialogue with the music and effects at −18 dB, one file)", models: { open: ["oss-dbs-remix"] }, extra: { separationModel: "DBS-BSRNN-DnR", channels: "mono", voiceDb: 0, musicDb: -18, effectsDb: -18 }, engines: ["open"] },
+      "clean-veed": { description: "Clean up dialogue, cloud: VEED Clean Audio (the voice with nothing under it)", models: { cloud: ["veed-clean-audio"] }, op: "enhance-voice", engines: ["cloud"] },
+      "clean-deepfilternet": { description: "Clean up dialogue, cloud: DeepFilterNet 3 on fal (audio only; a denoiser, so music stays)", models: { cloud: ["deepfilternet3"] }, op: "enhance-voice", engines: ["cloud"] },
+    },
+    cases,
+  };
+}
+
 const write = (name, data, check) => {
   const file = path.join(CASES_DIR, name);
   const text = `${JSON.stringify(data, null, 2)}\n`;
@@ -473,6 +554,7 @@ export function generated() {
     "dop.json": dop.suite,
     "dop-mix.json": dopMixSuite(),
     "dop-mixed-media.json": dopMixedMediaSuite(),
+    "separation.json": separationSuite(),
     "case.schema.json": schemaJson(),
     later: dop.later,
   };
@@ -481,6 +563,6 @@ export function generated() {
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const check = process.argv.includes("--check");
   const out = generated();
-  for (const name of ["soul.json", "soul-cinema.json", "soul-hex.json", "dop.json", "dop-mix.json", "dop-mixed-media.json", "case.schema.json"]) write(name, out[name], check);
-  console.log(`soul: ${out["soul.json"].cases.length} looks · dop: ${out["dop.json"].cases.length} presets · dop-mix: ${out["dop-mix.json"].cases.length} pairs · dop-mixed-media: ${out["dop-mixed-media.json"].cases.length} effects${out.later.length ? ` (${out.later.length} research names not in the catalog yet)` : ""}`);
+  for (const name of ["soul.json", "soul-cinema.json", "soul-hex.json", "dop.json", "dop-mix.json", "dop-mixed-media.json", "separation.json", "case.schema.json"]) write(name, out[name], check);
+  console.log(`soul: ${out["soul.json"].cases.length} looks · dop: ${out["dop.json"].cases.length} presets · dop-mix: ${out["dop-mix.json"].cases.length} pairs · dop-mixed-media: ${out["dop-mixed-media.json"].cases.length} effects · separation: ${out["separation.json"].cases.length} mixes${out.later.length ? ` (${out.later.length} research names not in the catalog yet)` : ""}`);
 }

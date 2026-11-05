@@ -13,7 +13,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Progress } from "@/components/ui/progress";
 import { Switch } from "@/components/ui/switch";
-import { useEngine, useGenerations, useLikelyVisitor } from "@/lib/api";
+import { COMPUTER_KICK_EVENT, useEngine, useGenerations, useLikelyVisitor } from "@/lib/api";
 import { SOUL_ID_COPY } from "@/lib/catalog/training";
 import {
   FILL_NAMES,
@@ -215,6 +215,8 @@ function TurnaroundForm({ pictures, name, realPerson: realDefault = false, eleme
       onRun ? { items: await onRun(b) } : post<{ items: Generation[]; filmId: string }>("/api/turnaround", { ...b, requestId }),
     // The film: the one the server names, else the joined clips, else the one video the run makes (drawn pictures are stills).
     onSuccess: ({ items, filmId }) => {
+      // The tab that runs this person's jobs on the ComfyUI on this computer (an account's "Your GPU") asks for them at once.
+      window.dispatchEvent(new Event(COMPUTER_KICK_EVENT));
       const front = (p?.route ?? route) === "stills" ? p?.frames.find((f) => f.side === "front")?.url : undefined;
       onStarted({ ids: items.map((g) => g.id), filmId: filmId ?? (items.find((g) => g.op === "concat") ?? items.find((g) => g.kind === "video") ?? items[0])?.id, ...(front && { front }) });
     },

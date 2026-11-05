@@ -26,6 +26,7 @@ import {
   paletteSentence,
   parseCueLines,
   PROMPT_HELPER_GRAPHS,
+  PROMPT_HELPER_OPT_IN,
   PROMPT_HELPER_PARAM,
   skipPromptHelper,
   randomSeed,
@@ -41,13 +42,29 @@ import {
   type ManifestOutput,
   type ManifestWorkflow,
 } from "@/lib/comfy";
+import { HI3D_PARAM, strictHi3dResolution } from "@/lib/av/hi3d";
 import { fpsPlan } from "@/lib/av/fps";
 import { resolveWorkflowId } from "@/lib/comfy-variants";
+import { IDOL_PACK, IDOL_PACK_CLASS, IDOL_WORKFLOWS, idolGraphValues, idolKept } from "@/lib/av/model3d";
+import { IDOL_VIEWS_NEEDS_PACK, IDOL_VIEWS_PARAM, IDOL_VIEWS_WORKFLOW, idolViewMeta } from "@/lib/av/idol-views";
 import { MOTION_GRAPHS, motionTransferPrompt, neutralPrompt, WORDS_NEEDED } from "@/lib/comfy-prompts";
 import { DECODER_PARAM, editCanvas, GPU_PARAM, LIGHTNING_GRAPHS, lightningSigmas, SPEED_PARAM, ZEN_ADAPTER, ZEN_ENCODER } from "@/lib/qwen21-speed";
 import { checkWatermarkBoxes, COPY as WATERMARK_COPY, MAX_SIDE as MAX_WATERMARK_SIDE, maxSideFor, mergeScanReports, qualityOf, SCAN_EXPAND as WATERMARK_SCAN_EXPAND, KEPT_EXPAND as WATERMARK_KEPT_EXPAND } from "@/lib/watermark";
 import { h3Canvas, h3Frames, isH3Graph } from "@/lib/h3-prompt";
-import { draftSizeFor, REGEN_COPY, REGEN_WINDOW_SECONDS, REGEN_WORKFLOW, regenFrames, regenOnePassRefusal, regenResolution } from "@/lib/catalog/regenerate";
+import { expandH3References, h3ReferenceProblem } from "@/lib/h3-references";
+import {
+  draftSizeFor,
+  H3_LATENT_DRAFT_WORKFLOW,
+  latentFileFor,
+  latentPrefixFor,
+  REGEN_COPY,
+  REGEN_LATENT_WORKFLOW,
+  REGEN_WINDOW_SECONDS,
+  REGEN_WORKFLOW,
+  regenFrames,
+  regenOnePassRefusal,
+  regenResolution,
+} from "@/lib/catalog/regenerate";
 import { carriesBoxes, LAYOUT_PARAM } from "@/lib/layout-prompt";
 import { fixFromPromptError } from "@/lib/gpu/fix-codes";
 import { loadIndex } from "../gpu/index-file";
@@ -55,10 +72,16 @@ import { crossfadeProblem, fadeCurveWav } from "@/lib/av/crossfade";
 import { dbsChannelsFor, dbsModelFor, dbsSurroundBed, installedDbs, surroundSource, type DbsModel } from "@/lib/av/split";
 import { installedReuse, NO_REUSE_PACK, rateFor, reuseFileFor, STRENGTH_DB, type ReuseModel } from "@/lib/av/clean-voice";
 import { expandAudioJoinWorkflow, expandVideoJoinWorkflow } from "@/lib/av/joins";
+import { aukTtsWorkflow, expandSpeechEditWorkflow, readSpeechWindows, setAukDevice, speechFadeWav } from "@/lib/av/speech-edit-graph";
+import { SpeechEditError, ttsInstruction, ttsLength, type SpeechWindow } from "@/lib/speech-edit";
 import { expandInbetweenWorkflow, type InbetweenPass } from "@/lib/av/inbetween-graph";
 import { gapPrompt, requestTiming, type InbetweenTiming } from "@/lib/inbetween";
 import { expandTimelineWorkflow, readTimeline } from "@/lib/av/timeline";
-import { exportValues, framesPerPass, hdrColorSpace, upscaleShortSide, wholeClipProblem, wholeClipTool } from "@/lib/av/video-finish";
+import { expandWorldWorkflow, readWorld, WorldGraphError, worldProblem, type WorldScript } from "@/lib/world";
+import { RTX_FRAMEGEN_WORKFLOW, RTX_HDR_WORKFLOW, RTX_MISSING } from "@/lib/catalog/rtx-video";
+import { exportValues, framesPerPass, hdrColorSpace, RTX_UPSCALE_WORKFLOW, rtxScale, upscaleShortSide, wholeClipProblem, wholeClipTool } from "@/lib/av/video-finish";
+import { keyFormatValues } from "@/lib/av/keying";
+import { factorTier } from "@/lib/av/upscale";
 import { guessKind } from "@/lib/catalog/payload";
 import { loraByFile, needsToken } from "@/lib/catalog/loras";
 import { CHARACTER_SWAP, packResolution, samCoords, swapPrompt, SWAP_LORAS, windowPlan } from "@/lib/catalog/character-swap";
@@ -81,7 +104,7 @@ import { probeAvi } from "../avi-probe";
 import { probeWebm } from "../webm-probe";
 import { adoptFile, contentTypeFor, readRef, saveFile, scratchDir } from "../storage";
 import { CONNECT_GPU_MESSAGE } from "@/lib/guest-access";
-import { discardBody, fetchPublic, RemoteFetchError } from "../remote-fetch";
+import { discardBody, fetchPublic, peekText, RemoteFetchError } from "../remote-fetch";
 import { zipToFile } from "../zip";
 import { ACCOUNT_LIMITS, ACCOUNT_MESSAGES, accountTotalBytes, accountUsage, diskHasRoom, filesFullMessage } from "../account-files";
 import { accountSend } from "../account-send";
@@ -89,7 +112,8 @@ import { outsideTenant, runAsTenant, tenantAccount } from "../tenant";
 import { ask, checkReach, reachSync, sharedCheck, type Reach } from "./reach";
 import { ProviderError, type PollResult, type ProviderAdapter, type RemoteOutput } from "./types";
 import { isOutOfMemory } from "@/lib/gpu/fix-codes";
-import { makingWords, queueWords, RELAY_TIMES, RELAY_WORDS, savingWords, sendingWords, tabFailureWords, type HistoryEntryLike, type TabFailure, type WantedFile } from "@/lib/relay";
+import { diagnoseGpu, diagnoseGpuJob, diagnoseRefusal, type Diagnosis, type GpuFailure, type GpuStage } from "@/lib/diagnose";
+import { makingWords, META_BATCH_HISTORY, queueWords, RELAY_TIMES, RELAY_WORDS, savingWords, sendingWords, tabFailureWords, type HistoryEntryLike, type TabFailure, type WantedFile } from "@/lib/relay";
 import type { GenerationFix } from "@/lib/catalog/types";
 import {
   checkClocks,
@@ -100,6 +124,7 @@ import {
   receivedFile,
   receivedOf,
   refusalOf,
+  pairedRunner,
   requestStop,
   resultOf,
   runnerFacts,
@@ -110,6 +135,7 @@ import {
   type TaskRow,
 } from "../computer/tasks";
 import { OWNER_BOOST_MS, poolFields, poolWaitMs, poolWaitWords } from "../computer/pool";
+import { worldcastBase, worldcastHealth } from "../worldcast";
 
 export const WORKFLOW_DIR = path.join(process.cwd(), "workflows", "comfyui");
 
@@ -185,6 +211,20 @@ export function computerScope(): Principal | undefined {
 
 /** The owner's ComfyUI jobs go to the workers (Settings: ComfyUI runs on "workers"), not to one computer. */
 const onWorkers = (computer: Principal | undefined) => computer === "owner" && !ownGpu() && getSetting("comfyWhere") === "workers";
+
+/**
+ * Which ComfyUI a job in this scope runs on, as a name two runs are compared by (MiniMax H3's 2K finish loads the latent
+ * its draft saved only on the ComfyUI that saved it): an account's link or computer, the owner's computer, or this
+ * install's server. null where nothing stays between jobs: the owner's workers empty their output folder after each one.
+ */
+export function comfyPlace(): string | null {
+  const own = ownGpu();
+  if (own) return own.kind === "computer" ? `computer:${own.principal}` : own.url ? `link:${own.url}` : null;
+  const computer = computerScope();
+  if (computer) return onWorkers(computer) ? null : `computer:${computer}`;
+  const url = getSetting("comfyUrl").replace(/\/+$/, "");
+  return url ? `server:${url}` : null;
+}
 
 /**
  * FUOBE_POOL_MEDIA_INPUTS: what a job for workers may send them ("image" unless set; "image,video,audio" for all).
@@ -304,7 +344,49 @@ function authHeaders(worker: ComfyWorker = "main"): Record<string, string> {
   return t ? { Authorization: `Bearer ${t}` } : {};
 }
 
-async function comfyFetch(p: string, init: RequestInit = {}, worker: ComfyWorker = "main"): Promise<Response> {
+/** An account's saved address in scope (its own GPU at a web address), as diagnose.ts reads it; null anywhere else. */
+export function ownLink(): { kind: "link"; url: string; hasToken: boolean } | null {
+  const own = ownGpu();
+  return own && own.kind !== "computer" && own.url ? { kind: "link", url: own.url, hasToken: !!own.token } : null;
+}
+
+/** Which step of a run asked the account's GPU, by path. */
+const stageOf = (p: string): GpuStage => {
+  const at = p.split("?")[0];
+  return at.startsWith("/upload/") ? "upload" : at === "/prompt" ? "prompt" : at.startsWith("/view") ? "result" : at === "/system_stats" ? "status" : "poll";
+};
+
+/**
+ * An account's GPU that didn't answer as ComfyUI: the run's error in plain words, with what helps (`trouble`), which the
+ * runner keeps with the run (generations.ts) and uses to wait out a GPU that is off or starting up. `failure`: what came
+ * back, so the status strip can say the same in its own words.
+ */
+export function troubleError(d: Diagnosis, status?: number, failure?: GpuFailure): ProviderError & { trouble: Diagnosis; failure?: GpuFailure } {
+  return Object.assign(new ProviderError(d.words, status), { trouble: d, ...(failure && { failure }) });
+}
+
+/** What came back from an account's link, read for the person (diagnose.ts), as the run's error. */
+const gpuTrouble = (f: GpuFailure, place: Parameters<typeof diagnoseGpu>[1]) => troubleError(diagnoseGpu(f, place), f.status, f);
+
+/** An answer from an account's link that isn't what was asked: read for the person (its body's first KB, for details). */
+async function linkAnswer(res: Response, f: Omit<GpuFailure, "status" | "body" | "contentType" | "location" | "retryAfterS">, link: NonNullable<ReturnType<typeof ownLink>>): Promise<ProviderError> {
+  // The start of an error page only, briefly: a body that never ends can't hold the run (its connection is let go).
+  const body = res.status >= 300 && res.status < 400 ? "" : await peekText(res);
+  discardBody(res);
+  return gpuTrouble(
+    {
+      ...f,
+      status: res.status,
+      body,
+      contentType: res.headers.get("content-type") ?? undefined,
+      location: res.headers.get("location") ?? undefined,
+      retryAfterS: Number(res.headers.get("retry-after")) || undefined,
+    },
+    link,
+  );
+}
+
+async function comfyFetch(p: string, init: RequestInit = {}, worker: ComfyWorker = "main", o: { bytes?: number } = {}): Promise<Response> {
   // A ComfyUI on someone's own computer is never called from here: not the install's, not a link (every caller in that
   // scope goes through its task instead; this is the last guard).
   if (computerScope()) throw new ProviderError(ON_COMPUTER_ONLY);
@@ -313,9 +395,10 @@ async function comfyFetch(p: string, init: RequestInit = {}, worker: ComfyWorker
     // A visitor without a GPU of its own (a price check): nothing to reach, and never the install's.
     if (!base) throw new ProviderError(CONNECT_GPU_MESSAGE);
     try {
-      return await fetchPublic(`${base}${p}`, { ...init, headers: { ...authHeaders(worker), ...(init.headers ?? {}) } }, { timeoutMs: 120_000, ...ownGpuLimits(p) });
+      return await fetchPublic(`${base}${p}`, { ...init, headers: { "ngrok-skip-browser-warning": "1", ...authHeaders(worker), ...(init.headers ?? {}) } }, { timeoutMs: 120_000, ...ownGpuLimits(p) });
     } catch (e) {
-      throw new ProviderError(`Can't reach your ComfyUI at ${base} (${(e as Error).message}). Is it running, and is its tunnel up?`);
+      // The account's words (a stopped pod, a GPU that doesn't answer…); the reason itself goes in the details line.
+      throw gpuTrouble({ stage: stageOf(p), error: (e as Error).message, bytes: o.bytes }, ownLink() ?? { kind: "link", url: base });
     }
   }
   if (worker === "isolated" && !base) {
@@ -357,13 +440,18 @@ const reasonOf = (text: string) => (/^\s*</.test(text) ? "" : text.trim().slice(
 async function comfyJson<T>(p: string, worker: ComfyWorker = "main"): Promise<T> {
   const res = await comfyFetch(p, {}, worker);
   const path = p.split("?")[0];
+  const link = ownLink();
   if (!res.ok) {
+    // An account's link: what the answer means for the person (a stopped pod, a GPU starting up), not its status code.
+    if (link) throw await linkAnswer(res, { stage: stageOf(p) }, link);
     discardBody(res);
     throw worker === "isolated" ? isolatedAnswer(path, res.status) : new ProviderError(`ComfyUI ${path} answered HTTP ${res.status}`, res.status);
   }
+  const text = await res.text().catch(() => "");
   try {
-    return (await res.json()) as T;
+    return JSON.parse(text) as T;
   } catch {
+    if (link) throw gpuTrouble({ stage: stageOf(p), status: res.status, body: text.slice(0, 4096), contentType: res.headers.get("content-type") ?? undefined }, link);
     throw worker === "isolated" ? isolatedAnswer(path) : new ProviderError(`ComfyUI ${path} sent something that isn't JSON (a proxy error page?)`);
   }
 }
@@ -509,6 +597,11 @@ export function collectOutputs(entry: HistoryEntry, manifest: ManifestWorkflow |
     .filter((o) => o.role === "language")
     .map((o) => textsOf(outputs[o.node])[0]?.trim())
     .find(Boolean);
+  // Idol 3D: the clean graph's count of the Gaussians its prune kept (a PreviewAny "report") goes on the splat; the core
+  // graph's splat says it wasn't pruned.
+  const idolClean = manifest?.id === IDOL_WORKFLOWS.clean;
+  const kept = idolClean ? declared.filter((o) => o.role === "report").map((o) => idolKept(textsOf(outputs[o.node])[0])).find((n) => n !== undefined) : undefined;
+  const idolSplat = idolClean ? { pruned: true, ...(kept !== undefined && { kept }) } : manifest?.id === IDOL_WORKFLOWS.core ? { pruned: false } : undefined;
   // OCR: the size the model saw (a PreviewAny "frame") goes with the lines it read.
   const frame = declared
     .filter((o) => o.role === "frame")
@@ -526,7 +619,7 @@ export function collectOutputs(entry: HistoryEntry, manifest: ManifestWorkflow |
   const pick = (type: string) => {
     for (const nodeId of order) {
       const spec: ManifestOutput | undefined = declared.find((o) => o.node === nodeId);
-      if (spec?.role === "language" || spec?.role === "frame" || spec?.role === "quality" || spec?.role === "scan-tile") continue;
+      if (spec?.role === "language" || spec?.role === "frame" || spec?.role === "quality" || spec?.role === "scan-tile" || (idolClean && spec?.role === "report")) continue;
       const ui = outputs[nodeId] ?? {};
       const texts = textsOf(ui);
       const found: { key: string; f: HistoryFile }[] = [];
@@ -560,8 +653,11 @@ export function collectOutputs(entry: HistoryEntry, manifest: ManifestWorkflow |
         if (spec?.role) meta.role = spec.role;
         // A splat says what it is (the viewer and the download name go by it): spz, ply or ksplat.
         if (spec?.role === "splat" && ext) meta.format = ext;
+        if (spec?.role === "splat" && idolSplat) Object.assign(meta, idolSplat);
         // Qwen-Image-Layered saves its layers back to front.
         if (spec?.role === "layers") Object.assign(meta, { z: i, name: i === 0 ? "Background" : `Layer ${i}` });
+        // Idol 3D's four views: one batch, front first, then the object's left, back and right (src/lib/av/idol-views.ts).
+        if (spec?.role === "tiles" && manifest?.id === IDOL_VIEWS_WORKFLOW) Object.assign(meta, idolViewMeta(i));
         if (quality && kind === "image") meta.quality = quality;
         if (Object.keys(meta).length) o.meta = meta;
         files.push(o);
@@ -830,6 +926,42 @@ export async function comfyDbsModels(worker: ComfyWorker = "main", maxAgeMs = 10
 }
 
 declare global {
+  /** Whether each ComfyUI address had a node class (GET /object_info/<class>), by address and class, and when. */
+  var __fuobeComfyClasses: Map<string, { has: boolean; at: number }> | undefined;
+}
+
+/**
+ * Whether the connected ComfyUI has a node class (GET /object_info/<class> answers it; a ComfyUI without it answers
+ * {}), kept for a minute; undefined when the server can't say (unreachable: asked again next time), and on someone's
+ * computer, which the server never asks. forgetComfyClass drops the answer (a run refused for a missing node).
+ */
+export async function comfyHasClass(cls: string, worker: ComfyWorker = "main", maxAgeMs = 60_000): Promise<boolean | undefined> {
+  if (computerScope()) return undefined;
+  const url = baseUrl(worker);
+  if (!url) return undefined;
+  const cache = (globalThis.__fuobeComfyClasses ??= new Map());
+  const key = `${url} ${cls}`;
+  const hit = cache.get(key);
+  if (hit && Date.now() - hit.at < maxAgeMs) return hit.has;
+  return oneAsk(`/object_info/${cls} ${url}`, async () => {
+    const info = await comfyJson<unknown>(`/object_info/${encodeURIComponent(cls)}`, worker).catch(() => undefined);
+    if (!info || typeof info !== "object" || Array.isArray(info)) {
+      cache.delete(key);
+      return undefined;
+    }
+    const has = cls in info;
+    cache.set(key, { has, at: Date.now() });
+    return has;
+  });
+}
+
+/** Forget what a ComfyUI said about a node class (comfyHasClass asks again). */
+export function forgetComfyClass(cls: string, worker: ComfyWorker = "main"): void {
+  const url = baseUrl(worker);
+  if (url) globalThis.__fuobeComfyClasses?.delete(`${url} ${cls}`);
+}
+
+declare global {
   /** The RE-USE files each ComfyUI address listed last (GET /models/reuse; null: no reuse folder, so no ComfyUI-RE-USE), and when. */
   var __fuobeComfyReuse: Map<string, { models?: ReuseModel[] | null; at: number }> | undefined;
 }
@@ -1067,6 +1199,8 @@ export interface PrepareContext {
   dbsModels?: () => Promise<DbsModel[] | undefined>;
   /** The RE-USE files on the server's disk (GET /models/reuse): null without ComfyUI-RE-USE, undefined when it can't say. */
   reuseModels?: () => Promise<ReuseModel[] | null | undefined>;
+  /** Whether the server has the ComfyUI-Idol pack (GET /object_info/IdolPruneSplat): Idol 3D then runs its clean graph. */
+  idolPack?: () => Promise<boolean | undefined>;
   /**
    * The route puts the run's one LoRA in the graph's own LoRA slot (ModelRoute.loraSlot: Fuobe Speak's FusioniX on kijai's
    * InfiniteTalk graph, with the settings it goes with). Without it a graph with no model loader refuses a LoRA.
@@ -1182,8 +1316,11 @@ function videoFinishValues(manifest: ManifestWorkflow, input: GenInput, clip: Me
     values.shortSide = shortSide;
     if (b.framesPerBatch && extra.framesPerBatch === undefined) {
       const seedvr = /seedvr/i.test(manifest.id);
+      // RTX Video Super Resolution writes the scaled frame itself (1-4x, the graph's own factor), not a fixed 4x one.
+      const rtx = manifest.id === RTX_UPSCALE_WORKFLOW;
+      const modelScale = seedvr ? 0 : rtx ? rtxScale(facts, shortSide) : 4;
       // ESRGAN on a big source (1440p → 2160p: about 0.85 GB a frame): down to one frame a pass, to stay near the budget.
-      values.framesPerBatch = framesPerPass(facts, { shortSide, modelScale: seedvr ? 0 : 4, fourNPlusOne: seedvr, min: seedvr ? 5 : 1, max: seedvr ? 33 : 64, fallback: Number(d.framesPerBatch ?? 16) });
+      values.framesPerBatch = framesPerPass(facts, { shortSide, modelScale, fourNPlusOne: seedvr, min: seedvr ? 5 : 1, max: seedvr ? 33 : 64, fallback: Number(d.framesPerBatch ?? 16) });
     }
   } else if (b.framesPerBatch && manifest.capability === "export-video" && extra.framesPerBatch === undefined) {
     values.framesPerBatch = framesPerPass(facts, { min: 8, max: 256, fallback: Number(d.framesPerBatch ?? 64) });
@@ -1236,7 +1373,7 @@ export async function prepareWorkflow(endpointTemplate: string, input: GenInput,
   // The variant this request runs (one graph per clip count, the single-track soundtrack, EXR frames, a Fun Camera pose,
   // the product shot): src/lib/comfy-variants.ts, which the GPU pre-flight's gate reads too. A LoRA mixed into a pose is
   // injected on its experts as on the plain image-to-video graph.
-  const endpoint = resolveWorkflowId(endpointTemplate, {
+  let endpoint = resolveWorkflowId(endpointTemplate, {
     op: ctx.op,
     clips: clips.length,
     images: input.images?.length ?? 0,
@@ -1247,6 +1384,15 @@ export async function prepareWorkflow(endpointTemplate: string, input: GenInput,
     extra,
     has: (id) => loadManifest().workflows.some((w) => w.id === id),
   });
+  // Idol 3D: the clean graph (ComfyUI-Idol's crop, the pruned splat, the input-view still) where the server has the pack,
+  // else the core graph, whose saved file isn't pruned (its splat says so: meta.pruned false).
+  if (endpoint === IDOL_WORKFLOWS.core && loadManifest().workflows.some((w) => w.id === IDOL_WORKFLOWS.clean) && (await ctx.idolPack?.().catch(() => undefined)) === true) {
+    endpoint = IDOL_WORKFLOWS.clean;
+  }
+  // Idol 3D's four views need the pack's camera (IdolCamera): with no pack (or the pack switched off in Settings), say so
+  // instead of a missing-node error. Unknown (someone's computer, a server that didn't answer): their ComfyUI has the last word.
+  if (endpoint === IDOL_VIEWS_WORKFLOW && (await ctx.idolPack?.().catch(() => undefined)) === false) throw new ProviderError(IDOL_VIEWS_NEEDS_PACK, 400);
+  delete extra[IDOL_VIEWS_PARAM];
   delete extra.productShot;
   delete extra[SPEED_PARAM];
   delete extra[GPU_PARAM];
@@ -1273,6 +1419,8 @@ export async function prepareWorkflow(endpointTemplate: string, input: GenInput,
     video3: clips[2],
     video4: clips[3],
     audio: input.audio,
+    // A 3D model to work on (Hi3D's refine reads the coarse GLB from ComfyUI's input folder, where it was uploaded).
+    model3d: input.model3d,
     seed: input.seed !== undefined && input.seed >= 0 ? input.seed : randomSeed(),
   };
   // A multi-view 3D model: each photo goes to its side.
@@ -1304,7 +1452,7 @@ export async function prepareWorkflow(endpointTemplate: string, input: GenInput,
   // A voice track on the video's timeline: the clips are the spoken lines (the template binds the first).
   if (ctx.op === "timeline") values.audio = input.audios?.[0] ?? input.audio;
   // Speech workflows read the soundtrack with LoadAudio, which also takes a video upload.
-  if ((ctx.op === "transcribe" || ctx.op === "separate-audio" || ctx.op === "enhance-voice" || ctx.op === "translate") && b.audio && !b.video) values.audio = input.audio ?? input.video ?? clips[0];
+  if ((ctx.op === "transcribe" || ctx.op === "separate-audio" || ctx.op === "enhance-voice" || ctx.op === "translate" || ctx.op === "speech-edit") && b.audio && !b.video) values.audio = input.audio ?? input.video ?? clips[0];
   if (b.language && input.targetLanguage) values.language = input.targetLanguage;
   if (b.sourceLanguage && input.sourceLanguage) {
     const whisper = b.sourceLanguage.some((t) => workflow[t.node]?.class_type === "Apply Whisper");
@@ -1354,7 +1502,9 @@ export async function prepareWorkflow(endpointTemplate: string, input: GenInput,
   // Motion transfer crops the driving clip to the canvas, so the canvas always takes the clip's shape: a run that names
   // none (the Motion control studio) fell back to the graph's portrait 482 × 854 and cut a landscape clip's sides off.
   const followDriver = ctx.op === "motion-transfer" && !!b.video && !!clipSize;
-  const aspectRatio = h3 && (ctx.op === "i2v" || ctx.op === "flf2v" || b.image) ? "auto" : (followClip && !input.aspectRatio) || followDriver ? "auto" : input.aspectRatio;
+  // References (Pika H3 Flex Ref2VA) are not frames: the aspect ratio asked for holds ("auto" takes Image 1's shape).
+  const asFrames = h3 && (ctx.op === "i2v" || ctx.op === "flf2v" || (!!b.image && manifest.expand !== "references"));
+  const aspectRatio = asFrames || (h3 && ctx.op === "avatar") ? "auto" : (followClip && !input.aspectRatio) || followDriver ? "auto" : input.aspectRatio;
   if (b.width || b.height) {
     const multiple = Number(manifest.limits?.dimensionMultiple ?? 16);
     // With motion paths the frame keeps the start image's shape, so the paths need no cropping;
@@ -1406,7 +1556,10 @@ export async function prepareWorkflow(endpointTemplate: string, input: GenInput,
     (ctx.op === "lipsync" || ctx.op === "avatar") && b.frames && !span
       ? (ctx.op === "avatar" && input.sourceDuration && input.sourceDuration > 0 ? input.sourceDuration : ctx.media?.(String(values.audio ?? ""))?.duration)
       : undefined;
-  if (voiceLength) {
+  if (voiceLength && h3) {
+    // H3 makes the clip with its own sound, on its 17n + 5 grid: as long as the voice, 5-15 s (the reference limits say why not).
+    values.frames = h3Frames(Math.min(15, Math.max(5, voiceLength)));
+  } else if (voiceLength) {
     const step = Number(d.frameStep ?? 4);
     const frames = Math.ceil((voiceLength * fps) / step) * step + 1;
     const cap = Number(manifest.limits?.maxFrames ?? 0);
@@ -1415,6 +1568,14 @@ export async function prepareWorkflow(endpointTemplate: string, input: GenInput,
       throw new ProviderError(`${what} on the open engine takes up to ${seconds(cap / fps)} s of speech per job (this voice is ${seconds(voiceLength)} s) — split it into shorter parts`);
     }
     values.frames = frames;
+  }
+  // Kandinsky VSR: the factor asked (params.resolution "2x" / "2.25x" / "4x") as the pack's combo, and the latent upscaler bank
+  // entry it needs (2x serves 2x and 2.25x).
+  if (b.upscalerScale) {
+    const k = factorTier(input.resolution) ?? factorTier(String(d.scale ?? "")) ?? 2.25;
+    if (![2, 2.25, 4].includes(k)) throw new ProviderError("Kandinsky VSR upscales 2x, 2.25x or 4x", 400);
+    values.scale = `${k}x`;
+    values.upscalerScale = k === 4 ? "4x" : "2x";
   }
   // Video finishing (Upscale hub): export formats, HDR curves, FPS Boost's m / n, chunked upscaling.
   const finish = videoFinishValues(manifest, input, clip, extra);
@@ -1429,6 +1590,20 @@ export async function prepareWorkflow(endpointTemplate: string, input: GenInput,
     values.resolution = regenResolution(input.resolution);
     values.draftSize = draftSizeFor({ fromH3: extra.draftFrom === "h3" });
     values.frames = regenFrames(length);
+    delete extra.draftFrom;
+  }
+  // MiniMax H3 at 2K (n7-10): the 768p draft saves its latent under a name made from its run's id, and the finish loads
+  // that file (the same ComfyUI keeps it in output/open_h3_latents/), redrawing it at the size asked from the same words.
+  if (manifest.id === H3_LATENT_DRAFT_WORKFLOW) {
+    values.latentPrefix = latentPrefixFor(ctx.generationId);
+    delete extra.latentDraft;
+  }
+  if (manifest.id === REGEN_LATENT_WORKFLOW) {
+    if (!(typeof values.prompt === "string" && values.prompt.trim())) throw new ProviderError("Regenerate redraws the clip from words: describe what is in it", 400);
+    if (typeof extra.latentFrom !== "string" || !extra.latentFrom) throw new ProviderError("This take has no saved draft to finish from", 400);
+    values.latent = latentFileFor(extra.latentFrom);
+    values.resolution = regenResolution(input.resolution);
+    delete extra.latentFrom;
     delete extra.draftFrom;
   }
 
@@ -1454,6 +1629,19 @@ export async function prepareWorkflow(endpointTemplate: string, input: GenInput,
   const maxSeconds = Number(manifest.limits?.maxDurationSec ?? 0);
   if (maxSeconds && b.duration && Number(values.duration ?? d.duration ?? 0) > maxSeconds + 0.001) {
     throw new ProviderError(OVER_LIMIT[manifest.capability]?.(maxSeconds) ?? `This workflow makes up to ${maxSeconds} s per job`);
+  }
+  // Edit speech (speech-edit-auk): the edit windows the planner made, crossfaded back on a linear fade-in with a flat tail
+  // (src/lib/av/speech-edit-graph.ts says why; both sides of a seam are the same voice, so equal power would bump the level).
+  let speechWindows: SpeechWindow[] | null = null;
+  const aukQuality = extra.quality === "best" ? "best" : "fast";
+  if (manifest.expand === "speech") {
+    speechWindows = readSpeechWindows(extra.speechWindows);
+    if (!speechWindows) throw new ProviderError("Nothing to change: edit the words, or pick a range and an effect", 400);
+    if (b.fadeCurve && extra.fadeCurve === undefined) extra.fadeCurve = await ctx.upload(Buffer.from(speechFadeWav(Math.max(0.02, Number(input.crossfade ?? d.crossfade ?? 0.12)))), "audio/wav", "speech_fade.wav");
+  }
+  if (Object.values(workflow).some((n) => n.class_type === "AuKModelLoader")) {
+    delete extra.speechWindows;
+    delete extra.quality;
   }
   // Loops and joins with a crossfade: core ComfyUI has no gain ramp, so the curve is a tiny WAV written here
   // (left = fade-in, right = fade-out, exactly the crossfade long). Clips too short for it are refused up front.
@@ -1549,6 +1737,20 @@ export async function prepareWorkflow(endpointTemplate: string, input: GenInput,
   // place of SAM's, the anchor after the boundary, masked generation off. Branches it doesn't use go after binding.
   // Media inputs a studio job leaves out on purpose (their branches go after binding).
   const studioLeft: string[] = [];
+  // AuK's text to speech (speech-tts-auk, nm10-speech-edit): its instruction and length, written here since AuK's Prompt
+  // Enhancer is off. Without a voice sample the loader goes (a voice from its description).
+  let aukTts: { seconds: number; hasVoice: boolean } | null = null;
+  if (manifest.id === "speech-tts-auk") {
+    const hasVoice = !!values.audio;
+    if (!hasVoice) studioLeft.push("audio");
+    const sample = hasVoice ? (ctx.media?.(String(values.audio))?.duration ?? 0) : 0;
+    try {
+      aukTts = { seconds: ttsLength(String(input.prompt ?? ""), sample), hasVoice };
+    } catch (e) {
+      throw new ProviderError((e as Error).message, 400);
+    }
+    values.prompt = ttsInstruction(String(input.prompt ?? ""), { hasVoice, voiceDescription: input.voiceDescription });
+  }
   let studioSegment: Omit<SegmentGraphOptions, "outputs"> | null = null;
   if (manifest.id === STUDIO_WORKFLOWS.segment) {
     const history = typeof extra.historyVideo === "string" && !!extra.historyVideo;
@@ -1678,7 +1880,19 @@ export async function prepareWorkflow(endpointTemplate: string, input: GenInput,
     loras = [];
   }
   // Matte graphs save a cut-out and a black-and-white matte: params.matteOutput keeps one.
-  const keepRole: string | undefined = ctx.op === "bg-remove-video" ? input.matteOutput : undefined;
+  // The green-screen key's clean foreground leaves through the cut-out's encoder (below), so the cut-out's node is kept.
+  const keyForeground = ctx.op === "bg-remove-video" && input.matteOutput === "foreground";
+  const keepRole: string | undefined = ctx.op === "bg-remove-video" ? (keyForeground ? "cutout" : input.matteOutput) : undefined;
+  // The green-screen key (video-key-corridorkey) writes its cut-out as a transparent WebM, ProRes 4444 with alpha, or EXR
+  // frames beside the WebM (params.format; src/lib/av/keying.ts).
+  const keyExr = ctx.op === "bg-remove-video" && !!b.format && input.format === "exr";
+  if (ctx.op === "bg-remove-video" && b.format) {
+    try {
+      Object.assign(values, keyFormatValues(input.format, input.matteOutput));
+    } catch (e) {
+      throw new ProviderError((e as Error).message, 400);
+    }
+  }
 
   if (b.filenamePrefix) values.filenamePrefix = `fuobe/${ctx.generationId}`;
   // Keyframe animation: every gap's timing and words (src/lib/inbetween.ts); the graph is rewritten for the keyframes below.
@@ -1697,6 +1911,20 @@ export async function prepareWorkflow(endpointTemplate: string, input: GenInput,
     delete extra.inbetween;
     delete extra.stillMouth;
   }
+  // World mode (world-hy-nomas-turn): the script and the turn asked for; the graph is rebuilt for them below. The script's
+  // own seed always: the turns before this one must match the ones ComfyUI already made.
+  let world: { script: WorldScript; turn: number } | null = null;
+  if (manifest.expand === "world") {
+    const script = readWorld(extra.world);
+    const turn = Math.round(Number(extra.turn ?? 0));
+    const problem = script ? worldProblem(script, turn) : "Describe the world first: the opening is where it starts";
+    if (problem || !script) throw new ProviderError(problem ?? "Describe the world first", 400);
+    world = { script, turn };
+    if (b.prompt) values.prompt = script.opening.words;
+    if (b.seed) values.seed = script.seed;
+  }
+  delete extra.world;
+  delete extra.turn;
   const cues = manifest.expand === "captions" ? captionCues(input, extra) : [];
   delete extra.cues;
   delete extra.wordsPerCaption;
@@ -1784,6 +2012,20 @@ export async function prepareWorkflow(endpointTemplate: string, input: GenInput,
     const canvas = lightningCanvas(manifest.capability, values, ctx.media?.(String(values.image ?? "")));
     if (canvas) values.sigmas = lightningSigmas(canvas.width, canvas.height);
   }
+  // Hi3D's refine: the mesh to refine is needed, and the resolution is one the model takes (512, 1024, 1536). Other graphs
+  // bind meshResolution to their own grid (Idol 3D quick mesh: SplatToMesh, 64-768).
+  if (b.model3d && !values.model3d) throw new ProviderError("Add the 3D model to refine");
+  if (b.model3d && b.meshResolution && extra[HI3D_PARAM] !== undefined) {
+    const r = strictHi3dResolution(extra[HI3D_PARAM]);
+    if (r === null) throw new ProviderError("Hi3D refines at 512, 1024 or 1536");
+    extra[HI3D_PARAM] = r;
+  }
+  // SplatToMesh's grid (Idol 3D quick mesh) takes 64-768 in steps of 16: a value from Canvas or Assist is kept to that.
+  if (!b.model3d && b.meshResolution && extra[HI3D_PARAM] !== undefined) {
+    const n = Number(extra[HI3D_PARAM]);
+    if (Number.isFinite(n)) extra[HI3D_PARAM] = Math.min(768, Math.max(64, Math.round(n / 16) * 16));
+    else delete extra[HI3D_PARAM];
+  }
   // H3 Person Removal's window review (H3 Relay's Review Windows): "Redo from here" sends the same graph again with
   // window controls that lock the windows before it to their checkpoints. The Relay keeps those only while the graph,
   // its input files and its save prefix are the same, so a reroll names the original run's inputs and prefix (set by
@@ -1800,6 +2042,11 @@ export async function prepareWorkflow(endpointTemplate: string, input: GenInput,
     if (own && typeof values.video === "string" && typeof values.image === "string" && typeof values.filenamePrefix === "string") {
       reviewInputs = { video: values.video, image: values.image, prefix: values.filenamePrefix };
     }
+  }
+  // Idol 3D: "It's a photo" is the clean graph's "real" crop (the core graph's photo switch), then the pack's pruning.
+  if (manifest.id === IDOL_WORKFLOWS.core || manifest.id === IDOL_WORKFLOWS.clean || manifest.id === IDOL_VIEWS_WORKFLOW) {
+    Object.assign(values, idolGraphValues(extra, (k) => !!b[k as BindingKey]));
+    for (const k of ["cropMode", "photoCrop", "minOpacity", "maxScale"]) delete extra[k];
   }
   for (const [k, v] of Object.entries(extra)) values[k as BindingKey] = v;
   // SeedVR2's `scale` multiplies the picture before one diffusion pass over all of it, and its graph is made for up to
@@ -1843,6 +2090,19 @@ export async function prepareWorkflow(endpointTemplate: string, input: GenInput,
         left.push(k);
       }
     }
+  }
+  // MiniMax H3 with references (Pika H3 Flex Ref2VA): Pika's limits, checked on the uploads' headers before the run; the
+  // graph's Image 1 loader is taken out by expandH3References when there is no image.
+  // A talking clip from a voice (Lipsync & avatars, Fuobe Speak) is one image and the voice as its audio reference.
+  const refAudios = ctx.op === "avatar" ? [input.audio].filter((a): a is string => !!a) : audios;
+  if (manifest.expand === "references") {
+    const length = (n: string) => {
+      const m = ctx.media?.(n);
+      return m?.videoDuration ?? m?.duration;
+    };
+    const problem = h3ReferenceProblem({ images: images.length, videos: clips.map(length), audios: refAudios.map(length) });
+    if (problem) throw new ProviderError(problem);
+    if (!images.length) left.push("image");
   }
   // The Character swap without an anchor frame: its loader and fit are taken out after binding.
   if (dropAnchor) left.push("image2");
@@ -1895,7 +2155,9 @@ export async function prepareWorkflow(endpointTemplate: string, input: GenInput,
   }
   const outputIds = manifest.outputs.map((o) => o.node);
   // The prompt helper (FLUX 3 Image Klein's upsampler) off, or a layout with boxes it would rewrite: the words as typed.
-  if (PROMPT_HELPER_GRAPHS.has(manifest.id) && (helper === "off" || laidOut)) wf = skipPromptHelper(wf, outputIds);
+  // Kandinsky 6.0's helper runs only when asked (PROMPT_HELPER_OPT_IN).
+  const helperOff = helper === "off" || (helper !== "on" && PROMPT_HELPER_OPT_IN.has(manifest.id));
+  if (PROMPT_HELPER_GRAPHS.has(manifest.id) && (helperOff || laidOut)) wf = skipPromptHelper(wf, outputIds);
   if (dropAnchor) wf = withoutAnchor(wf, b.image2![0].node);
   if (openjutsu) {
     try {
@@ -1912,7 +2174,7 @@ export async function prepareWorkflow(endpointTemplate: string, input: GenInput,
   if (restore) wf = restoreGraph(wf, restore, outputIds);
   // FPS Boost to a lower rate, or one the clip divides into: no interpolation, only every n-th frame.
   if (finish.bypassInterpolation) {
-    const id = Object.keys(wf).find((k) => wf[k].class_type === "FrameInterpolate");
+    const id = Object.keys(wf).find((k) => wf[k].class_type === "FrameInterpolate" || wf[k].class_type === "RTXVideoFrameGeneration");
     if (id) wf = bypassNode(wf, id, "images", outputIds);
   }
   if (surroundSource(sourceChannels)) wf = dbsSurroundBed(wf);
@@ -1958,6 +2220,30 @@ export async function prepareWorkflow(endpointTemplate: string, input: GenInput,
       throw new ProviderError((e as Error).message);
     }
   }
+  if (speechWindows) {
+    const duration = ctx.media?.(String(values.audio ?? ""))?.duration ?? input.sourceDuration;
+    if (!duration) throw new ProviderError("Couldn't read how long the recording runs: add it again as WAV, MP3, M4A or MP4", 400);
+    try {
+      wf = expandSpeechEditWorkflow(wf, speechWindows, { duration, quality: aukQuality, seed: Number(values.seed) || 0, crossfade: Math.max(0.02, Number(input.crossfade ?? d.crossfade ?? 0.12)) });
+    } catch (e) {
+      throw new ProviderError((e as Error).message, e instanceof SpeechEditError ? 400 : 500);
+    }
+  }
+  if (aukTts) wf = aukTtsWorkflow(wf, aukTts);
+  if (Object.values(wf).some((n) => n.class_type === "AuKModelLoader")) {
+    try {
+      wf = setAukDevice(wf, typeof values.device === "string" ? values.device : undefined);
+    } catch (e) {
+      throw new ProviderError((e as Error).message, 400);
+    }
+  }
+  if (world) {
+    try {
+      wf = expandWorldWorkflow(wf, world.script, world.turn);
+    } catch (e) {
+      throw new ProviderError((e as Error).message, e instanceof WorldGraphError ? 400 : 500);
+    }
+  }
   // Keyframe animation: one pass per gap on the shared loaders, every keyframe loaded once.
   if (inbetween) {
     try {
@@ -1970,6 +2256,7 @@ export async function prepareWorkflow(endpointTemplate: string, input: GenInput,
   try {
     if (manifest.expand === "videos" && clips.length > 2) wf = expandVideoJoinWorkflow(wf, clips);
     if (manifest.expand === "audios" && audios.length > 2) wf = expandAudioJoinWorkflow(wf, audios);
+    if (manifest.expand === "references") wf = expandH3References(wf, { images, videos: clips, audios: refAudios, videoSound: clips.map((n) => ctx.media?.(n)?.hasAudio) });
   } catch (e) {
     throw new ProviderError((e as Error).message);
   }
@@ -1979,7 +2266,17 @@ export async function prepareWorkflow(endpointTemplate: string, input: GenInput,
     wf = injectLoras(wf, loras);
   }
   // The output not asked for isn't saved (nor encoded: ComfyUI runs only what an output node needs).
-  if (keepRole && manifest.outputs.some((o) => o.role === keepRole)) for (const o of manifest.outputs) if (o.role && o.role !== keepRole) delete wf[o.node];
+  if (keepRole && manifest.outputs.some((o) => o.role === keepRole)) for (const o of manifest.outputs) if (o.role && o.role !== keepRole && !(keyExr && o.role === "frames")) delete wf[o.node];
+  // The clean foreground (CorridorKey 2.0's despilled colours premultiplied over black, output 2): the cut-out's encoder takes
+  // it as a plain H.264 with sound.
+  if (keyForeground) {
+    const keyer = Object.entries(wf).find(([, n]) => n.class_type === "CorridorKey2")?.[0];
+    const cut = manifest.outputs.find((o) => o.role === "cutout")?.node;
+    if (!keyer || !cut || !wf[cut]) throw new ProviderError(`${manifest.title} doesn't make a clean foreground — CorridorKey in Green screen does`, 400);
+    wf[cut] = { ...wf[cut], inputs: { ...wf[cut].inputs, images: [keyer, 2], format: "video/h264-mp4", pix_fmt: "yuv420p", crf: 19 } };
+  }
+  // A key's EXR frames are written only when asked for (they ride on the cut-out, zipped).
+  if (ctx.op === "bg-remove-video" && !keyExr) for (const o of manifest.outputs) if (o.role === "frames") delete wf[o.node];
   if (ctx.op === "remove-object" && !handOff) for (const o of manifest.outputs) if (o.role === "mask") delete wf[o.node];
   const metaBatch = Object.values(wf).some((n) => n.class_type === "VHS_BatchManager");
   return {
@@ -2024,11 +2321,23 @@ export function withoutAnchor(wf: ComfyWorkflow, loaderId: string): ComfyWorkflo
 /** What ComfyUI's /prompt answers when it refuses a graph. */
 export type PromptRefusalBody = { error?: { type?: string; message?: string; extra_info?: { class_type?: string } }; node_errors?: unknown };
 
+/** A 2K finish refused because the latent file it loads isn't on that ComfyUI (Load Refined Latent's list of files). */
+export function latentGone(body: PromptRefusalBody, manifest: Pick<ManifestWorkflow, "id">): boolean {
+  if (manifest.id !== REGEN_LATENT_WORKFLOW || !body.node_errors || typeof body.node_errors !== "object") return false;
+  return Object.values(body.node_errors as Record<string, { class_type?: unknown }>).some((n) => n?.class_type === "OpenH3LoadRefinedLatent");
+}
+
 /**
  * A /prompt refusal in words, with what was missing as a code its failed tile turns into "Fix it" (the GPU pre-flight's
  * guided fix). The same for the server's own ComfyUI, a link, and one on someone's computer (its tab reports the answer).
  */
-export function promptRefusal(body: PromptRefusalBody, status: number, manifest: ManifestWorkflow, loras: { file: string; url?: string }[], worker: ComfyWorker = "main"): { message?: string; fix?: ReturnType<typeof fixFromPromptError> } {
+export function promptRefusal(
+  body: PromptRefusalBody,
+  status: number,
+  manifest: ManifestWorkflow,
+  loras: { file: string; url?: string }[],
+  worker: ComfyWorker = "main",
+): { message?: string; fix?: ReturnType<typeof fixFromPromptError>; details?: string; plain?: true } {
   // The index names the pack a missing class comes from, so the message names that pack, not every pack the workflow uses.
   let packOf: (cls: string) => string | undefined = () => undefined;
   try {
@@ -2040,22 +2349,47 @@ export function promptRefusal(body: PromptRefusalBody, status: number, manifest:
   // A node class the server doesn't have: name the pack to install (opt-in packs like ComfyUI-Whisper).
   const packs = missingClass?.pack ? [missingClass.pack] : manifest.customNodes.map((c) => c.name);
   const where = worker === "isolated" ? "the isolated ComfyUI worker" : "your ComfyUI";
+  // An account's run (on its own GPU, or on this install's GPUs as a hosted run) gets the visitor's words, never the owner's.
+  const visitorRun = !!ownGpu() || !!tenantAccount();
   const missingPack =
-    body.error?.type === "missing_node_type" && manifest.id === REGEN_WORKFLOW && worker === "main"
-      ? ownGpu()
+    body.error?.type === "missing_node_type" && [REGEN_WORKFLOW, REGEN_LATENT_WORKFLOW, H3_LATENT_DRAFT_WORKFLOW].includes(manifest.id) && worker === "main"
+      ? visitorRun
         ? REGEN_COPY.missingVisitor
         : REGEN_COPY.missing
+      : body.error?.type === "missing_node_type" && RTX_WORKFLOWS.has(manifest.id) && worker === "main"
+        ? visitorRun
+          ? RTX_MISSING.visitor
+          : RTX_MISSING.owner
       : body.error?.type === "missing_node_type" && packs.length
         ? `This workflow needs the ${packs.join(" + ")} node pack${packs.length > 1 ? "s" : ""} on ${where} (see scripts/comfy/README.md)`
         : undefined;
   // A LoRA it lacks: point at its model card (a civitai download URL answers 401 without the key) and the LoRA folder setting.
+  // A 2K finish whose draft's saved latent is gone (someone's computer: its tab reports the refusal): plain words, no file.
+  if (latentGone(body, manifest)) return { message: REGEN_COPY.latentGone, plain: true };
   const loraModels = loras.map((l) => ({ file: l.file, folder: "loras", url: loraByFile(l.file)?.page ?? (l.url && !needsToken(l.url) ? l.url : undefined) }));
   let detail = body.node_errors && Object.keys(body.node_errors as object).length ? explainComfyError(body.node_errors, { ...manifest, models: [...manifest.models, ...loraModels] }) : (missingPack ?? (typeof body.error?.message === "string" ? body.error.message.slice(0, 1024) : undefined));
   // (Settings → LoRAs is the owner's page, for the server's own ComfyUI: an account's, or one on a computer, gets its LoRAs by hand.)
   if (detail && !ownGpu() && !computerScope() && loraModels.some((l) => detail!.includes(`"${l.file}"`))) detail = `${detail}\nSet the LoRA folder in Settings → LoRAs and Fuobe downloads LoRAs before a run`;
   void status;
-  return { message: detail, ...(fix && { fix }) };
+  // An account's own GPU (a link or this computer): what is missing in plain words, with "Fix it"; ComfyUI's own words
+  // (and the file's folder and download) go in the details line.
+  if (ownGpu() && fix && (fix.code === "comfy_missing_node" || fix.code === "comfy_missing_model") && missingPack !== REGEN_COPY.missingVisitor && missingPack !== RTX_MISSING.visitor) {
+    const first = fix.items[0];
+    const name = fix.code === "comfy_missing_node" ? (first?.pack ?? first?.class) : first?.file;
+    if (name) {
+      const words =
+        fix.code === "comfy_missing_node"
+          ? `Your ComfyUI needs one add-on for this: ${name}. Press Fix it to add it.`
+          : `Your ComfyUI needs one more file for this: ${name}. Press Fix it to see how to add it.`;
+      return { message: words, fix, plain: true, ...(detail && detail !== words && { details: detail.replace(/\s*\(see scripts\/comfy\/README\.md\)/, "") }) };
+    }
+  }
+  const plain = !!detail && (detail === REGEN_COPY.missingVisitor || detail === RTX_MISSING.visitor);
+  return { message: detail, ...(fix && { fix }), ...(plain && { plain: true as const }) };
 }
+
+/** The NVIDIA RTX Video graphs (their pack is installed only on an NVIDIA RTX host). */
+const RTX_WORKFLOWS: ReadonlySet<string> = new Set([RTX_UPSCALE_WORKFLOW, RTX_FRAMEGEN_WORKFLOW, RTX_HDR_WORKFLOW]);
 
 /** Friendlier words for errors that a workflow's nodes report in their own terms. */
 function explainExecutionError(err: { exception_message?: string; node_type?: string } | undefined, manifest?: ManifestWorkflow): string {
@@ -2075,6 +2409,30 @@ const executionError = (entry: HistoryEntry) => entry.status?.messages?.find(([t
 const promptHasPrefix = (prompt: unknown, prefix: string) =>
   !!prompt && typeof prompt === "object" && Object.values(prompt as ComfyWorkflow).some((n) => n?.inputs?.filename_prefix === prefix);
 
+/** An EXR export's per-frame files (bundleFrames zips them); everything else is a finished result. */
+const isFrame = (o: ComfyOutput) => o.meta?.role === "frames";
+
+/**
+ * A meta-batch pass's place in its job. ComfyUI numbers the first pass as queued (0 or more); VHS re-queues each later
+ * pass under the negated, growing server count (-k, -k-1, …), so a later pass has a more negative number.
+ */
+const passOrder = (e: { prompt?: unknown[] }) => {
+  const n = Number(e.prompt?.[0] ?? 0);
+  return n >= 0 ? 0 : -n;
+};
+
+/**
+ * A meta-batch job's results from its passes (in any order): the clips the last pass saved (only the last pass saves
+ * a video), then every pass's EXR frames in pass order (a frame saver writes in each pass). Empty while no pass saved a
+ * finished result. `collect` reads one pass's files.
+ */
+export function metaBatchResults<E extends { prompt?: unknown[] }>(passes: E[], collect: (e: E) => ComfyOutput[]): ComfyOutput[] {
+  const files = [...passes].sort((a, c) => passOrder(a) - passOrder(c)).map(collect);
+  const last = files.findLastIndex((f) => f.some((o) => !isFrame(o)));
+  if (last < 0) return [];
+  return [...files[last].filter((o) => !isFrame(o)), ...files.flatMap((f) => f.filter(isFrame))];
+}
+
 /**
  * VHS meta-batching re-queues the prompt (new prompt ids) until every frame is done; only the last pass
  * saves the video. Follow the passes by their shared filename prefix.
@@ -2082,18 +2440,16 @@ const promptHasPrefix = (prompt: unknown, prefix: string) =>
 async function followMetaBatch(prefix: string, manifest: ManifestWorkflow | undefined, worker: ComfyWorker): Promise<ComfyOutput[] | "running" | { error: string } | null> {
   const queue = await comfyJson<{ queue_running?: unknown[][]; queue_pending?: unknown[][] }>("/queue", worker);
   if ([...(queue.queue_running ?? []), ...(queue.queue_pending ?? [])].some((q) => promptHasPrefix(q[2], prefix))) return "running";
-  const hist = await comfyJson<Record<string, HistoryEntry>>("/history?max_items=64", worker);
-  const passes = Object.values(hist)
-    .filter((e) => promptHasPrefix(e.prompt?.[2], prefix))
-    .sort((a, c) => Number(c.prompt?.[0] ?? 0) - Number(a.prompt?.[0] ?? 0));
+  const read = async (n: number) => Object.values(await comfyJson<Record<string, HistoryEntry>>(`/history?max_items=${n}`, worker)).filter((e) => promptHasPrefix(e.prompt?.[2], prefix));
+  const collect = (e: HistoryEntry) => collectOutputs(e, manifest, baseUrl(worker), authHeaders(worker));
+  let passes = await read(64);
+  // Frames in each pass: every pass is needed, so look further back.
+  if (passes.some((e) => collect(e).some(isFrame))) passes = await read(META_BATCH_HISTORY);
   // A pass that failed (out of memory, a node exception) ends the job: say why instead of "no output".
   const failed = passes.find((e) => e.status?.status_str === "error");
   if (failed) return { error: explainExecutionError(executionError(failed), manifest) };
-  for (const e of passes) {
-    const files = collectOutputs(e, manifest, baseUrl(worker), authHeaders(worker));
-    if (files.length) return files;
-  }
-  return null;
+  const files = metaBatchResults(passes, collect);
+  return files.length ? files : null;
 }
 
 /** A window preview H3 Relay writes (a 512 px clip or still): anything bigger isn't kept. */
@@ -2161,7 +2517,10 @@ async function uploadTo(worker: ComfyWorker, data: Buffer, contentType: string, 
   form.append("image", new Blob([new Uint8Array(data)], { type: contentType }), `fuobe_${nanoid(8)}.${ext}`);
   form.append("type", "input");
   form.append("overwrite", "true");
-  const res = await comfyFetch("/upload/image", { method: "POST", body: form }, worker);
+  const res = await comfyFetch("/upload/image", { method: "POST", body: form }, worker, { bytes: data.length });
+  // An account's link: its answer read for the person (a stopped pod, the address's own size limit…).
+  const link = ownLink();
+  if (link && !res.ok) throw await linkAnswer(res, { stage: "upload", bytes: data.length }, link);
   if (res.status === 413) {
     discardBody(res);
     // ComfyUI's own limit (--max-upload-size, 100 MB unless it was started with more).
@@ -2172,7 +2531,16 @@ async function uploadTo(worker: ComfyWorker, data: Buffer, contentType: string, 
     const text = (await res.text().catch(() => "")).slice(0, 500);
     throw worker === "isolated" ? isolatedAnswer("an upload", res.status, reasonOf(text)) : new ProviderError(`ComfyUI upload failed: ${res.status} ${text}`);
   }
-  const j = (await res.json()) as { name: string; subfolder?: string };
+  let j: { name: string; subfolder?: string };
+  if (link) {
+    // A web page instead of ComfyUI's answer (a proxy's or a tunnel's page): said as such, never a parser's words.
+    const text = await res.text().catch(() => "");
+    try {
+      j = JSON.parse(text);
+    } catch {
+      throw gpuTrouble({ stage: "upload", status: res.status, body: text.slice(0, 4096), contentType: res.headers.get("content-type") ?? undefined }, link);
+    }
+  } else j = (await res.json()) as { name: string; subfolder?: string };
   const uploaded = j.subfolder ? `${j.subfolder}/${j.name}` : j.name;
   // Remember a clip's / track's header facts (length, size, fps, audio) for prepareWorkflow.
   rememberSent(uploaded, data, contentType, name);
@@ -2260,19 +2628,18 @@ export function planRelayOutputs(t: Pick<TaskRow, "id" | "workflow_id" | "meta_b
   try {
     manifest = t.workflow_id ? getWorkflow(t.workflow_id).manifest : undefined;
   } catch {}
-  const list = (passes ? [...entries].sort((a, c) => Number(c.prompt?.[0] ?? 0) - Number(a.prompt?.[0] ?? 0)) : entries.slice(0, 1)) as HistoryEntry[];
+  const list = (passes ? entries : entries.slice(0, 1)) as HistoryEntry[];
   // A pass that failed (out of memory, a node exception) ends the job: say why instead of "no output".
   const failed = list.find((e) => e?.status?.status_str === "error");
   if (failed) {
     const interrupted = failed.status?.messages?.some(([type]) => type === "execution_interrupted");
     return { error: interrupted ? RELAY_WORDS.stopped : explainExecutionError(executionError(failed), manifest) };
   }
-  let outputs: ComfyOutput[] = [];
-  for (const e of list) {
-    outputs = collectOutputs(e, manifest, `relay:${t.id}`);
-    if (outputs.length) break;
-  }
-  if (!outputs.length) return t.meta_batch && !passes && t.prefix ? { follow: t.prefix } : { error: "This run finished without a result. Press Retry." };
+  const collect = (e: HistoryEntry) => collectOutputs(e, manifest, `relay:${t.id}`);
+  let outputs: ComfyOutput[] = passes ? metaBatchResults(list, collect) : list[0] ? collect(list[0]) : [];
+  // A meta-batch's first pass may have saved only its EXR frames: the clip comes with the last pass.
+  if (t.meta_batch && !passes && t.prefix && !outputs.some((o) => !isFrame(o))) return { follow: t.prefix };
+  if (!outputs.length) return { error: "This run finished without a result. Press Retry." };
   const account = tenantAccount();
   let budget = Infinity;
   if (account) {
@@ -2331,16 +2698,27 @@ async function pollComputer(principal: Principal, meta: Record<string, unknown>,
   // Sent, and the computer's tab stopped answering (closed, asleep): not a run that looks alive for half an hour.
   const r = t.state === "waiting" || t.pools ? null : runnerFacts(principal);
   const away = !t.pools && t.state !== "waiting" && (!r || Date.now() - r.seenAt >= RELAY_TIMES.onlineMs);
-  const down = t.down_at ? (t.down_why === "setting" ? RELAY_WORDS.comfyNoSetting : RELAY_WORDS.comfyDown) : away ? RELAY_WORDS.computerAway : undefined;
+  // A ComfyUI paired with a code runs the jobs itself (no Fuobe tab): one that is off is waited for in its own words.
+  const paired = !t.pools && pairedRunner(principal);
+  const down = t.down_at ? (t.down_why === "setting" ? RELAY_WORDS.comfyNoSetting : RELAY_WORDS.comfyDown) : away ? (paired ? RELAY_WORDS.pairedAway : RELAY_WORDS.computerAway) : undefined;
+  const waitedTooLong = paired ? RELAY_WORDS.pairedWaitedTooLong(waitMs) : RELAY_WORDS.waitedTooLong(waitMs);
   switch (t.state) {
     case "waiting": {
       // The computer's tab is open, but its ComfyUI is closed or runs without Fuobe's setting: say that, not "open Fuobe".
       const f = runnerFacts(principal);
-      const message = f?.online ? RELAY_WORDS.starting : f?.comfy === "no-setting" ? RELAY_WORDS.comfyNoSetting : f?.comfy === "down" ? RELAY_WORDS.comfyDown : RELAY_WORDS.noComputer;
-      return { state: "queued", message, timeoutError: RELAY_WORDS.waitedTooLong(waitMs) };
+      const message = f?.online
+        ? RELAY_WORDS.starting
+        : f?.comfy === "no-setting"
+          ? RELAY_WORDS.comfyNoSetting
+          : f?.comfy === "down"
+            ? RELAY_WORDS.comfyDown
+            : paired
+              ? RELAY_WORDS.pairedAway
+              : RELAY_WORDS.noComputer;
+      return { state: "queued", message, timeoutError: waitedTooLong };
     }
     case "sending":
-      return { state: "queued", message: down ?? (t.note === "resent" ? RELAY_WORDS.resent : sendingWords(inputKinds(t))), timeoutError: RELAY_WORDS.waitedTooLong(waitMs), ...(sentAt && { sentAt }) };
+      return { state: "queued", message: down ?? (t.note === "resent" ? RELAY_WORDS.resent : sendingWords(inputKinds(t))), timeoutError: waitedTooLong, ...(sentAt && { sentAt }) };
     case "queued":
       return { state: "queued", message: down ?? queueWords(p?.position), ...(sentAt && { sentAt }) };
     case "running": {
@@ -2421,7 +2799,12 @@ export const comfyProvider: ProviderAdapter = {
       // Fresh: a model installed a moment ago runs. (On someone's computer, nothing to ask: its ComfyUI has the last word.)
       dbsModels: () => comfyDbsModels(worker, 0),
       reuseModels: () => comfyReuseModels(worker, 0),
+      // The pack switched off in Settings → Models & licences: Idol 3D runs its core graph, as without the pack.
+      idolPack: async () => ((await import("@/server/model-access")).readAccess().packs.includes(IDOL_PACK) ? false : comfyHasClass(IDOL_PACK_CLASS, worker)),
     });
+    // MiniMax H3's 2K draft that kept its latent says where (the finish loads it only there: generations.ts latentHandOff).
+    const latentAt = manifest.id === H3_LATENT_DRAFT_WORKFLOW ? comfyPlace() : null;
+    if (latentAt) meta.latentAt = latentAt;
     // On someone's computer: the job waits for their Fuobe tab, which sends exactly this graph under the prompt id minted
     // here. A refusal comes back in its report, and the poll explains it as below.
     const computer = computerScope();
@@ -2452,10 +2835,33 @@ export const comfyProvider: ProviderAdapter = {
       },
       worker,
     );
-    const body = (await res.json().catch(() => ({}))) as PromptRefusalBody & { prompt_id?: string };
+    const answer = await res.text().catch(() => "");
+    let body: PromptRefusalBody & { prompt_id?: string } = {};
+    try {
+      body = (JSON.parse(answer) ?? {}) as typeof body;
+    } catch {}
+    // A 2K finish whose draft's latent isn't on this ComfyUI any more (its output folder was cleaned): the draft's clip,
+    // chained into the same run, is redrawn instead.
+    if (!res.ok && latentGone(body, manifest) && typeof input.extra?.latentFrom === "string") {
+      const { latentFrom: _gone, ...extra } = input.extra;
+      void _gone;
+      return comfyProvider.submit({ route, input: { ...input, extra }, generationId, model });
+    }
     if (!res.ok || !body.prompt_id) {
+      // The pack may have gone since the server said it had it: the next run asks again (and runs the core graph without it).
+      if (manifest.id === IDOL_WORKFLOWS.clean || manifest.id === IDOL_VIEWS_WORKFLOW) forgetComfyClass(IDOL_PACK_CLASS, worker);
       const refusal = promptRefusal(body, res.status, manifest, input.loras ?? [], worker);
       if (!refusal.message && !res.ok && worker === "isolated") throw isolatedAnswer("the prompt", res.status);
+      // An account's link: no words from ComfyUI (a stopped pod's or a proxy's page) is read for what it means; ComfyUI's
+      // own refusal is said plainly, its words in the details line.
+      const link = ownLink();
+      if (link) {
+        if (!refusal.message) throw gpuTrouble({ stage: "prompt", status: res.status, body: answer.slice(0, 4096), contentType: res.headers.get("content-type") ?? undefined }, link);
+        const d: Diagnosis = refusal.plain
+          ? { cause: "gpu-refused", words: refusal.message, ...(refusal.details && { details: refusal.details }), actions: [{ kind: "retry", label: "Retry" }], retryable: false }
+          : diagnoseRefusal(refusal.message);
+        throw Object.assign(troubleError(d, res.status), refusal.fix ? { fix: refusal.fix } : {});
+      }
       throw Object.assign(new ProviderError(refusal.message ?? `ComfyUI /prompt failed (${res.status})`, res.status), refusal.fix ? { fix: refusal.fix } : {});
     }
     if (!PROMPT_ID.test(body.prompt_id)) {
@@ -2485,10 +2891,24 @@ export const comfyProvider: ProviderAdapter = {
       if (manifest && CONTEXT_LOOP_IDS.has(manifest.id) && typeof meta.generationId === "string") void deleteRunFolder(runName(meta.generationId), worker);
       if (entry.status?.status_str === "error") {
         forget(externalId);
+        const link = ownLink();
+        if (link) {
+          // An account's link: stopped there, out of memory, or an add-on's exception, said plainly (its words go in details).
+          const err = executionError(entry);
+          const said = explainExecutionError(err, manifest);
+          const interrupted = !err && entry.status?.messages?.some(([type]) => type === "execution_interrupted");
+          const d = interrupted
+            ? diagnoseGpuJob({ kind: "interrupted" }, link)
+            : err && said !== `${err.node_type}: ${(err.exception_message ?? "").trim()}`
+              ? { cause: "gpu-job-error" as const, words: said, actions: [{ kind: "retry" as const, label: "Retry" }], retryable: false }
+              : diagnoseGpuJob({ kind: "error", nodeType: err?.node_type, message: err?.exception_message }, link);
+          return { state: "failed" as const, error: d.words, trouble: d };
+        }
         return { state: "failed" as const, error: explainExecutionError(executionError(entry), manifest) };
       }
       let outputs = collectOutputs(entry, manifest, baseUrl(worker), authHeaders(worker));
-      if (!outputs.length && meta.metaBatch && typeof meta.prefix === "string") {
+      // A meta-batch's first pass may have saved only its EXR frames: the clip comes with the last pass.
+      if (meta.metaBatch && typeof meta.prefix === "string" && !outputs.some((o) => !isFrame(o))) {
         const next = await followMetaBatch(meta.prefix, manifest, worker);
         if (next === "running") return { state: "running" as const, message: "Rendering the next batch of frames" };
         if (next && "error" in next) {
@@ -2527,8 +2947,14 @@ export const comfyProvider: ProviderAdapter = {
       const misses = globalThis.__fuobeComfyMisses ?? (globalThis.__fuobeComfyMisses = new Map());
       const n = (misses.get(externalId) ?? 0) + 1;
       misses.set(externalId, n);
-      if (n < 3) return { state: "running", message: "Checking on ComfyUI" };
+      const link = ownLink();
+      if (n < 3) return { state: "running", message: link ? "Checking on your GPU" : "Checking on ComfyUI" };
       forget(externalId);
+      // An account's link: the runner may send it once more (generations.ts), as a computer's tab does.
+      if (link) {
+        const d = diagnoseGpuJob({ kind: "lost" }, link);
+        return { state: "failed", error: d.words, trouble: d, lost: true };
+      }
       return { state: "failed", error: "ComfyUI restarted and lost this run. Press Retry." };
     }
     globalThis.__fuobeComfyMisses?.delete(externalId);
@@ -2561,6 +2987,12 @@ export const comfyProvider: ProviderAdapter = {
   },
 
   async test(opts) {
+    // The WorldCast worker's address (Settings → Open-source engine, beside the isolated worker): that worker answers.
+    if (opts?.focus === "worldcastUrl") {
+      const h = await worldcastHealth(10_000);
+      if (h.ok) globalThis.__fuobeWorldcast = { base: worldcastBase(), at: Date.now(), ok: true, depth: h.depth ?? [] };
+      return { ok: h.ok, detail: h.detail };
+    }
     // On someone's computer: what its tab last said about it.
     const computer = computerScope();
     if (computer) {

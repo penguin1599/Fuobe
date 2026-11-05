@@ -70,8 +70,10 @@ export const DBS_OPEN_ONLY_NOTE = "Keeping the music and sound effects of the or
 /**
  * The open engine's voice split (the dub's first step), the "Voice split" setting. DBS was trained for film-style
  * dialogue, music and effects, so the background keeps the score, the sound effects and any singing; MelBand RoFormer
- * is a vocals model (singing goes with the voice and is replaced). MelBand stays the default until the separation
- * evaluation (DBS D4) says otherwise. Both return the same stems and cues, so nothing after the split changes.
+ * is a vocals model (singing goes with the voice and is replaced). MelBand stays the default: on the separation suite's
+ * synthetic mixes (no singing, synthesized effects; DBS D4, docs/research/dbs-separation-7.md §9 D4) it scored higher than
+ * DBS and its transcripts were as good, so DBS becomes the default only when real clips rated blind say so. Both return
+ * the same stems and cues, so nothing after the split changes.
  */
 export const VOICE_SPLITS = {
   melband: { modelId: "oss-voice-separate", name: "MelBand RoFormer", note: MUSIC_MODEL_NOTE },
@@ -151,6 +153,46 @@ export interface PrepareInput {
   title?: string;
   /** Open engine: the voice split (default DEFAULT_VOICE_SPLIT). The cloud ignores it. */
   voiceSplit?: VoiceSplit;
+  /**
+   * "gpu": the translations run on the asker's own ComfyUI (Qwen3.5 4B, GPU_TRANSLATE_MODEL), never on the install's
+   * AI helper: a signed-in account's dub, on either engine. Default: the install's text model (DUB_STEP_MODELS).
+   */
+  translator?: "gpu";
+  /** The video's length (seconds): how long a GPU translation may write. */
+  seconds?: number;
+}
+
+/** The ComfyUI translator an account's dub uses (translate-qwen35-textgen): on its own GPU, timings kept. */
+export const GPU_TRANSLATE_MODEL = "oss-qwen35-translate";
+
+/**
+ * The GPU translator's instruction: the transcript reaches it as the chained JSON list of timed lines, and its answer is
+ * one "start-end: text" line per line, which the result reads back as timed lines.
+ */
+export const GPU_TRANSLATE_INSTRUCTION =
+  'The text below is a JSON list of subtitle lines. Each line has a "start" and an "end" time in seconds and its "text". Translate the text of every line into {language}. Write one line per item, in the same order, as start-end: translation, with the start and end numbers exactly as given (for example 0.5-2.75: translation). Keep each translation about as long as the original so it can be spoken in the same time. Output only those lines.\n\n';
+
+/** How many tokens the GPU translator may write for a video this long (about 10 a second, within its limits). */
+export function gpuTranslateTokens(seconds?: number): number {
+  if (!seconds || !(seconds > 0)) return 8192;
+  return Math.min(16_384, Math.max(2048, Math.ceil(seconds * 10)));
+}
+
+/** Who is looking, as the studio's status says it (useStatus().data?.viewer): its own GPU and keys. */
+export interface DubViewer {
+  kind: "guest" | "account";
+  gpu?: { connected: boolean };
+  keys?: readonly string[];
+}
+
+/**
+ * Whether "Review the script first" waits for the viewer's own GPU: a signed-in account's translations run there
+ * (GPU_TRANSLATE_MODEL; no fal.ai or Replicate model translates text), so an account with a key and no GPU dubs in one
+ * shot on its key instead, or connects its GPU for the review. False for the owner, a guest (asked to sign up first) and
+ * an account with neither (asked to connect before its video is added).
+ */
+export function stepsNeedGpu(viewer: DubViewer | undefined): boolean {
+  return viewer?.kind === "account" && !viewer.gpu?.connected && !!viewer.keys?.length;
 }
 
 /** Step 1 (both engines): the voice to clone, the timed transcript and one translation per target language. */
@@ -166,9 +208,13 @@ export function prepareSteps(o: PrepareInput): DubStep[] {
     chain: [{ slot: "prompt" }],
     request: {
       ...base,
-      modelId: o.engine === "open" ? DUB_STEP_MODELS.open.translate : DUB_STEP_MODELS.cloud.translate,
+      modelId: o.translator === "gpu" ? GPU_TRANSLATE_MODEL : o.engine === "open" ? DUB_STEP_MODELS.open.translate : DUB_STEP_MODELS.cloud.translate,
       op: "translate",
-      params: { targetLanguage: lang.name, ...(from && { sourceLanguage: from }) },
+      params: {
+        targetLanguage: lang.name,
+        ...(from && { sourceLanguage: from }),
+        ...(o.translator === "gpu" && { extra: { instruction: GPU_TRANSLATE_INSTRUCTION, maxTokens: gpuTranslateTokens(o.seconds) } }),
+      },
       step: step(`Translate · ${lang.name}`, i, of),
     },
   });

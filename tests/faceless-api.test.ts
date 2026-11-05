@@ -1,6 +1,10 @@
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import type { EpisodeSettings, EpisodeView, FacelessChannel, FacelessEpisode } from "@/lib/catalog/faceless";
 import { tempDir } from "./helpers/temp-dir";
+
+// Regenerate is switched off for now (REGEN_OFFERED); Faceless's Regenerate to 1080p is checked as it runs once switched on.
+// tests/regenerate-held.test.ts checks that every way in refuses it while it is off.
+vi.mock("@/lib/catalog/regenerate", async (importOriginal) => ({ ...(await importOriginal<typeof import("@/lib/catalog/regenerate")>()), REGEN_OFFERED: true }));
 
 const dir = tempDir("fuobe-faceless-");
 process.env.FUOBE_DATA_DIR = dir;
@@ -12,6 +16,7 @@ const { setSetting } = await import("@/server/settings");
 const { db } = await import("@/server/db");
 const gens = await import("@/server/generations");
 const faceless = await import("@/server/faceless");
+const { REGEN_OFFERED } = await import("@/lib/catalog/regenerate");
 const channelsRoute = await import("@/app/api/faceless/channels/route");
 const channelRoute = await import("@/app/api/faceless/channels/[id]/route");
 const topicsRoute = await import("@/app/api/faceless/topics/route");
@@ -253,6 +258,30 @@ describe("Episodes", () => {
       expect(up.request.params?.resolution).toBe("1080p");
       const upscalingOpen: EpisodeView = await (await actionRoute.POST(json("POST"), params({ id: openId, action: "upscale" }))).json();
       expect(gens.getGeneration(upscalingOpen.episode.plan!.upscaled!)).toMatchObject({ op: "upscale-video", modelId: "oss-upscale-video-esrgan", engine: "open" });
+      // Regenerate to 1080p (open engine only): every scene redrawn by Open-H3 Regenerate, joined and mixed again with the
+      // episode's own narration and subtitles timing; the cloud shows no Regenerate.
+      expect(doneCloud.regenerate).toBeNull();
+      // Offered on the open engine while Regenerate is (REGEN_OFFERED, switched on for this file).
+      expect(REGEN_OFFERED).toBe(true);
+      expect(doneOpen.regenerate).toEqual({ scenes: 6, demo: true });
+      expect((await actionRoute.POST(json("POST"), params({ id: cloudId, action: "regenerate" }))).status).toBe(422);
+      const regenOpen: EpisodeView = await (await actionRoute.POST(json("POST"), params({ id: openId, action: "regenerate" }))).json();
+      const rIds = regenOpen.episode.plan!.regenerated!.ids;
+      const redraws = Object.entries(rIds).filter(([k]) => k.endsWith("-regen")).map(([, g]) => gens.getGeneration(g)!);
+      expect(redraws).toHaveLength(6);
+      for (const g of redraws) {
+        expect(g).toMatchObject({ modelId: "oss-h3-regenerate", op: "upscale-video", engine: "open" });
+        expect(g.request.params).toMatchObject({ resolution: "1080p", extra: { startSigma: 0.8, draftFrom: "other" } });
+        expect(g.request.prompt?.length).toBeGreaterThan(20);
+      }
+      // The narration, its timing and the bed are the episode's own: nothing is read or timed again.
+      expect(gens.getGeneration(rIds["regen-mix"])).toMatchObject({ op: "mux" });
+      expect(Object.keys(rIds).filter((k) => !k.startsWith("regen-"))).toEqual([]);
+      expect(Object.values(rIds)).not.toContain(doneOpen.episode.plan!.ids.narration);
+      expect(regenOpen.episode.plan!.regenerated!.final).toBe(rIds["regen-captions"]);
+      // A second click while it renders starts nothing new.
+      const again: EpisodeView = await (await actionRoute.POST(json("POST"), params({ id: openId, action: "regenerate" }))).json();
+      expect(again.episode.plan!.regenerated!.ids).toEqual(rIds);
 
       // Timeline editor: change scene 3's picture.
       const target = doneCloud.episode.script.blocks[2].id;

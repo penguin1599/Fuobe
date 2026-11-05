@@ -164,6 +164,20 @@ describe("a run on the ComfyUI on the person's own computer", () => {
     expect(t.runner.view.jobs.find((j) => j.generationId === id)?.phase).toBe("done");
   });
 
+  it("a ComfyUI paired with a code that is off: the run waits in words for that ComfyUI, not for a browser tab", async () => {
+    expect((await gpuRoute.PUT(json("/api/account/gpu", "PUT", { mode: "computer" }))).status).toBe(200);
+    // Its paired ComfyUI (Fuobe Connect, device "connect-…") beat a while ago, then went quiet: its pod stopped.
+    db()
+      .prepare("INSERT INTO relay_runners (principal, device, lease_until, seen_at, port, facts_json, comfy) VALUES (?, ?, ?, ?, NULL, '{}', 'ok')")
+      .run(`acct:${a}`, "connect-pod-1", 0, Date.now() - 10 * 60_000);
+    const pic = await uploadPng();
+    const [id] = await run({ feature: "app", modelId: "oss-qwen-edit", presetId: "app-headshot-generator", prompt: "", inputs: { images: [pic.url] } });
+    await handedOver(id);
+    expect(getGeneration(id)).toMatchObject({ status: "queued", message: RELAY_WORDS.pairedAway });
+    expect(RELAY_WORDS.pairedAway).not.toMatch(/Open Fuobe/);
+    expect(RELAY_WORDS.pairedWaitedTooLong(30 * 60_000)).toBe("Your paired ComfyUI didn't come online for 30 minutes. Start it, then press Retry.");
+  });
+
   it("explains a refusal for a missing model or node with the guided fix, and running out of memory in plain words", async () => {
     const t = tab(routes, cookie, fake.port);
     await t.runner.beat();

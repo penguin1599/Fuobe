@@ -15,6 +15,7 @@
  */
 import { scenePoster, type PresetPreview, type PreviewFx, type PreviewScene } from "../preset-cards";
 import { templateCover, templatePreview } from "../template-covers";
+import { finishLengthProblem, REGEN_FINISH_TIER, REGEN_FPS, REGEN_SMOOTH_MODEL, regenFinishSteps } from "./regenerate";
 import type { ChainSlot, Engine, Generation, GenerationRequest } from "./types";
 import { withOriginalSound, type OriginalSound } from "../av/original-sound";
 
@@ -708,12 +709,12 @@ export type ClipRef = { key: string } | { url: string };
  * are) and put the original sound back. Returns the steps and the key of the finished video
  * (undefined when there is nothing to make: one segment and no sound to add).
  */
-export function planStitch(input: ShortsPlanInput, clips: ClipRef[], suffix = ""): { steps: PlanStep[]; final?: string } {
+export function planStitch(input: ShortsPlanInput, clips: ClipRef[], suffix = "", opts: { resolution?: string } = {}): { steps: PlanStep[]; final?: string } {
   const t = SHORTS_TOOLS[input.engine];
   const base = { feature: SHORTS_FEATURE, batchTitle: input.title };
   const helper = { feature: SHORTS_STEP_FEATURE, batchTitle: input.title };
   const steps: PlanStep[] = [];
-  const params = input.engine === "open" ? { ...ratioParams(input), resolution: "480p" } : ratioParams(input);
+  const params = input.engine === "open" ? { ...ratioParams(input), resolution: opts.resolution ?? "480p" } : ratioParams(input);
   // Each join step takes its clips either chained (key) or as files (url).
   let level: ClipRef[] = clips;
   let depth = 0;
@@ -725,7 +726,7 @@ export function planStitch(input: ShortsPlanInput, clips: ClipRef[], suffix = ""
       const after = items.flatMap((c) => ("key" in c ? [c.key] : []));
       const urls = items.flatMap((c) => ("url" in c ? [c.url] : []));
       const key = last ? `join${suffix}` : `join${suffix}-${depth}-${gi}`;
-      // Files first, then chained clips: a level only ever mixes the two in that order (stitch-again fold).
+      // Files first, then chained clips (a stitch-again fold); a finished stitch's mix is placed by `at` below.
       steps.push({
         key,
         request: {
@@ -737,7 +738,10 @@ export function planStitch(input: ShortsPlanInput, clips: ClipRef[], suffix = ""
           params,
           step: { label: last ? "Stitch" : "Stitching", index: 1000 + depth, of: 1000 },
         },
-        ...(after.length ? { after, chain: after.map(() => ({ slot: "videos" as const })) } : {}),
+        // A group that mixes files and chained clips puts each chained clip at its own place (`at`), keeping the order.
+        ...(after.length
+          ? { after, chain: urls.length ? items.flatMap((c, at) => ("key" in c ? [{ slot: "videos" as const, at }] : [])) : after.map(() => ({ slot: "videos" as const })) }
+          : {}),
       });
       return { key };
     });
@@ -782,6 +786,75 @@ export function planStitch(input: ShortsPlanInput, clips: ClipRef[], suffix = ""
   return { steps: withOriginalSound(steps, key, input.originalSound, input.engine, { seconds: input.range.end - input.range.start }), final: key };
 }
 
+// ---------------------------------------------------------------------------
+// Enhance (H3 regenerate) on a segment (package n7-10; docs/research/new-models-7.md §2.10)
+
+export const ENHANCE_COPY = {
+  label: "Enhance (H3 regenerate)",
+  hint: "1080p · sharper, may redraw",
+  /** Only on your GPU: nobody hosts the open refiner. */
+  gpu: "Runs on your GPU (open source)",
+  cloudSession: "Enhance (H3 regenerate) runs on your GPU (open source): make the short on your GPU to use it",
+  done: "This take is already enhanced",
+  notReady: "Wait for this take to finish first",
+} as const;
+
+/** The segment's length in seconds (its exact frames at 16 fps on the open engine). */
+export const segmentSeconds = (seg: ShortsSegment) => (seg.frames ? seg.frames / SHORTS.openFps : seg.end - seg.start);
+
+/** Why a segment can't be enhanced in this session, or null. */
+export function enhanceProblem(input: Pick<ShortsPlanInput, "engine">, seg: ShortsSegment): string | null {
+  if (input.engine !== "open") return ENHANCE_COPY.cloudSession;
+  return finishLengthProblem(segmentSeconds(seg));
+}
+
+/**
+ * Enhance (H3 regenerate) on one segment's take: the restyle (Wan VACE, 16 fps) brought to 24 fps with RIFE, then redrawn
+ * by Open-H3 Regenerate at 1080p with the 576p preset and start sigma 0.8, from the segment's own restyle words. A new
+ * take of the segment, to compare and pick.
+ */
+export function planEnhance(input: ShortsPlanInput, seg: ShortsSegment, take: { url: string }, suffix = ""): { steps: PlanStep[]; keys: { smooth?: string; look: string } } {
+  const problem = enhanceProblem(input, seg);
+  if (problem) throw new Error(problem);
+  const plan = regenFinishSteps({
+    key: `enhance${seg.index}${suffix}`,
+    clip: { url: take.url },
+    prompt: segmentPrompt(input.look),
+    seconds: segmentSeconds(seg),
+    fps: SHORTS.openFps,
+    draftFrom: "other",
+    helper: { feature: SHORTS_STEP_FEATURE, batchTitle: input.title },
+    label: `Segment ${seg.index + 1}`,
+    ...(input.seed !== undefined ? { seed: input.seed } : {}),
+  });
+  // The redraw is the take (in History, like a restyle); RIFE's step stays a helper.
+  const steps = plan.steps.map((st) => (st.key === plan.final ? { ...st, request: { ...st.request, feature: SHORTS_FEATURE } } : st));
+  const smooth = steps.find((st) => st.request.modelId === REGEN_SMOOTH_MODEL)?.key;
+  return { steps, keys: { ...(smooth ? { smooth } : {}), look: plan.final } };
+}
+
+/**
+ * The stitch of the chosen takes when some are enhanced (1080p at 24 fps): the others are brought to 24 fps with RIFE so
+ * every clip shares one rate (the open join concatenates frames, it doesn't retime them), and the join runs at 1080p.
+ * With none enhanced it is the plain stitch.
+ */
+export function planFinishedStitch(input: ShortsPlanInput, clips: { url: string; enhanced: boolean }[], suffix = ""): { steps: PlanStep[]; final?: string } {
+  if (input.engine !== "open" || !clips.some((c) => c.enhanced)) return planStitch(input, clips.map((c) => ({ url: c.url })), suffix);
+  const helper = { feature: SHORTS_STEP_FEATURE, batchTitle: input.title };
+  const smooth: PlanStep[] = [];
+  const refs: ClipRef[] = clips.map((c, i) => {
+    if (c.enhanced) return { url: c.url };
+    const key = `smooth${suffix}-${i}`;
+    smooth.push({
+      key,
+      request: { ...helper, modelId: REGEN_SMOOTH_MODEL, op: "interpolate", inputs: { video: c.url }, params: { targetFps: REGEN_FPS, numOutputs: 1 }, step: { label: `Segment ${i + 1} to ${REGEN_FPS} fps`, index: 900 + i, of: 1000 } },
+    });
+    return { key };
+  });
+  const stitch = planStitch(input, refs, suffix, { resolution: REGEN_FINISH_TIER });
+  return { steps: [...smooth, ...stitch.steps], final: stitch.final };
+}
+
 /** The whole session: every segment's first take, the stitch and the soundtrack. */
 export function planShorts(input: ShortsPlanInput): { segments: ShortsSegment[]; steps: PlanStep[]; takes: TakeKeys[]; final?: string } {
   const segments = planSegments(input.range, input.engine, { modelId: input.modelId, fps: input.source.fps });
@@ -797,7 +870,7 @@ export function planShorts(input: ShortsPlanInput): { segments: ShortsSegment[];
 // Sessions (stored by src/server/shorts.ts, read by the page)
 
 export interface ShortsTake {
-  /** The generations of this take's steps, by role. */
+  /** The generations of this take's steps, by role (an enhanced take keeps the cut of the take it was made from). */
   cut: string;
   /** Cloud: the cut cropped to the output ratio. */
   fit?: string;
@@ -805,6 +878,8 @@ export interface ShortsTake {
   still?: string;
   frame?: string;
   look: string;
+  /** "Enhance (H3 regenerate)": the take this one redraws (its look), and RIFE's 24 fps step before the redraw. */
+  enhance?: { from: string; smooth?: string };
   createdAt: number;
 }
 
@@ -912,7 +987,14 @@ export function chainState(steps: { g?: Generation; label: string }[]): ChainSta
 }
 
 /** A take's steps with their labels. */
-export function takeSteps(t: Pick<ShortsTake, "cut" | "fit" | "still" | "frame" | "look">, gens: Record<string, Generation>): { g?: Generation; label: string }[] {
+export function takeSteps(t: Pick<ShortsTake, "cut" | "fit" | "still" | "frame" | "look" | "enhance">, gens: Record<string, Generation>): { g?: Generation; label: string }[] {
+  if (t.enhance) {
+    return [
+      { g: gens[t.enhance.from], label: "Restyling" },
+      ...(t.enhance.smooth ? [{ g: gens[t.enhance.smooth], label: `Smoothing to ${REGEN_FPS} fps` }] : []),
+      { g: gens[t.look], label: "Enhancing" },
+    ];
+  }
   return [
     { g: gens[t.cut], label: "Cutting the segment" },
     ...(t.fit ? [{ g: gens[t.fit], label: "Cropping the segment" }] : []),
@@ -927,7 +1009,7 @@ export function stitchSteps(s: Pick<ShortsStitch, "ids" | "final">, gens: Record
   const ids = s.ids.includes(s.final) ? s.ids : [...s.ids, s.final];
   return ids.map((id) => {
     const g = gens[id];
-    const label = !g ? "A step" : g.op === "concat" ? "Stitching the segments" : g.op === "trim" ? "Cutting the original sound" : g.op === "mux" ? "Putting the sound back" : "Restyling";
+    const label = !g ? "A step" : g.op === "concat" ? "Stitching the segments" : g.op === "trim" ? "Cutting the original sound" : g.op === "separate-audio" ? "Splitting the sound" : g.op === "mux" ? "Putting the sound back" : "Restyling";
     return { g, label };
   });
 }

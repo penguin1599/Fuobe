@@ -2,21 +2,36 @@ import "server-only";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import type { PlannedJob } from "@/lib/assist";
-import { finalKey, KATANA_FEATURE, KATANA_LIMITS, katanaSteps, katanaStage, motionModel, MOTION_MODELS, planSegments, currentMotionModel, stepsToRedo, type KatanaInput, type KatanaJob, type KatanaJobView, type Segment } from "@/lib/av/katana";
+import { finalKey, KATANA_FEATURE, KATANA_LIMITS, katanaSteps, katanaStage, motionModel, MOTION_MODELS, planSegments, currentMotionModel, stepsToRedo, type KatanaInput, type KatanaJob, type KatanaJobView, type KatanaStep, type Segment } from "@/lib/av/katana";
 import { getModel } from "@/lib/catalog";
-import type { Engine, Generation } from "@/lib/catalog/types";
+import type { Engine, Generation, GenerationRequest } from "@/lib/catalog/types";
+import { ACCOUNT_PROJECT_LIMITS, createAccountProject, deleteAccountProject, getAccountProject, listAccountProjects, updateAccountProject, type AccountProject } from "./account-projects";
 import { createPipeline } from "./chains";
 import { db } from "./db";
 import { cancelGeneration, createGenerations, getGeneration, previewChained } from "./generations";
 import { firstOn } from "./model-access";
 import { engineMode } from "./settings";
+import { ShortsError } from "./shorts";
 import { storedMedia } from "./storage";
+import { tenantAccount } from "./tenant";
 
 /**
  * Katana jobs: a reference edit rebuilt with your subject (src/lib/av/katana.ts plans it). The steps
  * are chained generations in one batch; the job row keeps what was asked and which generation makes
  * each step, so the studio and Assist can follow it.
+ *
+ * The owner's jobs are rows of katana_jobs. A signed-in account's (public sign-up) are its own projects of kind "katana"
+ * (account-projects.ts), read and changed only inside its own work (asAccount): another account's job, or the owner's,
+ * reads as not found, and the owner's list never has an account's. They go when the account is deleted.
  */
+
+/** An account's jobs, in the account project store. */
+const KIND = "katana";
+
+/** What an account's job keeps: the job without its id and times (the project row has them). */
+type KatanaData = Omit<KatanaJob, "id" | "createdAt" | "updatedAt">;
+
+const fromProject = (p: AccountProject<KatanaData>): KatanaJob => ({ ...p.data, id: p.id, createdAt: p.createdAt, updatedAt: p.updatedAt });
 
 interface Row {
   id: string;
@@ -37,12 +52,26 @@ function view(j: KatanaJob): KatanaJobView {
 }
 
 export function getKatana(id: string): KatanaJobView | null {
+  const account = tenantAccount();
+  if (account) {
+    const p = getAccountProject<KatanaData>(account, KIND, id);
+    return p ? view(fromProject(p)) : null;
+  }
   const r = db().prepare("SELECT * FROM katana_jobs WHERE id = ?").get(id) as Row | undefined;
   return r ? view(toJob(r)) : null;
 }
 
 export function listKatana(limit = 20): KatanaJobView[] {
-  const rows = db().prepare("SELECT * FROM katana_jobs ORDER BY updated_at DESC LIMIT ?").all(Math.max(1, Math.min(100, limit))) as Row[];
+  const n = Math.max(1, Math.min(100, limit));
+  const account = tenantAccount();
+  if (account) {
+    return listAccountProjects(account, KIND)
+      .slice(0, n)
+      .map((s) => getAccountProject<KatanaData>(account, KIND, s.id))
+      .filter((p): p is AccountProject<KatanaData> => !!p)
+      .map((p) => view(fromProject(p)));
+  }
+  const rows = db().prepare("SELECT * FROM katana_jobs ORDER BY updated_at DESC LIMIT ?").all(n) as Row[];
   return rows.map((r) => view(toJob(r)));
 }
 
@@ -57,6 +86,8 @@ function stopUnfinished(ids: string[]): void {
 export function deleteKatana(id: string): boolean {
   const j = getKatana(id);
   if (j) stopUnfinished(Object.values(j.steps));
+  const account = tenantAccount();
+  if (account) return deleteAccountProject(account, KIND, id);
   return db().prepare("DELETE FROM katana_jobs WHERE id = ?").run(id).changes > 0;
 }
 
@@ -64,9 +95,17 @@ function saveJob(j: KatanaJob): KatanaJob {
   const { id, createdAt, ...data } = j;
   const now = Date.now();
   delete (data as Partial<KatanaJob>).updatedAt;
+  const account = tenantAccount();
+  if (account) {
+    const saved = updateAccountProject(account, KIND, id, { data, summary: summaryOf(data) });
+    return { ...j, id, createdAt, updatedAt: saved?.updatedAt ?? now };
+  }
   db().prepare("UPDATE katana_jobs SET data_json = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(data), now, id);
   return { ...j, id, createdAt, updatedAt: now };
 }
+
+/** An account's job's line in its list. */
+const summaryOf = (d: KatanaData) => ({ engine: d.engine, segments: d.segments.length });
 
 const inputOf = (j: KatanaJob): KatanaInput => ({
   engine: j.engine,
@@ -80,11 +119,8 @@ const inputOf = (j: KatanaJob): KatanaInput => ({
   title: j.title,
 });
 
-/**
- * Retry a run whose steps failed: the failed steps and every step after them are made again (new
- * generations in the same batch, fed by the steps that did finish); nothing that succeeded is paid twice.
- */
-export function retryKatana(id: string): KatanaJobView {
+/** The steps a retry makes again: the failed ones and every step after them (in order), with the job. */
+function retryPlan(id: string): { j: Omit<KatanaJobView, "generations">; steps: KatanaStep[]; redo: string[] } {
   const found = getKatana(id);
   if (!found) throw new Error("This run no longer exists");
   const { generations, ...j } = found;
@@ -96,7 +132,21 @@ export function retryKatana(id: string): KatanaJobView {
     .map(([k]) => k);
   if (!failed.length) throw new Error("No step failed — the run is done or still going");
   const steps = katanaSteps(inputOf(j));
-  const redo = stepsToRedo(steps, failed);
+  return { j, steps, redo: stepsToRedo(steps, failed) };
+}
+
+/** What a retry would make, as the requests it makes (account-tool-run.ts checks them before anything starts). */
+export function katanaRetrySteps(id: string): { request: GenerationRequest; deps: number }[] {
+  const { steps, redo } = retryPlan(id);
+  return redo.map((key) => toolStep(steps.find((x) => x.key === key)!));
+}
+
+/**
+ * Retry a run whose steps failed: the failed steps and every step after them are made again (new
+ * generations in the same batch, fed by the steps that did finish); nothing that succeeded is paid twice.
+ */
+export function retryKatana(id: string): KatanaJobView {
+  const { j, steps, redo } = retryPlan(id);
   // Old steps downstream of the failure that are still waiting would fail anyway: stop them now.
   stopUnfinished(redo.map((k) => j.steps[k]).filter(Boolean));
   const ids = { ...j.steps };
@@ -120,10 +170,7 @@ export function retryKatana(id: string): KatanaJobView {
 
 /** The same reference, photos and settings as a new run. */
 export function rerunKatana(id: string): KatanaJobView {
-  const j = getKatana(id);
-  if (!j) throw new Error("This run no longer exists");
-  const aspect = j.aspectRatio === "16:9" || j.aspectRatio === "9:16" || j.aspectRatio === "1:1" ? j.aspectRatio : undefined;
-  return createKatana({ ...inputOf(j), aspectRatio: aspect, duration: j.segments.at(-1)?.end });
+  return createKatana(rerunBody(id));
 }
 
 const Seg = z.object({ start: z.number().min(0).max(KATANA_LIMITS.maxReference), end: z.number().min(0).max(KATANA_LIMITS.maxReference + 1) });
@@ -183,9 +230,39 @@ export function planKatana(body: KatanaRequest): { input: KatanaInput; engine: E
   };
 }
 
-export function createKatana(body: KatanaRequest): KatanaJobView {
+/** A step as the request it makes, with how many earlier steps it waits for. */
+const toolStep = (s: KatanaStep): { request: GenerationRequest; deps: number } => ({ request: s.chain ? { ...s.request, chain: s.chain } : s.request, deps: [s.after ?? []].flat().length });
+
+/** A planned run (nothing is created yet): its input, engine and steps. */
+export interface KatanaRun {
+  input: KatanaInput;
+  engine: Engine;
+  steps: KatanaStep[];
+}
+
+/** Plan a run: its segments and steps, validated (reads the reference's header only). */
+export function planKatanaRun(body: KatanaRequest): KatanaRun {
   const { input, engine } = planKatana(body);
-  const steps = katanaSteps(input);
+  return { input, engine, steps: katanaSteps(input) };
+}
+
+/** A planned run's steps as the requests they make (account-tool-run.ts). */
+export const katanaRunSteps = (r: KatanaRun) => r.steps.map(toolStep);
+
+/** The same reference, photos and settings as a new run's request (Run again). */
+export function rerunBody(id: string): KatanaRequest {
+  const j = getKatana(id);
+  if (!j) throw new Error("This run no longer exists");
+  const aspect = j.aspectRatio === "16:9" || j.aspectRatio === "9:16" || j.aspectRatio === "1:1" ? j.aspectRatio : undefined;
+  return { ...inputOf(j), aspectRatio: aspect, duration: j.segments.at(-1)?.end };
+}
+
+export function createKatana(body: KatanaRequest): KatanaJobView {
+  return startKatana(planKatanaRun(body));
+}
+
+/** Start a planned run and keep its job (the owner's row, or the account's own project). */
+export function startKatana({ input, engine, steps }: KatanaRun): KatanaJobView {
   const run = createPipeline(steps, {});
   const now = Date.now();
   const job: KatanaJob = {
@@ -206,6 +283,16 @@ export function createKatana(body: KatanaRequest): KatanaJobView {
     updatedAt: now,
   };
   const { id, createdAt, updatedAt, ...data } = job;
+  const account = tenantAccount();
+  if (account) {
+    try {
+      return view(fromProject(createAccountProject<KatanaData>(account, KIND, { name: data.title, data, summary: summaryOf(data) })));
+    } catch (e) {
+      // Kept no job: the steps just made are stopped (nothing more is spent).
+      stopUnfinished(Object.values(job.steps));
+      throw e;
+    }
+  }
   db().prepare("INSERT INTO katana_jobs (id, data_json, created_at, updated_at) VALUES (?, ?, ?, ?)").run(id, JSON.stringify(data), createdAt, updatedAt);
   return view(job);
 }
@@ -283,3 +370,13 @@ export const katanaTool = {
 };
 
 export { KATANA_FEATURE, katanaStage };
+
+/**
+ * An account keeps its Katana runs as its own projects: room for one more, checked before anything is made (a
+ * ShortsError, 409, when it has as many as it may keep).
+ */
+export function katanaRoom(accountId: string): void {
+  if (listAccountProjects(accountId, KIND).length >= ACCOUNT_PROJECT_LIMITS.projects) {
+    throw new ShortsError(`You can keep up to ${ACCOUNT_PROJECT_LIMITS.projects} Katana runs. Delete one to make another.`, 409);
+  }
+}

@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { PhoneNavButton } from "@/components/nav/phone-nav-button";
 import { Slider } from "@/components/ui/slider";
 import { kindOfFile, MAX_MB, MediaSlot, type SlotValue } from "@/components/studio/media-slot";
-import { uploadFile, useViewer } from "@/lib/api";
+import { askToSignUp, uploadFile, useIsAccount, useIsGuest, useViewer } from "@/lib/api";
 import { applyPreset, CONTROLS, describeGrade, FRAGMENT, isNeutral, NEUTRAL, PRESETS, uniforms, VERTEX, type Grade } from "@/lib/grade";
 import { cn } from "@/lib/utils";
 import { loseContext as loseGlContext, releaseVideo } from "@/lib/media-release";
@@ -164,8 +164,11 @@ function Grader() {
   /** The graded file being rendered, where it goes and (for a clip) how far along it is. */
   const [saving, setSaving] = useState<null | { to: "download" | "library"; progress?: number }>(null);
   const [saved, setSaved] = useState<string | null>(null);
-  // Saving goes to the studio's library, which only its owner can change: everyone else downloads.
+  // The owner saves to the studio's library, an account to its own runs; a guest's Save asks it to sign up first.
   const owner = useViewer().data?.owner;
+  const account = useIsAccount();
+  const guest = useIsGuest();
+  const canSave = !!owner || account || guest;
   const box = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const renderer = useRef<GradeRenderer | null>(null);
@@ -296,17 +299,22 @@ function Grader() {
 
   /** A picked file's upload, made the first time the owner saves a grade of it (the stage reads it from this browser). */
   const uploadedSource = useRef<{ file: File; url: string } | null>(null);
-  /** Where the graded file came from, as the library keeps it: a file on the server, never this browser's blob: address. */
-  const sourceUrl = async (from: Input): Promise<string> => {
+  /**
+   * Where the graded file came from, as the library keeps it: a file on the server, never this browser's blob: address.
+   * An account's run names only its own stored files (a file picked here stays in its browser), so none otherwise.
+   */
+  const sourceUrl = async (from: Input): Promise<string | null> => {
+    if (account) return !from.file && from.url.startsWith("/api/files/") ? from.url : null;
     if (!from.file) return from.url;
     if (from.file.size > MAX_MB * 1024 * 1024) throw new Error(`That file's over ${MAX_MB} MB, so it can't go in your library. Download keeps the graded copy.`);
     if (uploadedSource.current?.file !== from.file) uploadedSource.current = { file: from.file, url: (await uploadFile(from.file)).url };
     return uploadedSource.current.url;
   };
 
-  /** Keeps the graded file in the library, made from `from` (sourceUrl). */
-  const record = async (file: File, kind: "image" | "video", from: string) => {
-    const asset = await uploadFile(file);
+  /** Keeps the graded file in the library (an account's: in its runs), made from `from` (sourceUrl). */
+  const record = async (file: File, kind: "image" | "video", from: string | null) => {
+    // Rendered here, so any account may keep it (no model made it).
+    const asset = await uploadFile(file, { kinetic: account });
     const res = await fetch("/api/generations/local", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -315,14 +323,14 @@ function Grader() {
         modelId: "local-color-grade",
         op: "grade",
         prompt: describeGrade(grade, PRESETS.find((p) => p.id === preset)?.name),
-        inputs: kind === "video" ? { video: from } : { images: [from] },
+        inputs: !from ? {} : kind === "video" ? { video: from } : { images: [from] },
         params: { extra: { grade } },
         output: { url: asset.url, kind, contentType: asset.contentType },
       }),
     });
     if (!res.ok) throw responseError(res, ((await res.json()) as { error?: string }).error ?? "Couldn't save");
     setSaved(asset.url);
-    toast.success("Saved to your library");
+    toast.success(account ? "Saved to your runs" : "Saved to your library");
   };
 
   /** The graded picture as a PNG, at full size (or the largest this browser's WebGL draws). */
@@ -393,18 +401,19 @@ function Grader() {
   };
 
   /**
-   * Renders the graded picture or clip in the browser, then downloads it or (the owner) saves it to the library. A save
-   * keeps the picked file first, so one the library can't take says so before a clip plays through.
+   * Renders the graded picture or clip in the browser, then downloads it or saves it (the owner's library, an account's
+   * runs). A save keeps the picked file first, so one the library can't take says so before a clip plays through.
    */
   const exportTo = async (to: "download" | "library") => {
     if (!source || !input) return;
+    if (to === "library" && guest) return askToSignUp("upload");
     setSaving({ to, progress: source instanceof HTMLVideoElement ? 0 : undefined });
     try {
       const from = to === "library" ? await sourceUrl(input) : null;
       const file = source instanceof HTMLVideoElement ? await renderVideo(source, (progress) => setSaving({ to, progress })) : await renderImage(source);
       if (!file || !alive.current) return;
       if (to === "download") downloadBlob(file, file.name);
-      else if (from) await record(file, file.type.startsWith("video/") ? "video" : "image", from);
+      else await record(file, file.type.startsWith("video/") ? "video" : "image", from);
     } catch (e) {
       if (alive.current) toastError(e);
     } finally {
@@ -428,7 +437,7 @@ function Grader() {
     if (!v?.ref || v.uploading) return;
     open({ url: v.ref, kind: v.kind === "video" ? "video" : "image" });
   };
-  /** A file picked or dropped here: graded in this browser, so anyone can grade their own (uploaded only when the owner saves). */
+  /** A file picked or dropped here: graded in this browser, so anyone can grade their own (the owner's is uploaded when they save). */
   const pickFile = (f: File) => open({ url: URL.createObjectURL(f), kind: kindOfFile(f) === "video" ? "video" : "image", file: f });
 
   return (
@@ -456,10 +465,12 @@ function Grader() {
               <div>
                 <p className="font-heading text-[24px] text-white">Grade a photo or a clip</p>
                 <p className="mt-1 text-[13px]">
-                  {/* Only the owner saves to the library; everyone else downloads the graded copy. */}
+                  {/* The owner saves to the library, an account to its runs; a guest downloads the graded copy. */}
                   {owner
                     ? "Drop a file, or pick one from your library. Nothing is uploaded until you save."
-                    : "Drop a photo or a clip, or pick one. It stays in your browser, and Download saves the graded copy."}
+                    : account
+                      ? "Drop a photo or a clip, or pick one. It stays in your browser until you save the graded copy."
+                      : "Drop a photo or a clip, or pick one. It stays in your browser, and Download saves the graded copy."}
                 </p>
               </div>
               <div className="flex gap-2">
@@ -592,20 +603,20 @@ function Grader() {
               <Button variant="ghost" size="sm" disabled={neutral} onClick={() => (setGrade(NEUTRAL), setPreset(undefined))}>
                 <RotateCcw /> Reset
               </Button>
-              <Button className={cn(!owner && "flex-1")} variant={owner ? "outline" : "default"} size="sm" disabled={!source || saving !== null} onClick={() => exportTo("download")}>
+              <Button className={cn(!canSave && "flex-1")} variant={canSave ? "outline" : "default"} size="sm" disabled={!source || saving !== null} onClick={() => exportTo("download")}>
                 {saving?.to === "download" ? <Loader2 className="animate-spin" /> : <Download />}
                 {rendering("download") || "Download"}
               </Button>
-              {owner && (
+              {canSave && (
                 <Button className="flex-1" size="sm" disabled={!source || neutral || saving !== null} onClick={() => exportTo("library")}>
                   {saving?.to === "library" ? <Loader2 className="animate-spin" /> : <Save />}
-                  {rendering("library") || "Save to library"}
+                  {rendering("library") || (account ? "Save to your runs" : "Save to library")}
                 </Button>
               )}
             </div>
             {saved && (
               <Link href="/library" className="block text-[12px] text-brand-text underline underline-offset-2">
-                Open library
+                {account ? "Open your runs" : "Open library"}
               </Link>
             )}
           </div>

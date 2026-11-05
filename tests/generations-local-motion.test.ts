@@ -1,11 +1,13 @@
+import fs from "node:fs";
 import http from "node:http";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { tempDir } from "./helpers/temp-dir";
 
-// Kinetic Motion results through Fuobe (POST /api/generations/local): the owner records its own clip; an account
-// records only its own clip, made from its own files, as its own run (its list, never the owner's Library), within its
-// run rate and through the studio's checks; a guest is told to sign up; the proxy lets an account through to the route.
+// Results made in the browser through Fuobe (POST /api/generations/local): the owner records its own clip; an account
+// records its own clip, colour grade or Relight blend, made from its own files, as its own run (its list, never the
+// owner's Library), within its run rate and through the studio's checks; a guest is told to sign up; the proxy lets an
+// account through to the route. Split soundtrack's Export mix (POST /api/audio-tools/export) is an account's run too.
 
 vi.mock("next/server", async (importOriginal) => ({ ...(await importOriginal<typeof import("next/server")>()), connection: async () => {} }));
 vi.setConfig({ testTimeout: 30_000 });
@@ -18,8 +20,10 @@ const auth = await import("@/server/auth");
 const { proxy } = await import("@/proxy");
 const access = await import("@/lib/guest-access");
 const { POST } = await import("@/app/api/generations/local/route");
-const { saveFile } = await import("@/server/storage");
-const { generationAccount, fileRecord } = await import("@/server/account-library");
+const exportRoute = await import("@/app/api/audio-tools/export/route");
+const { filesRel, saveFile, scratchDir } = await import("@/server/storage");
+const { generationAccount, fileAccount, fileRecord } = await import("@/server/account-library");
+const { mixPart, mixPlan } = await import("@/lib/av/split");
 const { listGenerations, getGeneration } = await import("@/server/generations");
 const { hit } = await import("@/server/rate");
 const { RECIPE_MAX_BYTES } = await import("@/lib/motion/recipe");
@@ -172,12 +176,56 @@ describe("an account", () => {
     expect((await call(body(accountFile(a.id, "image/png", "p.png")), a.cookie)).status).toBe(400);
   });
 
-  it("records Kinetic Motion only: a grade stays the owner's library", async () => {
+  it("records its own colour grade and Relight blend as its runs, from its own files only", async () => {
     process.env.FUOBE_PUBLIC_SIGNUP = "1";
     const a = newAccount();
-    const r = await call({ feature: "grade", modelId: "local-color-grade", op: "grade", prompt: "x", inputs: {}, output: { url: accountFile(a.id, "image/png", "g.png"), kind: "image" } }, a.cookie);
-    expect(r.status).toBe(403);
-    expect((await r.json()).code).toBe("library");
+    const b = newAccount();
+    const png = (id: string, name = "g.png") => accountFile(id, "image/png", name);
+    const grade = (output: string, over: Record<string, unknown> = {}) => ({
+      feature: "grade",
+      modelId: "local-color-grade",
+      op: "grade",
+      prompt: "Warm film · contrast +10",
+      inputs: {},
+      params: { extra: { grade: { contrast: 0.1 } } },
+      output: { url: output, kind: "image", contentType: "image/png" },
+      ...over,
+    });
+    const r = await call(grade(png(a.id)), a.cookie);
+    expect(r.status).toBe(201);
+    const g = await r.json();
+    expect(g).toMatchObject({ modelId: "local-color-grade", op: "grade", kind: "image", status: "succeeded" });
+    expect(generationAccount(g.id)).toBe(a.id);
+    expect(listGenerations({ account: a.id }).map((x) => x.id)).toContain(g.id);
+    expect(listGenerations().map((x) => x.id)).not.toContain(g.id);
+    // Made from its own picture: fine. From another account's or the owner's, or another account's output: refused.
+    expect((await call(grade(png(a.id), { inputs: { images: [png(a.id, "s.png")] } }), a.cookie)).status).toBe(201);
+    expect((await call(grade(png(a.id), { inputs: { images: [png(b.id, "s.png")] } }), a.cookie)).status).toBe(403);
+    expect((await call(grade(png(a.id), { inputs: { images: [ownerFile("image/png", "s.png")] } }), a.cookie)).status).toBe(403);
+    expect((await call(grade(png(b.id)), a.cookie)).status).toBe(403);
+    // Only what the page renders: a PNG picture, or an MP4 or WebM clip.
+    const jpeg = accountFile(a.id, "image/jpeg", "g.jpg");
+    expect((await call(grade(jpeg, { output: { url: jpeg, kind: "image", contentType: "image/jpeg" } }), a.cookie)).status).toBe(400);
+    const clip = accountFile(a.id, "video/webm", "g.webm");
+    expect((await call(grade(clip, { inputs: { video: accountFile(a.id) }, output: { url: clip, kind: "video", contentType: "video/webm" } }), a.cookie)).status).toBe(201);
+    // A Relight blend of its own photo.
+    const blend = await call(
+      {
+        feature: "relight",
+        modelId: "local-relight",
+        op: "relight",
+        prompt: "Warm key light from the left",
+        title: "Golden hour",
+        inputs: { images: [png(a.id, "photo.png")] },
+        params: { extra: { relight: { intensity: 0.8 } } },
+        output: { url: png(a.id, "b.png"), kind: "image", contentType: "image/png" },
+      },
+      a.cookie,
+    );
+    expect(blend.status).toBe(201);
+    expect(generationAccount((await blend.json()).id)).toBe(a.id);
+    // A grade is never recorded as a Relight blend.
+    expect((await call(grade(png(a.id), { modelId: "local-relight" }), a.cookie)).status).toBe(422);
   });
 
   it("is held to its run rate", async () => {
@@ -221,6 +269,76 @@ describe("an account", () => {
     expect(asked.run).toMatchObject({ kind: "video", place: "pool" });
     const g = await r.json();
     expect(getGeneration(g.id)!.prompt).toBe(asked.prompt);
+  });
+
+  it("checks a grade's description with its title, as a picture, and keeps its description", async () => {
+    process.env.FUOBE_PUBLIC_SIGNUP = "1";
+    const addr = moderation!.address() as { port: number };
+    process.env.FUOBE_MODERATION_URL = `http://127.0.0.1:${addr.port}`;
+    const a = newAccount();
+    answer = { allowed: true };
+    const out = accountFile(a.id, "image/png", "g.png");
+    const grade = (prompt: string, title?: string, url = out) => ({ feature: "grade", modelId: "local-color-grade", op: "grade", prompt, ...(title && { title }), inputs: {}, output: { url, kind: "image", contentType: "image/png" } });
+    const r = await call(grade("Teal and orange", "Night grade"), a.cookie);
+    expect(r.status).toBe(201);
+    expect(asked.prompt).toBe("Teal and orange · Night grade");
+    expect(asked.run).toMatchObject({ kind: "image", place: "pool" });
+    expect(getGeneration((await r.json()).id)!.prompt).toBe("Teal and orange");
+    answer = { allowed: false, code: "blocked", text: "This can't be made here." };
+    expect((await call(grade("x", undefined, accountFile(a.id, "image/png", "h.png")), a.cookie)).status).toBe(422);
+  });
+});
+
+describe("an account's Export mix (Split soundtrack)", () => {
+  const send = (q: string, part: Uint8Array, cookie?: string) =>
+    exportRoute.POST(
+      new Request(`http://localhost:3000/api/audio-tools/export?${q}`, {
+        method: "POST",
+        headers: { host: "localhost:3000", "content-type": "application/octet-stream", ...(cookie && { cookie: `${auth.SESSION_COOKIE}=${cookie}` }) },
+        body: Buffer.from(part),
+      }),
+    );
+  const plan = mixPlan([{ channels: [Float32Array.from({ length: 1000 }, (_, i) => Math.sin(i / 10) / 2)], gain: 1 }], 8000);
+  const parts = () => fs.readdirSync(scratchDir()).filter((f) => f.startsWith("mix-"));
+
+  it("keeps the mix as the account's own run, in its own files, and nobody else sends its parts", async () => {
+    process.env.FUOBE_PUBLIC_SIGNUP = "1";
+    const a = newAccount();
+    const b = newAccount();
+    const first = await send("offset=0", mixPart(plan, 0, 500), a.cookie);
+    expect(first.status).toBe(200);
+    const { id, received } = await first.json();
+    for (const cookie of [b.cookie, owner()]) expect((await send(`offset=${received}&id=${id}`, mixPart(plan, 500, 1000), cookie)).status).toBe(404);
+    const done = await send(`offset=${received}&id=${id}&last=1&name=${encodeURIComponent("Film · No dialogue.wav")}`, mixPart(plan, 500, 1000), a.cookie);
+    expect(done.status).toBe(201);
+    const g = await done.json();
+    expect(g).toMatchObject({ feature: "audio-split-mix", modelId: "local-mix", op: "mix", kind: "audio", status: "succeeded", prompt: "Film · No dialogue" });
+    expect(generationAccount(g.id)).toBe(a.id);
+    expect(listGenerations({ account: a.id }).map((x) => x.id)).toContain(g.id);
+    expect(listGenerations().map((x) => x.id)).not.toContain(g.id);
+    expect(fileAccount(filesRel(g.outputs[0].url)!)).toBe(a.id);
+    expect(parts()).toEqual([]);
+  });
+
+  it("holds it to the room its files have left, one export at a time, and its run rate", async () => {
+    process.env.FUOBE_PUBLIC_SIGNUP = "1";
+    const a = newAccount();
+    // A header that says more than its uploads have room for.
+    const big = mixPart(plan, 0, 10);
+    new DataView(big.buffer).setUint32(4, 1.5 * 1024 ** 3, true);
+    const over = await send("offset=0", big, a.cookie);
+    expect(over.status).toBe(413);
+    expect((await over.json()).error).toMatch(/1 GB/);
+    // A new export drops the unfinished one.
+    const one = await (await send("offset=0", mixPart(plan, 0, 500), a.cookie)).json();
+    const two = await (await send("offset=0", mixPart(plan, 0, 500), a.cookie)).json();
+    expect((await send(`offset=${one.received}&id=${one.id}`, mixPart(plan, 500, 600), a.cookie)).status).toBe(404);
+    // Past its run rate the finished mix isn't kept.
+    for (let i = 0; i < 60; i++) hit(`run:${a.id}`, 60, 60 * 60_000);
+    const late = await send(`offset=${two.received}&id=${two.id}&last=1&name=Mix`, mixPart(plan, 500, 1000), a.cookie);
+    expect(late.status).toBe(429);
+    expect(listGenerations({ account: a.id })).toEqual([]);
+    expect(parts()).toEqual([]);
   });
 });
 

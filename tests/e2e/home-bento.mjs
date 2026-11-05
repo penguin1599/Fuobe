@@ -20,7 +20,8 @@
 //    plays (up to the widest copy of that clip). No play sign on a tile that plays by itself, at any moment from the
 //    first paint until both tiles play, and nothing shifts as a clip takes over from its still.
 // 1c. The swap: each tile's still is its clip's first frame (the clip at frame 0 over it differs by under 3 levels in
-//    255 on average), at 390@3x and 1440@2x.
+//    255 on average, read at CSS pixels: a browser scales a video and a picture with different filters, which shows
+//    only in single device pixels of fine detail), at 390@3x and 1440@2x.
 // 1d. The video tile's reel, at 390@3x and 1440@2x, light and dark: its still is Sand Storm's first frame; it plays Sand
 //    Storm, then One Take, and back to Sand Storm, each crossfading into the next; each
 //    clip framed as listed (its object-position); never more than the clip playing and the next one loaded, the next
@@ -29,12 +30,19 @@
 // 1e. The reel when its second clip can't be had, at 1440@2x (Chromium): when that clip fails, the first loops and never
 //    stops on a frame; when it comes 6 s late, the first plays again rather than stop on its last frame (never stuck
 //    on one frame longer than REEL_STALL_MS and a little), and the second still comes in, at the end of a pass.
+// 1f. Genjutsu's swaps, at 390@3x and 1440@2x (light and dark): its still is the couple's first frame with "Original"
+//    on it; it plays the couple, then the lake, and back, each clip coming in only over the last one's dark end; the
+//    words ride with the divider on every frame (where the clip's frame puts it, placed as the stylesheet says);
+//    never more than two clips, the next asked for only once the current one plays. A picture of the tile every
+//    0.38 s through the loop, and a sheet of them (--shots). Under reduced motion the still is the couple at rest half
+//    way, the words either side of the divider.
 // 2. Layout shift under 0.01 at 390 and 1440, through a load and a scroll to the bottom and back.
 // 2b. The headline holds still when its parts come late, at 390@3x, 768 and 1440@2x (Chromium): with every font file
 //    2.5 s late, and with the HTML in two parts (cut after the second line's first words, 1.5 s apart, by a proxy) and
 //    the fonts 1.5 s late, no layout shift moves anything in the h1, the cut line stays unseen until whole, and once all
 //    is in, the headline looks as on a quick load (its picture within 1 level in 255 on average).
-// 3. Every tile's link answers 200, and the numbers tile opens every studio (the launcher; a phone's sheet).
+// 3. Every tile's link answers 200 (the Audio tile's is its words: the tile holds Clean up voice's demo, checked on its
+//    own by tests/e2e/home-voice.mjs), and the numbers tile opens every studio (the launcher; a phone's sheet).
 // 4. Reduced motion and Save-Data: no clip is fetched or played, nothing moves by itself (the headline is still, the
 //    live words stay), and the tiles keep their stills.
 // 5. Pause previews stops the reel and freezes every animation; pressed again, they go on.
@@ -42,7 +50,8 @@
 //    stills stay under 420 KB (the clips' posters are encoded close to their clips' first frames, and a 3x phone or a
 //    2x laptop gets the video tile's widest still). The clips are reported on their own.
 // 7. The composer: /?new=1 brings it into view with the focus; a plain visit stays at the top (no autofocus jump).
-// 8. Every tile is a named link, and Tab reaches them in the grid's reading order with a visible ring.
+// 8. Every tile is a named link (the Audio tile: its words), and Tab reaches them in the grid's reading order (through
+//    the Audio tile's buttons) with a visible ring.
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
@@ -90,7 +99,7 @@ const WIDTHS = [
   { w: 1440, h: 900 },
   { w: 1920, h: 1080 },
 ];
-const TILES = ["video", "live", "image", "threeD", "genjutsu", "audio", "numbers", "canvas"];
+const TILES = ["video", "live", "genjutsu", "image", "threeD", "audio", "numbers", "canvas"];
 /** The tiles that play a clip by themselves (the reel, the 3D clip, Genjutsu's swap): each only once it is on screen. */
 const MOVING = ["video", "threeD", "genjutsu"];
 /** The widest copy of a clip (scripts/gen-home-bento.mjs), where its element doesn't say (a reel clip's data-max). */
@@ -138,7 +147,9 @@ const layout = (page) =>
   page.evaluate((tiles) => {
     const box = (el) => {
       const r = el.getBoundingClientRect();
-      return { top: r.top, bottom: r.bottom, left: r.left, right: r.right, w: r.width, h: r.height };
+      // Its title's size: the live tile, the highlight, is second only to the video tile.
+      const title = el.querySelector("[class*=title]");
+      return { top: r.top, bottom: r.bottom, left: r.left, right: r.right, w: r.width, h: r.height, title: title ? parseFloat(getComputedStyle(title).fontSize) : 0 };
     };
     const h1 = document.querySelector("#home-bento h1");
     const [line1, line2] = h1.querySelectorAll(":scope > span");
@@ -247,7 +258,26 @@ if (run("1"))
           const out = first.filter((t) => l.tiles[t].top < 0 || l.tiles[t].bottom > bottom);
           check(`${tag}: the video tile and the live tile under it on the first screen`, out.length === 0, first.map((t) => `${t} ${Math.round(l.tiles[t].bottom)}`).join(", ") + ` ≤ ${bottom}`);
           check(`${tag}: every tile at least 44 px to tap`, TILES.every((t) => l.tiles[t].w >= 44 && l.tiles[t].h >= 44));
+          // Genjutsu right under the live tile, the full row wide, at 16:9 or taller.
+          const [lv, gj] = [l.tiles.live, l.tiles.genjutsu];
+          check(
+            `${tag}: Genjutsu right after the live tile, full width, 16:9 or taller`,
+            gj.top > lv.bottom && gj.top - lv.bottom < 24 && Math.abs(gj.w - lv.w) < 1 && gj.h / gj.w >= 9 / 16 - 0.005,
+            `live ${Math.round(lv.w)}x${Math.round(lv.h)} to ${Math.round(lv.bottom)}, genjutsu ${Math.round(gj.w)}x${Math.round(gj.h)} from ${Math.round(gj.top)}`,
+          );
         }
+        // The live tile, the highlight, and Genjutsu are the biggest after the video tile, the same size (the live tile
+        // never the smaller), and their titles no smaller than any but the video's.
+        const area = (t) => l.tiles[t].w * l.tiles[t].h;
+        const rest = TILES.filter((t) => !["video", "live", "genjutsu", "numbers"].includes(t));
+        check(
+          `${tag}: the live and Genjutsu tiles the same size, second only to the video tile`,
+          area("live") >= area("genjutsu") * 0.98 &&
+            area("genjutsu") >= area("live") * 0.85 &&
+            rest.every((t) => area("genjutsu") > area(t) && l.tiles.live.title >= l.tiles[t].title && l.tiles.genjutsu.title >= l.tiles[t].title) &&
+            area("video") > area("live"),
+          ["video", "live", "genjutsu", ...rest].map((t) => `${t} ${Math.round(l.tiles[t].w)}x${Math.round(l.tiles[t].h)}/${l.tiles[t].title}`).join(", "),
+        );
         if (v.w >= 1024) {
           const out = TILES.filter((t) => l.tiles[t].bottom > l.vh || l.tiles[t].top < 0);
           check(`${tag}: all eight tiles on the first screen`, out.length === 0, out.join(", "));
@@ -336,8 +366,11 @@ if (run("1b"))
     }
 
 // ------------------------------------------------------------------------------------------- 1c. the swap
-/** How far the clip at frame 0 is from the still under it: the tile's clip area shot with the clip shown and hidden. */
-async function swapDiff(page, tile) {
+/**
+ * How far the clip at frame 0 is from the still under it: the tile's clip area shot with the clip shown and hidden,
+ * both read at CSS pixels (`dpr` device pixels to one).
+ */
+async function swapDiff(page, tile, dpr = 1) {
   const clip = page.locator(`#home-bento [data-tile=${tile}] .hb-clip`);
   await page.evaluate(async (tile) => {
     const v = document.querySelector(`#home-bento [data-tile=${tile}] video`);
@@ -353,7 +386,8 @@ async function swapDiff(page, tile) {
   await page.evaluate((tile) => (document.querySelector(`#home-bento [data-tile=${tile}] video`).style.visibility = "hidden"), tile);
   const still = await clip.screenshot({ animations: "disabled" });
   const sharp = createRequire(path.join(root, "package.json"))("sharp");
-  const [a, b] = await Promise.all([withClip, still].map((x) => sharp(x).removeAlpha().raw().toBuffer()));
+  const width = Math.round((await sharp(withClip).metadata()).width / dpr);
+  const [a, b] = await Promise.all([withClip, still].map((x) => sharp(x).removeAlpha().resize(width, null, { kernel: "cubic" }).raw().toBuffer()));
   let sum = 0;
   for (let i = 0; i < a.length; i++) sum += Math.abs(a[i] - b[i]);
   return { diff: sum / a.length, withClip, still };
@@ -375,8 +409,8 @@ if (run("1c"))
         continue;
       }
       const src = await page.evaluate((tile) => new URL(document.querySelector(`#home-bento [data-tile=${tile}] video`).currentSrc).pathname.split("/").pop(), tile);
-      const r = await swapDiff(page, tile);
-      check(`the swap at ${v.w}@${dpr}x, ${tile}: the still is ${src}'s first frame`, r.diff < 3, `mean difference ${r.diff.toFixed(2)} of 255`);
+      const r = await swapDiff(page, tile, dpr);
+      check(`the swap at ${v.w}@${dpr}x, ${tile}: the still is ${src}'s first frame`, r.diff < 3, `mean difference ${r.diff.toFixed(2)} of 255 at CSS pixels`);
       if (shotsDir) {
         fs.writeFileSync(path.join(shotsDir, `swap-${tile}-${v.w}@${dpr}x-clip.png`), r.withClip);
         fs.writeFileSync(path.join(shotsDir, `swap-${tile}-${v.w}@${dpr}x-still.png`), r.still);
@@ -577,6 +611,189 @@ if (run("1e") && ENGINE === "chromium") {
   }
 }
 
+// ------------------------------------------------------------------------------------------- 1f. Genjutsu's swaps
+/**
+ * The Genjutsu tile's reel (HOME_BENTO_GENJUTSU, read from src/lib/home-bento.generated.ts): each clip's copies' name,
+ * its labels, and where its divider is on each frame.
+ */
+const GENJUTSU = JSON.parse(/export const HOME_BENTO_GENJUTSU = (\[[\s\S]*?\]);\r?\n/.exec(fs.readFileSync(path.join(root, "src/lib/home-bento.generated.ts"), "utf8"))[1]);
+/**
+ * Logs the Genjutsu tile's reel from the first paint: the clip on screen each time it changes, the most clips it holds
+ * at once, when each first plays, and every moment the clip coming in shows over the one going out (with where that
+ * one is: it must be on its dark last frames by then).
+ */
+const watchWipe = () => {
+  window.__gj = { turns: [], most: 0, overlap: [], playing: {} };
+  const look = () => {
+    const span = document.querySelector("#home-bento [data-tile=genjutsu] .hb-clip");
+    const g = window.__gj;
+    if (span) {
+      const at = span.dataset.reel;
+      if (at !== undefined && g.turns.at(-1)?.i !== at) g.turns.push({ i: at, t: Date.now() });
+      const vids = [...span.querySelectorAll("video")];
+      g.most = Math.max(g.most, vids.length);
+      for (const v of vids) if (!v.paused && !g.playing[v.dataset.clip]) g.playing[v.dataset.clip] = Date.now();
+      // The time of the frame each clip has on screen (its own clock runs a little ahead of what is shown).
+      for (const v of vids)
+        if (!v.__watched && v.requestVideoFrameCallback) {
+          v.__watched = true;
+          const onFrame = (_, m) => {
+            v.__presented = m.mediaTime;
+            v.requestVideoFrameCallback(onFrame);
+          };
+          v.requestVideoFrameCallback(onFrame);
+        }
+      const shown = vids.filter((v) => v.hasAttribute("data-ready"));
+      if (shown.length > 1) {
+        const o = Number(getComputedStyle(shown.at(-1)).opacity);
+        if (o > 0.02 && g.overlap.length < 400) g.overlap.push({ clip: shown[0].dataset.clip, t: shown[0].currentTime, ended: shown[0].ended, over: o });
+      }
+    }
+    requestAnimationFrame(look);
+  };
+  requestAnimationFrame(look);
+};
+/** The tile, its words and its clip as they are now, each word's box measured from the tile's padding box. */
+const wipeState = (page) =>
+  page.evaluate(() => {
+    const tile = document.querySelector("#home-bento [data-tile=genjutsu]");
+    const wipe = tile.querySelector(".hb-wipe");
+    const r = tile.getBoundingClientRect();
+    const x0 = r.left + tile.clientLeft;
+    const box = (sel) => {
+      const b = wipe.querySelector(sel).getBoundingClientRect();
+      return { l: b.left - x0, r: b.right - x0, text: wipe.querySelector(sel).textContent };
+    };
+    const shown = [...tile.querySelectorAll("video[data-ready]")];
+    const top = shown.at(-1);
+    const img = tile.querySelector("picture img");
+    return {
+      W: tile.clientWidth,
+      H: tile.clientHeight,
+      lg: innerWidth >= 1024,
+      clip: top?.dataset.clip,
+      t: top ? (top.__presented ?? top.currentTime) : undefined,
+      paused: top?.paused,
+      n: shown.length,
+      x: wipe.style.getPropertyValue("--x") === "" ? null : Number(wipe.style.getPropertyValue("--x")),
+      cssX: Number(getComputedStyle(wipe).getPropertyValue("--x")),
+      out: wipe.hasAttribute("data-out"),
+      opacity: Number(getComputedStyle(wipe).opacity),
+      before: box("[class~=hb-wipe-before]"),
+      after: box("[class~=hb-wipe-after]"),
+      still: new URL(img.currentSrc || img.src).pathname.split("/").pop(),
+    };
+  });
+/** Where the words should be with the divider at `x` (a share of the clip's width), in a W x H tile (home-bento.css). */
+const wipeExpect = ({ W, H, lg }, x) => {
+  const fw = lg ? Math.max(W, (H * 4) / 3) : W;
+  const lx = x * fw - (fw - W) / 2;
+  const [pad, gap] = W >= 340 ? [16, 9] : [12, 8];
+  return { beforeL: Math.max(pad, lx + gap), afterR: Math.min(W - pad, lx - gap) };
+};
+const wipeFrameAt = (c, t) => Math.min(c.line.length - 1, Math.max(0, Math.floor(t * c.fps + 0.01)));
+if (run("1f")) {
+  for (const [v, dpr, scheme] of [
+    [WIDTHS[0], 3, "light"],
+    [WIDTHS[4], 2, "light"],
+    [WIDTHS[4], 2, "dark"],
+  ]) {
+    const tag = `${v.w}@${dpr}x ${scheme}`;
+    const ctx = await browser.newContext({ ...(v.phone ? PHONE : {}), viewport: { width: v.w, height: v.h }, deviceScaleFactor: dpr, colorScheme: scheme });
+    const page = await ctx.newPage();
+    const asked = [];
+    page.on("request", (r) => {
+      const m = /\/previews\/home\/(genjutsu-[a-z]+)-(\d+)\.mp4/.exec(r.url());
+      if (m) asked.push({ name: m[1], w: Number(m[2]), t: Date.now() });
+    });
+    await page.addInitScript(watchWipe);
+    await open(page);
+    // A phone's Genjutsu tile is under the live tile: it plays once it is on screen.
+    await page.locator("#home-bento [data-tile=genjutsu]").scrollIntoViewIfNeeded();
+    const first = await wipeState(page);
+    check(
+      `genjutsu ${tag}: the still is ${GENJUTSU[0].name}'s first frame, "${GENJUTSU[0].labels[0]}" on it at the left`,
+      first.still.startsWith(`${GENJUTSU[0].name}-`) && !first.still.includes("split") && first.before.text === GENJUTSU[0].labels[0] && first.before.l < 20 && first.after.r <= 0,
+      JSON.stringify(first),
+    );
+    // Round the reel once and into its first clip again, sampling the words against the clip as it plays.
+    const off = [];
+    const frames = [];
+    let samples = 0;
+    const deadline = Date.now() + 32_000;
+    let shot = 0;
+    while (Date.now() < deadline) {
+      const st = await wipeState(page);
+      const turns = await page.evaluate(() => window.__gj.turns.map((x) => x.i));
+      if (turns.length > GENJUTSU.length) break;
+      const c = GENJUTSU.find((g) => g.name === st.clip);
+      if (c && st.n === 1 && !st.paused && st.x !== null && !st.out) {
+        samples++;
+        const f = wipeFrameAt(c, st.t);
+        // The words are a frame behind the clip at most (they move on the frame the browser presents).
+        const near = [f - 1, f, f + 1].filter((i) => i >= 0 && i < c.line.length).some((i) => Math.abs(c.line[i] - st.x) < 0.0002);
+        const e = wipeExpect(st, st.x);
+        const placed = Math.abs(st.before.l - e.beforeL) < 1.5 && Math.abs(st.after.r - e.afterR) < 1.5;
+        if (!near || !placed) off.push({ clip: st.clip, t: +st.t.toFixed(3), f, x: st.x, want: c.line[f], before: Math.round(st.before.l), wantBefore: Math.round(e.beforeL), after: Math.round(st.after.r), wantAfter: Math.round(e.afterR) });
+      }
+      if (shotsDir && Date.now() >= shot) {
+        shot = Date.now() + 380;
+        const f = path.join(shotsDir, `genjutsu-${v.w}-${scheme}-${String(frames.length).padStart(2, "0")}.png`);
+        await page.locator("#home-bento [data-tile=genjutsu]").screenshot({ path: f });
+        frames.push(f);
+      } else await page.waitForTimeout(60);
+    }
+    const g = await page.evaluate(() => window.__gj);
+    const seen = g.turns.map((x) => Number(x.i));
+    check(`genjutsu ${tag}: plays its clips in order and back to the first`, seen.join() === [...GENJUTSU.keys(), 0].join(), seen.join());
+    check(`genjutsu ${tag}: the words ride with the divider on every frame`, samples > 40 && off.length === 0, `${samples} samples; ${JSON.stringify(off.slice(0, 4))}`);
+    check(
+      `genjutsu ${tag}: a clip comes in only over the last one's dark end (no two faces at once)`,
+      g.overlap.length > 0 && g.overlap.every((o) => o.ended || o.t >= 130 / 24),
+      JSON.stringify(g.overlap.filter((o) => !(o.ended || o.t >= 130 / 24)).slice(0, 3)) + ` of ${g.overlap.length}`,
+    );
+    check(`genjutsu ${tag}: never more than the clip playing and the next one`, g.most <= 2, String(g.most));
+    const firstAsk = (name) => asked.find((a) => a.name === name)?.t;
+    const nextOk = GENJUTSU.slice(1).every((c, i) => firstAsk(c.name) !== undefined && g.playing[GENJUTSU[i].name] !== undefined && firstAsk(c.name) >= g.playing[GENJUTSU[i].name] - 100);
+    check(`genjutsu ${tag}: each clip loads only once the one before it plays`, nextOk, `asked ${asked.map((a) => `${a.name}-${a.w}`).join(" ")}; playing ${JSON.stringify(g.playing)}`);
+    notes.push(`genjutsu ${tag}: ${[...new Set(asked.map((a) => `${a.name}-${a.w}`))].join(", ")}; ${frames.length} frames shot`);
+    if (frames.length) {
+      const sharp = createRequire(path.join(root, "package.json"))("sharp");
+      const W = v.phone ? 300 : 260;
+      const bufs = await Promise.all(frames.map((f) => sharp(f).resize({ width: W }).png().toBuffer({ resolveWithObject: true })));
+      const h = Math.max(...bufs.map((b) => b.info.height));
+      const cols = 6;
+      const rows = Math.ceil(bufs.length / cols);
+      await sharp({ create: { width: cols * (W + 6) + 6, height: rows * (h + 6) + 6, channels: 3, background: "#777" } })
+        .composite(bufs.map((b, i) => ({ input: b.data, left: 6 + (i % cols) * (W + 6), top: 6 + Math.floor(i / cols) * (h + 6) })))
+        .jpeg({ quality: 85 })
+        .toFile(path.join(shotsDir, `genjutsu-${v.w}-${scheme}-loop.jpg`));
+    }
+    await ctx.close();
+  }
+
+  // Reduced motion: the still is the couple at rest half way, "Original" and "Swapped" either side of the divider.
+  for (const [v, dpr] of [
+    [WIDTHS[0], 3],
+    [WIDTHS[4], 2],
+  ]) {
+    const ctx = await browser.newContext({ ...(v.phone ? PHONE : {}), viewport: { width: v.w, height: v.h }, deviceScaleFactor: dpr, reducedMotion: "reduce" });
+    const page = await ctx.newPage();
+    await open(page);
+    await page.locator("#home-bento [data-tile=genjutsu]").scrollIntoViewIfNeeded();
+    await page.waitForTimeout(1200);
+    const st = await wipeState(page);
+    const e = wipeExpect(st, 0.5);
+    check(
+      `genjutsu reduced motion ${v.w}@${dpr}x: the still is split half way, the words either side of it`,
+      st.still.startsWith(`${GENJUTSU[0].name}-split-`) && st.cssX === 0.5 && Math.abs(st.before.l - e.beforeL) < 1.5 && Math.abs(st.after.r - e.afterR) < 1.5 && st.n === 0,
+      JSON.stringify(st),
+    );
+    if (shotsDir) await page.locator("#home-bento [data-tile=genjutsu]").screenshot({ path: path.join(shotsDir, `genjutsu-${v.w}-reduced.png`) });
+    await ctx.close();
+  }
+}
+
 // ------------------------------------------------------------------------------------------- 2. layout shift
 async function cls(v) {
   const ctx = await browser.newContext(viewportOpts(v));
@@ -769,7 +986,8 @@ if (run("3")) {
   const ctx = await browser.newContext(DESKTOP);
   const page = await ctx.newPage();
   await open(page);
-  const hrefs = await page.$$eval("#home-bento [data-tile]", (as) => as.map((a) => [a.dataset.tile, a.getAttribute("href")]));
+  // Each tile's link: the tile itself, or (the Audio tile) the link inside it.
+  const hrefs = await page.$$eval("#home-bento [data-tile]", (els) => els.map((el) => [el.dataset.tile, (el.matches("a") ? el : el.querySelector("a[href]"))?.getAttribute("href") ?? ""]));
   check("eight tiles, in the grid's reading order", hrefs.map((h) => h[0]).join() === TILES.join(), hrefs.map((h) => h[0]).join());
   for (const [tile, href] of hrefs) {
     if (href.startsWith("#")) {
@@ -971,10 +1189,12 @@ if (run("8")) {
   const names = await page.$$eval("#home-bento a", (as) => as.map((a) => a.getAttribute("aria-label") ?? a.textContent.trim()));
   check("every link on the first screen has a name", names.length === 8 && names.every((n) => n && n.length > 5), names.join(" | "));
   await page.locator("#home-bento h1").click();
+  // The tile each Tab lands in, once per tile (the Audio tile's switch, play button and link are all in it).
   const order = [];
-  for (let i = 0; i < 8; i++) {
+  for (let i = 0; i < 16 && order.length < TILES.length; i++) {
     await page.keyboard.press("Tab");
-    order.push(await page.evaluate(() => document.activeElement?.dataset?.tile ?? document.activeElement?.tagName));
+    const at = await page.evaluate(() => document.activeElement?.closest("[data-tile]")?.dataset.tile ?? document.activeElement?.tagName);
+    if (order.at(-1) !== at) order.push(at);
   }
   check("Tab reaches the tiles in reading order", order.join() === TILES.join(), order.join());
   await page.keyboard.press("Shift+Tab");

@@ -1,6 +1,7 @@
 "use client";
 
 import { ArrowRight, ChevronRight, Cloud, Cpu, Loader2, Plus, Workflow } from "lucide-react";
+import Link from "next/link";
 import { Fragment } from "react";
 import { Button } from "@/components/ui/button";
 import { StarterCard } from "@/components/starters/starter-card";
@@ -131,7 +132,24 @@ export function ModelLine({ t, engine, access, className }: { t: TemplateCardDat
  * A Canvas template as a starter card. Everyone opens its page from the card; the owner makes the board from it in
  * one tap (onUse) and sees what it runs on, and "No cover yet" on a card that visitors don't get to see.
  */
-export function TemplateCard({ t, engine, onUse, busy, access, owner = false }: { t: TemplateCardData; engine: Engine; onUse?: () => void; busy: boolean; access?: AccessSummary; owner?: boolean }) {
+export function TemplateCard({
+  t,
+  engine,
+  onUse,
+  busy,
+  access,
+  owner = false,
+  tryHref,
+}: {
+  t: TemplateCardData;
+  engine: Engine;
+  onUse?: () => void;
+  busy: boolean;
+  access?: AccessSummary;
+  owner?: boolean;
+  /** A visitor's "Use this board": the board open in the editor. */
+  tryHref?: string;
+}) {
   const cover = templateCover("canvas", t.id);
   return (
     <StarterCard
@@ -150,6 +168,12 @@ export function TemplateCard({ t, engine, onUse, busy, access, owner = false }: 
         onUse ? (
           <Button size="sm" className="w-fit rounded-full" onClick={onUse} disabled={busy}>
             {busy ? <Loader2 className="animate-spin" /> : <Plus />} Use template
+          </Button>
+        ) : tryHref ? (
+          <Button asChild size="sm" className="w-fit rounded-full">
+            <Link href={tryHref} data-use-board>
+              <Workflow /> Use this board
+            </Link>
           </Button>
         ) : (
           <span className="inline-flex items-center gap-1 text-[13px] font-medium text-foreground">

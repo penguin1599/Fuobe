@@ -198,8 +198,14 @@ export const TIER_NOTES: Record<Exclude<H3Tier, "standard">, string> = {
   trim: "FastH3 Trim: an experimental 8-step build for 8-15 GB GPUs, below FastH3 V2 in quality. Text to video only",
 };
 
-/** A smaller tier picked with Best: Best needs the full model. */
-export const TIER_BEST_NOTE = "Best needs a 32 GB GPU: this run uses 8 steps";
+/** A smaller tier picked with Sharper (Quality "best"): Sharper needs the full model. */
+export const TIER_BEST_NOTE = "Sharper needs a 32 GB GPU: this run uses 8 steps";
+
+/**
+ * Quality → Fast · Pika Flex with FastH3 V2 or Trim picked in Options → GPU tier: Pika's adapters are made for the full model,
+ * so the run is refused with this (src/server/h3-gpu.ts) rather than dropping either choice. With Auto, Flex keeps the full model.
+ */
+export const TIER_FLEX_REFUSAL = "Fast · Pika Flex needs a 32 GB GPU. Pick 32 GB or more in GPU tier, or Standard or Sharper quality";
 
 /** Options → GPU tier (no value is Auto: the card's own tier, src/server/h3-gpu.ts). */
 export const H3_GPU_TIER: NonNullable<ModelOptions["controls"]>[number] = {
@@ -254,6 +260,10 @@ export const AUTO_TIER_NOTES: Record<Exclude<H3Tier, "standard">, string> = {
  */
 export function h3TierNote(extra: Record<string, unknown> | undefined, op: string | undefined, auto?: "fast" | "trim"): string | undefined {
   const picked = extra?.[H3_TIER_PARAM];
+  // Fast · Pika Flex runs on the full model: Auto keeps it there, and a smaller tier picked with it is refused.
+  if (extra?.quality === "flex" && op && H3_GPU_TIER.ops?.fast?.includes(op)) {
+    return picked === "fast" || (picked === "trim" && H3_GPU_TIER.ops?.trim?.includes(op)) ? TIER_FLEX_REFUSAL : undefined;
+  }
   if (picked === undefined && auto && op && H3_GPU_TIER.ops?.[auto]?.includes(op)) {
     return [AUTO_TIER_NOTES[auto], ...(extra?.quality === "best" ? [TIER_BEST_NOTE] : []), ...(extra?.decoder === "fast" ? [TIER_DECODER_NOTE] : [])].join(". ");
   }

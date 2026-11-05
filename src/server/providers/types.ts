@@ -1,4 +1,5 @@
 import type { GenerationFix, GenInput, MediaKind, ModelDef, ModelRoute, ProviderId } from "@/lib/catalog/types";
+import type { Diagnosis } from "@/lib/diagnose";
 
 export interface SubmitContext {
   generationId: string;
@@ -37,7 +38,11 @@ export type PollResult =
   | { state: "queued"; progress?: number; message?: string; sentAt?: number; timeoutError?: string }
   | { state: "running"; progress?: number; message?: string; sentAt?: number }
   | { state: "succeeded"; outputs: RemoteOutput[]; message?: string }
-  | { state: "failed"; error: string; fix?: GenerationFix };
+  /**
+   * `trouble`: an account's own GPU, why in plain words with what helps (src/lib/diagnose.ts). `lost`: its ComfyUI
+   * restarted and forgot the job, so the runner may send it once more.
+   */
+  | { state: "failed"; error: string; fix?: GenerationFix; trouble?: Diagnosis; lost?: true };
 
 export interface PollContext {
   externalId: string;

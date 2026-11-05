@@ -4,7 +4,7 @@ import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClie
 import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { toast } from "sonner";
 import type { AssistThread, AssistThreadSummary, AssistThreadView } from "./assist";
-import type { OwnerGpuView, TestProvider } from "./connections";
+import { make3dOffered, type OwnerGpuView, type TestProvider } from "./connections";
 import type { ElementKind, StudioElement } from "./catalog/elements";
 import type { Engine, Generation, GenerationRequest, MediaKind, ReviewStatus } from "./catalog/types";
 import {
@@ -32,7 +32,11 @@ import { postFile } from "./upload";
 import type { ShareCreated, ShareInfo, ShareListItem, SharePatch, ShareRequest } from "./share";
 import type { AccessSummary } from "./model-access";
 import { ADD_KEY_HEADER, isCloudProvider, type CloudProvider } from "./your-keys";
+import type { Diagnosis } from "./diagnose";
 import { BILLING_EVENT, BILLING_HEADER, type BillingAction, type BillingRefusalDetail, type HostedBalance } from "./hosted";
+
+/** What the status strip says of a GPU that didn't answer (src/server/account-gpu.ts VisitorTrouble). */
+export type GpuTroubleView = Pick<Diagnosis, "cause" | "words" | "actions" | "retryable" | "details">;
 
 export interface Asset {
   id: string;
@@ -754,8 +758,8 @@ export function useShareActions() {
 // Uploads & assets
 
 /**
- * Upload a file as it is (streamed by the server: src/lib/upload.ts). `kinetic`: a Kinetic Motion clip or poster
- * rendered in the page, which any account may save (KINETIC_UPLOAD_HEADER).
+ * Upload a file as it is (streamed by the server: src/lib/upload.ts). `kinetic`: a result rendered in the page (a
+ * Kinetic Motion clip or poster, a colour grade, a Relight blend), which any account may save (KINETIC_UPLOAD_HEADER).
  */
 export async function uploadFile(file: File, opts: { kinetic?: boolean } = {}): Promise<Asset> {
   return postFile(file, undefined, opts);
@@ -881,7 +885,18 @@ export interface StatusInfo {
    */
   viewer?: {
     kind: "guest" | "account";
-    gpu: { connected: boolean; mode?: "computer" | "link"; online?: boolean; comfy?: "down" | "no-setting"; device?: string; vramBytes?: number };
+    gpu: {
+      connected: boolean;
+      mode?: "computer" | "link";
+      online?: boolean;
+      comfy?: "down" | "no-setting";
+      device?: string;
+      vramBytes?: number;
+      /** A link that didn't answer its last status check: why, in plain words, and what helps (src/lib/diagnose.ts). */
+      trouble?: GpuTroubleView;
+      /** A link's kind: a RunPod pod's port gets "Start your pod". */
+      host?: "runpod" | "tunnel" | "web";
+    };
     keys?: CloudProvider[];
     paidAllowed?: boolean;
     /** Hosted runs (FUOBE_HOSTED_RUNS=1): runs may go to this studio's GPUs, so a GPU of one's own is optional. */
@@ -1076,6 +1091,17 @@ export function useEngine(): [Engine, (e: Engine) => void, EngineMode] {
     [mode],
   );
   return [mode === "both" ? engine : mode, set, mode];
+}
+
+/**
+ * Whether Idol 3D runs on the owner's open engine here (make3dOffered): the install runs open models, ComfyUI is
+ * connected (or placeholder results are on), the viewer is the owner, and Idol 3D is switched on in Settings → Models &
+ * licences. False until hydrated and while the status is unknown.
+ */
+export function useOpenEngine(): boolean {
+  const hydrated = useHydrated();
+  const status = useStatus().data;
+  return hydrated && make3dOffered(status);
 }
 
 /** Remember the engine the studios start on, before the mode allows it (an account that just added its own key: Cloud). */

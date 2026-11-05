@@ -257,7 +257,7 @@ describe("Genjutsu's notes for a finishing size", () => {
 });
 
 describe("the route under public sign-up", () => {
-  it("gives guests and accounts own-gpu-tool (a studio job, like Assemble), and the owner the route", async () => {
+  it("lets an account with its own GPU reach the route (a studio job, like Assemble); a guest signs up first", async () => {
     process.env.FUOBE_PASSWORD = "install password";
     process.env.FUOBE_PUBLIC_SIGNUP = "1";
     try {
@@ -268,13 +268,19 @@ describe("the route under public sign-up", () => {
       const cookie = auth.createSession(account.id).value;
       auth.setAccountGpu(account.id, { url: "https://gpu.example" });
       const at = (url: string, c?: string) => new NextRequest(`http://localhost:3000${url}`, { method: "POST", headers: c ? { cookie: `${auth.SESSION_COOKIE}=${c}` } : {}, body: "{}" });
-      for (const p of ["/api/swap-studio/projects/swap-1/sharpen", "/api/swap-studio/projects/swap-1/assemble", "/api/genjutsu"]) {
-        for (const c of [undefined, cookie]) {
-          const r = proxy(at(p, c));
-          expect(r.status, `${p} ${c ? "account" : "guest"}`).toBe(403);
-          expect(await r.json()).toEqual({ error: access.OWN_GPU_TOOL_MESSAGE, code: "own-gpu-tool" });
-        }
+      // Character Swap Studio's jobs run on an account's own GPU or key (the route makes the account's checks, on its own
+      // projects only: tests/account-swap-studio.test.ts).
+      for (const p of ["/api/swap-studio/projects/swap-1/sharpen", "/api/swap-studio/projects/swap-1/assemble"]) {
+        expect(proxy(at(p, cookie)).headers.get("x-middleware-next"), p).toBe("1");
+        const r = proxy(at(p));
+        expect(r.status, p).toBe(401);
+        expect((await r.json()).error).toBe(access.GUEST_RUN_MESSAGE);
       }
+      // Genjutsu runs on an account's own GPU (its route makes the account's checks); a guest signs up first.
+      expect(proxy(at("/api/genjutsu", cookie)).headers.get("x-middleware-next")).toBe("1");
+      const guest = proxy(at("/api/genjutsu"));
+      expect(guest.status).toBe(401);
+      expect((await guest.json()).error).toBe(access.GUEST_RUN_MESSAGE);
       // Genjutsu's price check (2K included) stays open to visitors.
       expect(access.isPriceCheck("POST", "/api/genjutsu/estimate", "")).toBe(true);
       expect(proxy(at("/api/genjutsu/estimate")).headers.get("x-middleware-next")).toBe("1");

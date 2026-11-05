@@ -2,6 +2,7 @@ import "server-only";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import { getModel } from "@/lib/catalog";
+import { LAYOUT_PARAM, readLayout } from "@/lib/layout-prompt";
 import type { Engine, Generation, GenerationRequest, ModelDef } from "@/lib/catalog/types";
 import {
   ANGLES,
@@ -17,6 +18,8 @@ import {
   layersModelFor,
   MAX_NODES,
   RELIGHT_DIRECTIONS,
+  RERENDER_MAX_LAYERS,
+  RERENDER_MAX_TEXT,
   RELIGHT_LIGHTS,
   relightPrompt,
   textChanges,
@@ -142,7 +145,7 @@ export function parseDoc(v: unknown): LayerDoc | null {
   return doc;
 }
 
-const TOOLS = ["decompose", "split", "regenerate", "generate-layer", "text-detect", "text-edit", "bg-remove", "regional", "upscale", "relight", "angles", "expand", "inpaint", "enhance"] as const satisfies readonly LayerTool[];
+const TOOLS = ["decompose", "split", "regenerate", "generate-layer", "text-detect", "text-edit", "bg-remove", "regional", "upscale", "relight", "angles", "expand", "inpaint", "enhance", "rerender"] as const satisfies readonly LayerTool[];
 
 export const JobInputSchema = z.object({
   tool: z.enum(TOOLS),
@@ -173,6 +176,8 @@ export const JobInputSchema = z.object({
       feather: num.min(0).max(500).optional(),
       aspect: z.string().regex(/^\d+(\.\d+)?:\d+(\.\d+)?$/).max(20).optional(),
       look: z.enum(["skin", "glow", "sharpen", "detail"]).optional(),
+      // Re-render from layers: the arrangement as a layout draft (read and checked when the job is planned).
+      layout: z.record(z.string(), z.unknown()).optional(),
     })
     .optional(),
 });
@@ -193,6 +198,31 @@ export function toolModel(tool: LayerTool, engine: Engine, modelId?: string, lis
 const RES_TIER = { "1K": "auto_1K", "1.5K": "auto_1.5K", "2K": "auto_2K" } as const;
 /** Qwen-Image-Layered's longest side per tier (640 is the trained bucket; larger is slower). */
 const OPEN_MAX_SIZE = { "1K": 640, "1.5K": 832, "2K": 1024 } as const;
+
+/**
+ * The words for a re-render: the layout's caption, which the browser builds from the person's words plus the backdrop
+ * layers ("Behind everything: …"). Words sent beside a caption that doesn't already start with them go in front of it, so
+ * neither the person's words nor the backdrop are lost.
+ */
+export function rerenderCaption(caption: string, prompt?: string): string {
+  const said = caption.trim();
+  const words = prompt?.trim().replace(/[.\s]+$/, "") ?? "";
+  if (!words) return said;
+  if (!said || said.toLowerCase().startsWith(words.toLowerCase())) return said || words;
+  return `${words}. ${said}`;
+}
+
+/** The aspect ratio in `list` nearest to `aspect` ("1400:900"), compared on a log scale; `aspect` itself when there's no list. */
+export function nearestAspect(aspect: string | undefined, list: readonly string[] | undefined): string | undefined {
+  const value = (a: string) => {
+    const [w, h] = a.split(":").map(Number);
+    return w > 0 && h > 0 ? w / h : NaN;
+  };
+  if (!aspect || !Number.isFinite(value(aspect))) return list?.[0];
+  if (!list?.length) return aspect;
+  const v = Math.log(value(aspect));
+  return [...list].filter((a) => Number.isFinite(value(a))).sort((a, b) => Math.abs(Math.log(value(a)) - v) - Math.abs(Math.log(value(b)) - v))[0];
+}
 
 const pick = (list: [string, string][], label: string | undefined) => list.find(([l]) => l === label)?.[1] ?? list[0][1];
 
@@ -295,7 +325,8 @@ export function jobSteps(input: LayerJobInput, opts: { batchTitle?: string } = {
     }
     case "bg-remove": {
       const model = toolModel(tool, engine, input.modelId);
-      add("cut", base(model, { op: "bg-remove", inputs: { images: [needImage()] }, params: aspectFor(model) }));
+      // Bria's guided cut-out reads what to keep or drop ("keep the shadow"); the others take no words.
+      add("cut", base(model, { op: "bg-remove", ...(model.options.guided && prompt ? { prompt } : {}), inputs: { images: [needImage()] }, params: aspectFor(model) }));
       break;
     }
     case "regional": {
@@ -355,6 +386,17 @@ export function jobSteps(input: LayerJobInput, opts: { batchTitle?: string } = {
       }
       add("enhance", base(model, { op: "edit", prompt: s.keepAlpha ? `${ask} Keep the subject on a plain, even background.` : ask, inputs: { images: [needImage()] }, params: aspectFor(model) }));
       if (s.keepAlpha) cutout("enhance");
+      break;
+    }
+    case "rerender": {
+      const layout = readLayout(s.layout);
+      if (!layout?.items.length) throw new LayersError("Show at least one layer or line of text to re-render", 400);
+      if (layout.items.length > RERENDER_MAX_LAYERS + RERENDER_MAX_TEXT) throw new LayersError("Too many boxes to re-render: hide some layers first", 400);
+      const model = toolModel(tool, engine, input.modelId);
+      // The picture's own shape, or the nearest one the model makes (the boxes are fractions, so they stay in place).
+      const aspectRatio = nearestAspect(s.aspect, model.options.aspectRatios);
+      // The plan compiles the layout for this model at the size it renders, and keeps prompt rewriting off.
+      add("rerender", base(model, { op: "t2i", prompt: rerenderCaption(layout.summary.caption, prompt), params: { ...(aspectRatio && { aspectRatio }), numOutputs: 1, extra: { [LAYOUT_PARAM]: layout } } }));
       break;
     }
     case "expand": {

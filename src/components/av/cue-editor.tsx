@@ -1,6 +1,6 @@
 "use client";
 
-import { Merge, Plus, Redo2, Scissors, Trash2, Undo2 } from "lucide-react";
+import { Merge, Plus, Redo2, Scissors, TextCursorInput, Trash2, Undo2 } from "lucide-react";
 import { memo, useCallback, useEffect, useReducer, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -60,6 +60,7 @@ const Row = memo(function Row({
   last,
   dispatch,
   onSeek,
+  onFixLine,
 }: {
   cue: Cue;
   index: number;
@@ -67,6 +68,7 @@ const Row = memo(function Row({
   last: boolean;
   dispatch: (a: CueAction) => void;
   onSeek?: (t: number) => void;
+  onFixLine?: (index: number) => void;
 }) {
   const text = useRef<HTMLTextAreaElement>(null);
   const [start, setStart, resetStart] = useDraft(formatCueTime(cue.start));
@@ -105,6 +107,11 @@ const Row = memo(function Row({
         <span className="text-muted-foreground">→</span>
         {timeInput("end", end, setEnd)}
         <div className="ml-auto flex items-center opacity-100 sm:opacity-0 sm:group-focus-within/cue:opacity-100 sm:group-hover/cue:opacity-100">
+          {onFixLine && (
+            <RowAction label="Fix this line: change what was said" line={index} onClick={() => onFixLine(index)} disabled={!cue.text.trim()}>
+              <TextCursorInput className="size-3.5" />
+            </RowAction>
+          )}
           <RowAction label="Split at the cursor" line={index} onClick={splitAtCaret} disabled={!cue.text.trim().includes(" ")}>
             <Scissors className="size-3.5" />
           </RowAction>
@@ -147,12 +154,15 @@ export function CueEditor({
   onSeek,
   className,
   emptyHint = "No lines yet",
+  onFixLine,
 }: {
   editor: ReturnType<typeof useCueEditor>;
   currentTime?: number;
   onSeek?: (t: number) => void;
   className?: string;
   emptyHint?: string;
+  /** "Fix this line": open Edit speech on this line (change what was said in the recording itself). */
+  onFixLine?: (index: number) => void;
 }) {
   const { cues, dispatch, canUndo, canRedo } = editor;
   const list = useRef<HTMLOListElement>(null);
@@ -184,7 +194,7 @@ export function CueEditor({
       {cues.length ? (
         <ol ref={list} className="relative min-h-0 flex-1 space-y-0.5 overflow-y-auto pr-1">
           {cues.map((c, i) => (
-            <Row key={i} cue={c} index={i} active={i === active} last={i === cues.length - 1} dispatch={send} onSeek={onSeek} />
+            <Row key={i} cue={c} index={i} active={i === active} last={i === cues.length - 1} dispatch={send} onSeek={onSeek} onFixLine={onFixLine} />
           ))}
         </ol>
       ) : (

@@ -9,19 +9,22 @@ import { Textarea } from "@/components/ui/textarea";
 import { Field, Segmented } from "@/components/shorts/ui";
 import type { SlotValue } from "@/components/studio/media-slot";
 import { roleFromPin, type CharacterOptions } from "@/lib/catalog/character-swap";
-import { OPENJUTSU_LIMITS, SCENE_ACTIONS, type FeatureCheck, type FinishOptions, type ObjectEdit, type PictureOptions, type SceneAction } from "@/lib/catalog/genjutsu";
+import { OPENJUTSU_LIMITS, SCENE_ACTIONS, type FeatureCheck, type FinishOptions, type GenjutsuFeature, type ObjectEdit, type PictureOptions, type SceneAction } from "@/lib/catalog/genjutsu";
 import { LIGHT_LOOKS, type LookId } from "@/lib/openjutsu-graphs";
 import { cn } from "@/lib/utils";
 
 /**
  * Genjutsu's Openjutsu panels (Group swap's Who becomes who, Scene edit, From picture's light and steps, Finish): phone
- * first (44 px taps, wraps, no sideways scroll). What hasn't opened yet shows to the owner only, with an "Only you" badge.
+ * first (44 px taps, wraps, no sideways scroll). What hasn't opened on this studio's GPU yet carries a mark: "Only you" for the owner, what it runs on for a visitor.
  */
 
 /** The owner's mark on a tab, an action or a card nobody else sees yet. */
 export function OnlyYou({ className }: { className?: string }) {
   return <span className={cn("inline-flex h-4 shrink-0 items-center rounded-[4px] bg-muted px-1 align-[1px] text-[10px] font-medium text-muted-foreground", className)}>Only you</span>;
 }
+
+/** A feature's mark while it hasn't opened on this studio's GPU (OnlyYou for the owner, OwnSetupChip for a visitor). */
+export type FeatureMark = (f: GenjutsuFeature) => React.ReactNode;
 
 /** Each character's colour: the number badge and the pin on the frame. */
 export const PERSON_COLOURS = ["#e11d48", "#2563eb", "#16a34a", "#d97706"] as const;
@@ -76,7 +79,7 @@ export function WhoBecomesWho({
   /** Opens the part's first frame for this character's tap (null while the frame can't be shown). */
   onTap: ((i: number) => void) | null;
   /** The Render choice shows (exactly 2 characters, and it is open to this viewer). */
-  oneByOne: { show: boolean; ownerOnly: boolean };
+  oneByOne: { show: boolean; mark?: React.ReactNode };
   seed: string;
   onSeed: (s: string) => void;
 }) {
@@ -116,7 +119,7 @@ export function WhoBecomesWho({
         <p className="text-[12px] text-muted-foreground">Say where they stand or what they do. Clothes and hair words can carry over.</p>
       </Field>
       {oneByOne.show && (
-        <Field label="Render" hint={oneByOne.ownerOnly ? <OnlyYou /> : undefined}>
+        <Field label="Render" hint={oneByOne.mark}>
           <Segmented
             label="Render"
             value={value.onePerPerson ? "one" : "both"}
@@ -179,7 +182,7 @@ export function SceneEditFields({
   action,
   onAction,
   open,
-  ownerOnly,
+  mark,
   painted,
   target,
   seed,
@@ -191,8 +194,8 @@ export function SceneEditFields({
   action: SceneAction;
   onAction: (a: SceneAction) => void;
   open: FeatureCheck;
-  /** Not open to everyone yet: the owner sees it with a badge. */
-  ownerOnly: FeatureCheck;
+  /** A feature that hasn't opened on this studio's GPU: its mark (OnlyYou for the owner, OwnSetupChip for a visitor). */
+  mark: FeatureMark;
   painted: boolean;
   target: "type" | "paint" | "click" | undefined;
   seed: string;
@@ -206,7 +209,7 @@ export function SceneEditFields({
   return (
     <div className="space-y-3">
       {actions.length > 1 && (
-        <Field label="Action" hint={ownerOnly(info.feature) ? <OnlyYou /> : undefined}>
+        <Field label="Action" hint={mark(info.feature)}>
           <Segmented label="Action" value={action} onChange={onAction} options={actions.map((a) => ({ value: a.id, label: a.label }))} />
         </Field>
       )}
@@ -307,14 +310,14 @@ export function LightPicker({
   value,
   onChange,
   open,
-  ownerOnlyLight,
-  ownerOnlyOwn,
+  lightMark,
+  ownMark,
 }: {
   value: PictureOptions;
   onChange: (p: PictureOptions) => void;
   open: FeatureCheck;
-  ownerOnlyLight: boolean;
-  ownerOnlyOwn: boolean;
+  lightMark?: React.ReactNode;
+  ownMark?: React.ReactNode;
 }) {
   const light = value.light;
   const pick = (l: PictureOptions["light"]) => onChange({ ...value, light: l });
@@ -340,7 +343,7 @@ export function LightPicker({
   return (
     <div className="space-y-3">
       {open("picture-light") && (
-        <Field label="Light" hint={ownerOnlyLight ? <OnlyYou /> : undefined}>
+        <Field label="Light" hint={lightMark}>
           <div role="radiogroup" aria-label="Light" className="grid grid-cols-3 gap-1.5 sm:grid-cols-4">
             {!value.ownPerson && card("none", "As in your picture", !light, () => pick(undefined))}
             {LIGHT_LOOKS.map((l) => card(l.id, l.name, !!light && "look" in light && light.look === l.id, () => pick({ look: l.id }), LOOK_SWATCH[l.id]))}
@@ -369,7 +372,7 @@ export function LightPicker({
             checked={!!value.ownPerson}
             onChange={(on) => onChange({ ...value, ownPerson: on || undefined, ...(on ? {} : { keepCrop: undefined }) })}
           />
-          {ownerOnlyOwn && <OnlyYou className="ml-14" />}
+          {ownMark && <div className="ml-14">{ownMark}</div>}
           {value.ownPerson && <SwitchRow label="Keep the frame's crop" checked={!!value.keepCrop} onChange={(on) => onChange({ ...value, keepCrop: on || undefined })} />}
         </div>
       )}
@@ -430,14 +433,14 @@ export function FinishFields({
   value,
   onChange,
   open,
-  ownerOnly,
+  mark,
   seed,
   onSeed,
 }: {
   value: FinishOptions;
   onChange: (f: FinishOptions) => void;
   open: FeatureCheck;
-  ownerOnly: FeatureCheck;
+  mark: FeatureMark;
   seed: string;
   onSeed: (s: string) => void;
 }) {
@@ -449,7 +452,7 @@ export function FinishFields({
   return (
     <div className="space-y-3">
       {tools.length > 1 && (
-        <Field label="Tool" hint={ownerOnly(value.tool === "faces" ? "finish-faces" : "finish-colours") ? <OnlyYou /> : undefined}>
+        <Field label="Tool" hint={mark(value.tool === "faces" ? "finish-faces" : "finish-colours")}>
           <Segmented label="Tool" value={value.tool} onChange={(tool) => onChange({ tool })} options={tools.map(({ value: v, label }) => ({ value: v, label }))} />
         </Field>
       )}

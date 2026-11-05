@@ -176,7 +176,7 @@ export interface BlockoutPanelProps {
   engine: Engine;
   settings: DirectorSettings;
   brief: string;
-  context: { cloudAllowed: boolean; civitai?: boolean };
+  context: { cloudAllowed: boolean; civitai?: boolean; worldcast?: boolean };
   draft: BlockoutDraft;
   setDraft: (fn: (d: BlockoutDraft) => BlockoutDraft) => void;
   /** Open the builder (with the draft's scene, or the example). */

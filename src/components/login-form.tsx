@@ -74,6 +74,9 @@ export function LoginForm() {
       // Settings' Your GPU (its Sign up free): the welcome page is that same choice.
       const q = new URLSearchParams({ welcome: "1" });
       if (after !== "/" && !after.startsWith("/connect") && !after.startsWith("/settings#your-gpu")) q.set("next", after);
+      // "Set it up with my AI" (a guest's sign-up from it): the welcome page opens with it.
+      const nextUrl = new URL(after, window.location.origin);
+      if (nextUrl.pathname === "/connect" && nextUrl.searchParams.get("setup") === "ai") q.set("setup", "ai");
       // With hosted runs on, a GPU of its own is optional: straight back to where it was.
       const dest = mode === "signup" && !hosted ? new URL(`/connect?${q}`, window.location.origin).toString() : after;
       rememberViewer(mode === "owner" ? "owner" : "account");

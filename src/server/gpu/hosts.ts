@@ -15,10 +15,10 @@ export function hostKey(url: string): string | null {
   }
 }
 
-/** The hosts of this install's own ComfyUI (main and isolated worker). */
+/** The hosts of this install's own ComfyUI (main and isolated worker) and its WorldCast worker. */
 export function installHosts(): Set<string> {
   const out = new Set<string>();
-  for (const name of ["comfyUrl", "comfyIsolatedUrl"] as const) {
+  for (const name of ["comfyUrl", "comfyIsolatedUrl", "worldcastUrl"] as const) {
     const h = hostKey(getSetting(name) ?? "");
     if (h) out.add(h);
   }

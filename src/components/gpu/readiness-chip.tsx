@@ -66,7 +66,18 @@ export function HeaderPill({ badge, gpu, onOpen, compact }: { badge: Badge; gpu?
   const tenths = badge[2];
   const away = s === "ready" && !(badge[3] & 4) && own?.connected && !own.online ? (own.comfy === "down" ? "ComfyUI isn't running" : own.comfy === "no-setting" ? "ComfyUI needs a setting" : "Your GPU is offline") : null;
   const label =
-    away ?? (s === "ready" ? (badge[3] & 4 ? "Runs on any computer" : "Ready on your GPU") : s === "gpu" ? "Needs a bigger GPU" : s === "unsupported" ? "Not on your GPU" : `Set up${tenths ? ` · ${tenths / 10} GB` : ""}`);
+    away ??
+    (s === "ready"
+      ? badge[3] & 4
+        ? "Runs on any computer"
+        : "Ready on your GPU"
+      : s === "gpu"
+        ? "Needs a bigger GPU"
+        : s === "unsupported"
+          ? badge[3] & 24
+            ? "Needs an RTX card"
+            : "Not on your GPU"
+          : `Set up${tenths ? ` · ${tenths / 10} GB` : ""}`);
   const Icon = away ? Cpu : s === "ready" ? CheckCircle2 : s === "gpu" ? Cpu : s === "unsupported" ? Layers : Download;
   const cls = cn(
     "inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full px-2.5 text-[12px] font-medium",

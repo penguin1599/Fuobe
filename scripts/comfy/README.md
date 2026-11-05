@@ -12,7 +12,7 @@ Full write-up (what is in the library, validation results, models, quirks for ap
 
 | file | purpose |
 |---|---|
-| `install-comfyui.sh` | reproducible CPU install of ComfyUI + 18 custom node packs (pinned commits; Chatterbox, IndexTTS2 and Video-Depth-Anything added for the comfyui-oss-2 workflows — IndexTTS2's runtime deps only with `INDEXTTS_RUNTIME=1`; MelBandRoFormer, QwenASR and HunyuanVideo-Foley for comfyui-oss-3; ToSVG (VTracer) in round 4). Licences are information: the non-commercial ComfyUI-Whisper (CC-BY-NC-SA-4.0, only for `captions-whisper-burnin`) is installed too, and `NC_PACKS=0` leaves it out (Settings → Models & licences has a switch per node pack). Round 4 part 4 adds Akatz Labs' GPL-3.0 `h3_character_swap` for Genjutsu's Character swap (`H3_PACK=0` leaves it out; it needs `ffmpeg` and `ffprobe`), and H3 Relay 2.0 with `H3_RELAY=1` (the Relay swap, H3 Person Removal and, since round 4 part 5, the Character Swap Studio's two graphs). DBS D1 adds ComfyUI-DBS and its 23 MB of weights (`DBS_WEIGHTS=0` skips the weights) |
+| `install-comfyui.sh` | reproducible CPU install of ComfyUI + its custom node packs (pinned commits; `workflows/comfyui/packs.json` pins all 52 the library uses; Chatterbox, IndexTTS2 and Video-Depth-Anything added for the comfyui-oss-2 workflows — IndexTTS2's runtime deps only with `INDEXTTS_RUNTIME=1`; MelBandRoFormer, QwenASR and HunyuanVideo-Foley for comfyui-oss-3; ToSVG (VTracer) in round 4). Licences are information: the non-commercial ComfyUI-Whisper (CC-BY-NC-SA-4.0, only for `captions-whisper-burnin`) is installed too, and `NC_PACKS=0` leaves it out (Settings → Models & licences has a switch per node pack). Round 4 part 4 adds Akatz Labs' GPL-3.0 `h3_character_swap` for Genjutsu's Character swap (`H3_PACK=0` leaves it out; it needs `ffmpeg` and `ffprobe`), and H3 Relay 2.0 with `H3_RELAY=1` (the Relay swap, H3 Person Removal and, since round 4 part 5, the Character Swap Studio's two graphs). DBS D1 adds ComfyUI-DBS and its 23 MB of weights (`DBS_WEIGHTS=0` skips the weights). PR #16 adds ComfyUI-CorridorKey2, ComfyUI-Idol, ComfyUI-HyNomas and Kandinsky Lab's `kandinsky6` and `kandinsky6-sr` (`K6_PACKS=0` leaves those two out), the NVIDIA VFX nodes on an x86_64 machine whose `nvidia-smi` names an RTX card (`RTX_VIDEO=1` forces them, `RTX_VIDEO=0` skips them), and, on request, Hi3D (`HI3D=1`) and Tencent AuK (`AUK=1`); ComfyUI-RMBG moves to 3.3.0 (`a66a5e64`) |
 | `install-isolated-worker.sh` | a second ComfyUI with its own code copy, base directory, `HOME` and virtualenv for LatentSync 1.6 and ThinkSound (below) |
 | `start-comfyui.sh` / `stop-comfyui.sh` | run ComfyUI in the background on 127.0.0.1:8188 (log: `$COMFYUI_DIR/logs/comfyui.log`) |
 | `export-templates.mjs` | Playwright: opens the ComfyUI frontend, `app.loadGraphData(ui)` → `app.graphToPrompt().output`, writes `build/raw/<key>.api.json` + `.meta.json` (embedded model URLs, missing node types) |
@@ -166,6 +166,9 @@ node validate-workflows.mjs <ids> wan21-vace-14b-ref2v --shared
 | `scene-mesh-moge` | scene-3d | whole-scene textured GLB + depth PNG (MoGe 2) | research only (42 s on CPU) |
 | `image-to-splat-triposplat` | splat | subject Gaussian splat (`.spz`) + orbit MP4 (TripoSplat) | no |
 | `image-to-splat-idol` | splat | one object as a Gaussian splat (`.spz`) + orbit MP4 (Idol 3D on the TripoSplat core nodes; Best / Quick look, looser photo crop) | no |
+| `image-to-splat-idol-clean` | splat | the same with the ComfyUI-Idol pack: Idol's own crop (synthetic / real), the saved splat pruned of its haze (and optional spikes), the input-view still; not `/prompt`-checked with the pack yet (checked through `PACK_CLASSES`) | no |
+| `image-to-mesh-idol` | image-to-3d | one object as a rough vertex-coloured GLB (Idol 3D's splat → core Extract Mesh from Splat, 384 grid, no textures) + orbit MP4 | no |
+| `image-to-views-idol` | splat | four views of one object from one picture (front, left, back, right: the pruned Idol splat rendered from IdolCamera's predicted camera, 90° apart) for From several images and Elements; needs the ComfyUI-Idol pack. It passed `/prompt` on the CPU validation server once that had the pack, and stays unvalidated until a GPU run | no |
 | `reference-brief-gemma4` | write | reference clip's frames + sound → JSON style brief (Gemma 4 E4B) | no |
 
 - **Changes from the research graphs** (each also in the entry's notes): the painted / insert masks are read from the
@@ -205,6 +208,13 @@ node validate-workflows.mjs <ids> wan21-vace-14b-ref2v --shared
   with the source frames), a 1 s window (29 frames), a silent clip (no sound track, no error), a 25 fps clip through
   VOID (197 frames, 7.880 s of picture and of sound, 672×376) and a window at 50 s of a 60 s clip (0.6 s instead of
   2.6 s with the whole-clip decode). MoGe's guard ran on 1536×3000, 3000×1536 and 1024×768 stills.
+- **The Idol rows** came later and aren't among the 17: `image-to-splat-idol` (idol-1, on main) and, from PR #16,
+  `image-to-splat-idol-clean` (idol-2: the provider runs it when the server reports `IdolPruneSplat`, and
+  `image-to-splat-idol` otherwise), `image-to-mesh-idol` (idol-7) and `image-to-views-idol` (idol-8). The two that use
+  Nynxz's ComfyUI-Idol (Apache-2.0, pinned at `4d3a4f67`, installed by `install-comfyui.sh`, not in the Comfy Registry)
+  are `validated: false`: `image-to-splat-idol-clean` was sent before the validation server had the pack (it answered
+  `missing_node_type`) and not since, and `image-to-views-idol` passed `/prompt` once the server had it but stays
+  unvalidated until a GPU run. `image-to-mesh-idol` uses core nodes only and is `validated: true`. None has run on a GPU.
 
 ### Round-4 video finishing (r4/video-finish, 2026-10-23)
 
@@ -493,6 +503,46 @@ node validate-workflows.mjs --subset-only video-regenerate-h3   # GET /object_in
 - **Not run**: nothing has run on a GPU, and the pack was tested by its author on ComfyUI 0.42.0. Validate on a disposable
   GPU ComfyUI with the packs: `node validate-workflows.mjs video-regenerate-h3`.
 
+## Hi3D 1.0 refine (hi3d-refine)
+
+One hand-built graph for Image to 3D's "Refine detail · Hi3D 1.0" (a switch, and "Refine this mesh" on a finished
+model), the open image-to-3D models' "Refine detail" control on the Canvas 3D node, and Assist / MCP's `refine-3d`
+(docs/research/hi3d-refine.json). Hi3D v1.0 refines a coarse mesh into finer geometry from a photo of the same object;
+it does not make a mesh from nothing, and its output is geometry only, recentred at unit radius.
+
+```bash
+npm run build -- mesh-refine-hi3d
+node validate-workflows.mjs mesh-refine-hi3d --shared   # missing_node_type here: the pack needs a CUDA GPU
+node build-requirements.mjs
+```
+
+| id | capability | what | validated here |
+|---|---|---|---|
+| `mesh-refine-hi3d` | refine-3d | `LoadImage` (2) → core BiRefNet `RemoveBackground` (4) → `InvertMask` (8: Hi3D reads a mask's 1 as transparent, so the inverted mask keeps the subject) → `Hi3DRefine` (6) with the coarse GLB (`Hi3DLoadMesh` 5 reads it from ComfyUI's input folder, where Fuobe uploads it like any input) and `Hi3DModelLoader` (1: models/Hi3D, sequential CPU offload on, SDPA attention) → `SaveGLB` (7). Bindings: `image`, `model3d` (5's `mesh_file`), `meshResolution` (512 / 1024 / 1536: one, two or three passes), `steps` (25 a pass), `seed`, `cpuOffload`. The server finishes the GLB like any image-to-3D model (web GLB + CPU turntable). 24 GB (an estimate) | no: `missing_node_type` (the pack is not on the CPU validation server) |
+
+- **Hardware**: an NVIDIA GPU of compute capability 8.0 or newer (RTX 30 series / A-series, Ada, Hopper, Blackwell) with
+  CUDA 12, on Linux or Windows. There is no CPU path. The official stack is Python 3.10, CUDA 12.0-12.5, torch 2.5.0+cu124,
+  flash-attn 2.7.4.post1 and spconv-cu120 2.3.6 (validated upstream on a 96 GB H20); T8's pack keeps ComfyUI's own torch,
+  installs spconv-cu126 2.3.8 and triton, and offers SDPA attention. Fuobe's graph uses `attention: sdpa` on node 1, so no
+  flash-attn build is needed (the install doesn't add one); set it to `flash` by hand only where flash-attn is already built. Its author ran 512 to 1536 on a 24 GB laptop RTX 5090 with CPU offload; smaller cards are not established.
+- **Node pack** (opt-in, `HI3D=1` in `install-comfyui.sh`): T8mars/Comfyui-Hi3d-T8 at `7384849` (v0.5.1, MIT code; the
+  Hi3D code it vendors is under the Hi3D Open License 1.0), with its `requirements.txt` installed into ComfyUI's Python.
+  By hand: `git clone https://github.com/T8mars/Comfyui-Hi3d-T8 custom_nodes/Comfyui-Hi3d-T8 && git -C
+  custom_nodes/Comfyui-Hi3d-T8 checkout 73848490976e6a9b0c735ce02984c03866a495e7 && python -m pip install -r
+  custom_nodes/Comfyui-Hi3d-T8/requirements.txt`, then restart ComfyUI.
+- **Weights** (10.66 GB, `HI3D_WEIGHTS=0` skips them): hi3d-official/Hi3Dv1.0 at `d502e93` (transformer_512 3.68 GB,
+  transformer_1024 3.68 GB, vae 0.38 GB and their JSON) into models/Hi3D/hi3d/, facebook/dinov2-large at `47b73ee`
+  (1.22 GB) into models/Hi3D/dino/ and openai/clip-vit-large-patch14 at `32bd642` (1.71 GB) into models/Hi3D/clip/, each
+  checked against its SHA-256 (also in `workflows/comfyui/model-pins.json`; the same files t8star/Hi3d-Comfy repackages).
+  ComfyUI doesn't list the Hi3D folder, so the GPU pre-flight reads these files as "unknown" rather than present.
+- **Licence**: the Hi3D Open License Agreement 1.0 allows commercial use; above 200,000 monthly active users or USD
+  1,000,000 monthly revenue, notify the licensor and apply for a separate licence; every result is shown with "Powered by
+  Hi3D 1.0" linking to http://hi3d.ai/ (the app does this on the result cards and the switch).
+- **Texture**: not on this graph. Core can bake TRELLIS.2's texture voxels onto another mesh (`BakeTextureFromVoxel`), but
+  only inside the run that made them and only in their frame, and Hi3D's output is recentred at unit radius with no core
+  node to move it back; see the research's `texture.ownerStep`.
+- **Not run**: nothing has run on a GPU yet. Validate on a GPU ComfyUI with the pack: `node validate-workflows.mjs mesh-refine-hi3d`.
+
 ## Fly path (N7-5)
 
 One hand-built graph films a still along a camera path keyframed in Cinema's 3D scene, on core nodes only
@@ -514,7 +564,8 @@ node validate-workflows.mjs wan21-i2v-uni3c-path --shared
   ComfyUI-GGUF pack). Loading Kijai's file through core `ModelPatchLoader` is inferred from its header keys, not run.
 - **The render** comes from the browser (`src/components/cinema/scene-engine.ts` `recordPath`): 81 frames at 16 fps, black
   where nothing was seen, VP8 in WebM at exact frame times. Its hole mask is made only when asked for (core's Uni3C node
-  has no mask input; WorldCast, N7-9, will ask).
+  has no mask input). WorldCast (N7-9) doesn't use this render: its case renders the path and the hole mask on the server
+  from MoGe 2's depth (`src/server/worldcast-case.ts`).
 - **Licences, as information**: Apache-2.0 (Wan 2.1; Uni3C, whose Kijai repack carries no licence field).
 - **GPU**: Uni3C's own figures are 46–51 GB with offload; Fuobe's older 24 GB note is unverified.
 
@@ -606,6 +657,30 @@ from an example and not rendered yet.
 - **GPU**: 20–24 GB estimates (`vramGb`), none measured here. ComfyUI 0.42.0 or newer: `TextEncodeQwenImage21`,
   `QwenImage21Cache`, `Ideogram4Scheduler`, `DualModelGuider`, `CFGOverride` and `TextEncodeFibo2` came with it.
 
+## NVIDIA RTX Video (ComfyUI Nvidia VFX Nodes)
+
+Three hand-built graphs on Comfy-Org's ComfyUI Nvidia VFX Nodes 0.2.1 (`38d790d`, Apache-2.0, registry
+`comfyui_nvidia_rtx_nodes`) and NVIDIA's `nvidia-vfx` 0.2.0.0 runtime (the RTX Video SDK and its models in one wheel from
+pypi.nvidia.com; NVIDIA Software License Agreement). No model files: nothing downloads at run time.
+
+```bash
+npm run build -- upscale-video-rtx fps-rtx-framegen sdr-to-hdr-rtx
+node validate-workflows.mjs --subset-only upscale-video-rtx fps-rtx-framegen sdr-to-hdr-rtx   # then node build-requirements.mjs
+```
+
+| id | capability | what | validated here |
+|---|---|---|---|
+| `upscale-video-rtx` | upscale-video | `upscale-video-esrgan-chunked`'s VHS meta-batch with `RTXVideoSuperResolution` (scale `min(4, max(1, shortSide / shorter edge))` from `VHS_VideoInfo`, then `ResizeImageMaskNode` to exactly `shortSide`); sound kept. Bindings `video`, `framesPerBatch`, `shortSide`, `rtxQuality` | no: `missing_node_type`. The graph with `ImageScaleBy` in the RTX node's place ran here: 3 s 320x180 25 fps with sound → 1280x720, 75 frames in 5 passes, AAC kept |
+| `fps-rtx-framegen` | interpolate | `interpolate-rife-fps` with `RTXVideoFrameGeneration` (multiplier mode, shot changes detected) in `FrameInterpolate`'s place: N frames (+ the last held once) → N x m + 1. Bindings `video`, `multiplier`, `every`, `slowdown`, `rtxQuality` | no: `missing_node_type` |
+| `sdr-to-hdr-rtx` | sdr-to-hdr | `RTXTrueHDR` (peak `peakNits`, 400-2000) → `CreateVideo` 10-bit with the same `colorSpace` (`HDR` = BT.2020 HLG, `HDR PQ` = PQ) → H.264 High 10 MP4. | no: `missing_node_type`. With `ImageSDRToHDR` in its place: High 10, yuv420p10le, bt2020 / arib-std-b67 (HLG) and smpte2084 (PQ), sound kept |
+
+- `gpu` in the spec (`nvidia-rtx`, frame generation `nvidia-rtx-40`) goes to the manifest and `requirements.json`; the GPU
+  pre-flight shows "Needs an NVIDIA RTX card" when the connected card isn't one.
+- `install-comfyui.sh` clones the pack and installs `nvidia-vfx` only when `nvidia-smi` names an RTX card on an x86_64
+  machine (`nvidia-vfx` 0.2.0.0 has no Linux arm64 wheel; `RTX_VIDEO=1` forces it, `RTX_VIDEO=0` skips it), and warns when
+  PyTorch isn't a CUDA 13 (cu130) build, which the pack's README asks for.
+- **Not run on a GPU.** Validate on a ComfyUI with an RTX card: `node validate-workflows.mjs upscale-video-rtx fps-rtx-framegen sdr-to-hdr-rtx`.
+
 ## Watermark Remover (ComfyUI-Qwen-Watermark)
 
 Three hand-built graphs from overflowofedge's ComfyUI-Qwen-Watermark (MIT, pinned at `eef829d3`) for the Watermark Remover
@@ -631,6 +706,199 @@ comes from a Hugging Face mirror (`ybelkada/segment-anything`) at a pinned revis
 They were built with a stand-in for `/object_info` (the committed subset) and are `validated: false` until
 `node validate-workflows.mjs image-watermark-scan-qwen3vl image-watermark-remove-qwen21 image-watermark-remove-qwen21-brush --shared`
 runs on a ComfyUI 0.42 with the pack installed.
+
+## Round 5, part 3 (PR #16)
+
+PR #16 adds 23 hand-built graphs; the library now has 268 workflows, 191 of them validated. Six were accepted by the CPU
+validation server (`validated: true`): the four Pika H3 Flex graphs, `image-to-mesh-idol` and `image-person-mask-sam3`.
+The other 17 are `validated: false`. Most need node packs that server doesn't have; the exception is
+`image-to-views-idol`, which passed there once the server had ComfyUI-Idol but stays unvalidated until a GPU run. Each
+section says how they were checked instead. None of the 23 has run on a GPU. Three Idol graphs are in the round-4 table above, and `mesh-refine-hi3d`
+and the three RTX Video graphs have their own sections above; the rest follow. `workflows/comfyui/packs.json` now lists
+52 node packs, 8 more, and the new ones are pinned by commit; the ComfyUI pin is unchanged.
+
+### Pika H3 Flex (nm10-pika-flex)
+
+Four hand-built graphs on core nodes (the references graph gets VideoHelperSuite's clip loaders per run) for MiniMax H3's
+Quality → "Fast · Pika Flex (6 steps)", the References mode and "Talk from a voice clip", on your GPU only: no hosted
+service runs Pika's adapters at its 6-step schedule (`src/lib/catalog/pika-flex.ts`).
+
+```bash
+npm run build -- minimax-h3-flex-t2v minimax-h3-flex-i2v minimax-h3-flex-flf2v minimax-h3-flex-ref2va
+node validate-workflows.mjs minimax-h3-flex-t2v minimax-h3-flex-i2v minimax-h3-flex-flf2v minimax-h3-flex-ref2va --shared
+```
+
+| id | capability | what | validated here |
+|---|---|---|---|
+| `minimax-h3-flex-t2v` / `-i2v` / `-flf2v` | t2v / i2v / flf2v | Comfy-Org's `video_pika_h3_flex` templates: the pruned int8 FL2VA model with Pika's FL2VA adapter at 1.0 (`LoraLoaderModelOnly`), `KSamplerSelect` lcm, Pika's six steps as `ManualSigmas` and `BasicGuider` at CFG 1. Words, a first frame (`image`), or a first and a last frame (`endImage`); 480p or 768p, 24 fps, 5–15 s, with stereo sound made with the picture | yes (`/prompt` only) |
+| `minimax-h3-flex-ref2va` | ref2v | Core `MiniMaxH3ReferenceToVideo` on the pruned int8 Ref2VA model with Pika's Ref2VA adapter. The graph holds one image; the provider adds the rest per run (`expandH3References` in `src/lib/h3-references.ts`): up to 9 images, 3 clips (VHS, at 24 fps) and 3 voice or music clips, 12 files in all, each clip 2–15 s. The prompt names them `<Picture N>`, `<Video N>` and `<Audio N>` | yes (`/prompt` only) |
+
+- **Weights**: Pika's two adapters (1.96 GB each, at the model card's revision `3ff16644`, SHA-256 in
+  `workflows/comfyui/model-pins.json`), which a run downloads when ComfyUI lacks them, on the MiniMax H3 files the
+  library already pins (the 20.97 GB pruned int8 FL2VA and Ref2VA models, the 15.69 GB Qwen3-VL text encoder and the
+  VAEs).
+- **Licences, as information**: the MiniMax H3 Community License (its territory excludes the US, the EU, the UK and South
+  Korea; show "MiniMax H3"). Pika's adapters are Model Derivatives under it, and Pika's NOTICE goes with them.
+- **GPU**: `vramGb` 32 is recorded, not measured. Pika tested on an 80 GB H100 and says an end-to-end ComfyUI render
+  wasn't verified with the upload. Another speed LoRA on top breaks the output, by Pika's account.
+- **Not run**: the validator posts each graph to `/prompt` and never lets it run, so nothing has rendered.
+  `tests/pika-flex.test.ts` checks the graphs and the reference expansion.
+
+### Kandinsky 6.0 (nm10-kandinsky6)
+
+Three hand-built graphs on Kandinsky Lab's own packs, each the `comfyui/` folder of its repository: `kandinsky6` (MIT,
+pinned at `7ceeefad`, Registry 1.0.2, ComfyUI 0.38 or newer) and `kandinsky6-sr` (Apache-2.0, pinned at `b15e2aac`,
+Registry 0.1.2). Core ComfyUI has no Kandinsky 6 nodes yet. The cloud half is Kandinsky 6.0 and Kandinsky VSR on fal.
+
+```bash
+npm run build -- kandinsky6-t2av kandinsky6-i2av video-upscale-kandinsky6-vsr
+node validate-workflows.mjs kandinsky6-t2av kandinsky6-i2av video-upscale-kandinsky6-vsr --shared   # missing_node_type without the packs
+```
+
+| id | capability | what | validated here |
+|---|---|---|---|
+| `kandinsky6-t2av` / `kandinsky6-i2av` | t2v / i2v | 5 s clips with sound and dialogue: core loaders (`UNETLoader`, `DualCLIPLoader` kandinsky5 with Qwen2.5-VL 7B and CLIP-L, the HunyuanVideo VAE), the pack's audio VAE loader (MMAudio's `v1-44.pth` and the BigVGAN v2 vocoder) and its PiFlow sampler at 10 steps, CFG 1. `unet` is the Quality setting: Lite distilled (6.38 GB, the default) or Pro distilled (60.3 GB, optional). One caption feeds the picture and the sound: Fuobe puts quoted words between `<S>` and `<E>` and a closing `Sound:` line between `<AUDCAP>` and `<ENDAUDCAP>` (`src/lib/kandinsky-prompt.ts`). Node 20, the Prompt helper (Qwen3.5 9B, 19.3 GB), is taken out unless it is on. 121 frames at 24 fps, 848x480 for 16:9; the picture of image to video is cropped to the clip's size | no: the packs aren't on the CPU validation server; the graphs follow the packs' templates and are checked against the node definitions in their source at the pinned commits |
+| `video-upscale-kandinsky6-vsr` | upscale-video | `Kandinsky6VSRUpscale` (the 2-step distilled VSR model, its K-VAE and its latent upscaler bank, tiled) at 2x, 2.25x (480p to 1080p) or 4x (`scale`, and `upscalerScale` for the bank entry), with the clip's own sound. The pack resamples to 24 fps and keeps at most 121 frames, so Fuobe refuses a longer clip rather than cut it | no: same |
+
+- **Weights**, pinned in `model-pins.json`: the Lite and Pro distilled transformers and the VSR bundle (3.19 GB model,
+  6.96 GB K-VAE, 7.31 GB upscaler bank, each file with its `config.json` beside it, since the loaders list nothing
+  without one), saved under `diffusion_models/<repository>/` as the packs' README says; the bf16 Qwen2.5-VL 7B text
+  encoder (16.58 GB, which World mode shares), the HunyuanVideo VAE, `v1-44.pth` (1.22 GB) and the vocoder (in
+  `models/audio_vae/bigvgan_vocoder`). CLIP-L is the library's own.
+- **Licences, as information**: the Kandinsky weights are MIT; the HunyuanVideo VAE is under the Tencent Hunyuan Community
+  License (its territory excludes the EU, the UK and South Korea); the sound decoder `v1-44.pth` is CC BY-NC 4.0
+  (non-commercial); the vocoder is MIT; Qwen2.5-VL 7B and Qwen3.5 9B are Apache-2.0.
+- **Install**: `install-comfyui.sh` copies both packs' `comfyui/` folders at the pinned commits and installs their
+  requirements (`safetensors>=0.8.0` among them); `K6_PACKS=0` leaves them out.
+- **GPU**: nothing is published. `vramGb` 24 is an estimate for Lite (its 6.4 GB model, then the encoder and the VAE in
+  turn) and for the VSR; Pro holds a 60.3 GB model, so it needs about an 80 GB GPU, or a lot of system RAM for ComfyUI
+  to offload into.
+- **Not run**: nothing has run on a GPU. `tests/kandinsky6.test.ts` checks the graphs and their bindings.
+
+### Green screen and cut-outs (nm10-keying)
+
+Three hand-built graphs on your GPU: CorridorKey 2.0 for Video tools → Green screen, Bria VRMBG 3.0 for Video tools →
+Remove background, and FeyNoBg for Layers → Remove background. The cloud halves are Bria's own hosted models on fal (the
+green-screen despill and the guided cut-out).
+
+```bash
+npm run build -- video-key-corridorkey video-matte-vrmbg3 image-matte-feynobg
+node validate-workflows.mjs video-key-corridorkey video-matte-vrmbg3 image-matte-feynobg --shared   # missing_node_type without the packs
+```
+
+| id | capability | what | validated here |
+|---|---|---|---|
+| `video-key-corridorkey` | bg-remove-video | hashu786's `CorridorKey2` node (Corridor's CorridorKey 2.0 code, unchanged) in VHS passes of `framesPerBatch` frames (48 by default), so memory stays flat on a long clip. Each pass is keyed at native resolution with no hint; `despill` 0.5 is Corridor's default, and its despill takes out green only. Outputs: the cut-out as a transparent WebM with the clip's sound (ProRes 4444 for `params.format` `prores_4444`), the matte as an H.264 MP4, and half-float EXR frames from every pass for `exr`; `params.matteOutput` keeps the cut-out, the matte or the clean foreground | no: the pack isn't on the CPU validation server; its class is read from the pack's source at the pinned commit |
+| `video-matte-vrmbg3` | bg-remove-video | ComfyUI-RMBG's `AILab_VRMBG`: Bria's VRMBG 3.0, the model behind fal's `bria/video/background-removal/v3`, each frame read at 1024x1024 with the previous frame's cut-out; the same three outputs. The whole clip is decoded at once, so RAM grows with its length | no: same |
+| `image-matte-feynobg` | bg-remove | ComfyUI-RMBG's `AILab_FeyNoBg`: a matting model for hair, fur, glass and lace, with no trimap and the edge refinement on → an RGBA PNG | no: same |
+
+- **Node packs**: ComfyUI-CorridorKey2 at `d1228b68` (Corridor Key Licence 2.0), installed by default. It downloads
+  CorridorKey 2.0 and the three frozen models it builds on (about 5.1 GB, into `models/corridorkey2/`) the first time it
+  runs, never at import; Corridor's own weights come from the repository's main revision, not a pinned one.
+  `CORRIDORKEY2_NO_DOWNLOAD=1` turns the download off. ComfyUI-RMBG moves to 3.3.0 (commit `a66a5e64`; there is no tag)
+  for `AILab_VRMBG` and `AILab_FeyNoBg`; FeyNoBg needs the `nobg` package from the pack's requirements.
+- **Weights**: VRMBG 3.0 is gated, and Bria approves access by hand. Put `config.json`, `model.safetensors` (0.88 GB),
+  `model.py` and `vrmbg3_config.py` (revision `59716e19`) in `models/RMBG/VRMBG-3.0/`: the node never downloads them.
+  FeyNoBg downloads its files (1.05 GB) from `1038lab/FeyNobg` into `models/RMBG/FeyNoBg/` on its first run.
+- **Licences, as information**: CorridorKey 2.0 may be used in commercial projects but may not be offered as a paid API
+  or inference service; VRMBG 3.0 is non-commercial without an agreement with Bria; FeyNoBg's weights state no licence;
+  ComfyUI-RMBG's code is GPL-3.0.
+- **GPU**: CorridorKey 2.0 needs NVIDIA CUDA, an RTX 30-series card or newer (4 GB up to 1440p, 6 GB for 4K). VRMBG's
+  6 GB and FeyNoBg's 4 GB are the entries' `vramGb`.
+- **Not run**: nothing has run on a GPU. `tests/keying.test.ts` checks the graphs against the packs' source, the passes
+  and the formats.
+
+### Edit speech and AuK speech (nm10-speech-edit)
+
+Two hand-built graphs on Tencent AuK's own nodes (ComfyUI-AuK, the `comfyui/ComfyUI-AuK` folder of Tencent-Hunyuan/AuK,
+pinned at `0d40366b`, MIT) for Audio → Edit speech and AuK in Audio → Speech, on your GPU only: AuK is hosted on neither
+fal nor Replicate.
+
+```bash
+npm run build -- speech-edit-auk speech-tts-auk
+node validate-workflows.mjs speech-edit-auk speech-tts-auk --shared   # missing_node_type without ComfyUI-AuK
+```
+
+| id | capability | what | validated here |
+|---|---|---|---|
+| `speech-edit-auk` | speech-edit | A recording (or a video's soundtrack, through `LoadAudio`) and the edit windows Fuobe plans (`params.extra.speechWindows`). The provider rebuilds the graph for every window in one prompt (`expandSpeechEditWorkflow` in `src/lib/av/speech-edit-graph.ts`): each window is cut out, edited by `AuKGenerateEdit` (one shared `AuKModelLoader`) with the instruction Fuobe writes (replace, add or remove words; pitch, pace, volume, emotion, whisper, clean-up, keep one speaker), and crossfaded back over 0.12 s at each end with the fade Fuobe uploads (`fadeCurve`). A window keeps at least 1 s of untouched speech on each side, is cut at silences, and fits AuK's 30 s with its new audio. AuK-Flash at 4 steps by default, the base model at 32 steps for "best"; the Prompt Enhancer is off. FLAC | no: the pack isn't on the CPU validation server; the graphs are checked against the node list in its `nodes.py` at the pinned commit. The joins ran on the CPU ComfyUI with a stand-in for AuK |
+| `speech-tts-auk` | tts | AuK text to speech: a voice sample and the line, or a voice made from its description when there is no sample; AuK-Flash, 4 steps. FLAC | no: same |
+
+- **Node pack** (opt-in, `AUK=1` in `install-comfyui.sh`): the whole AuK repository is cloned into `$COMFYUI_DIR/AuK` at
+  the pinned commit, installed editable with its `[comfyui]` extra, and its node folder is linked into `custom_nodes`, so
+  its checkpoint paths (`ckpts/…`) resolve inside that checkout. `AUK_WEIGHTS=1` also downloads AuK-Flash and the
+  Qwen2.5-Omni-3B encoder into `AuK/ckpts` at pinned revisions (the weights are about 19 GB); `AUK_BASE=1` adds the
+  32-step base model.
+- **Licences, as information**: AuK's code and weights are MIT; its Qwen2.5-Omni-3B encoder is under the Qwen Research
+  License, which makes the whole non-commercial in practice.
+- **GPU**: an NVIDIA GPU. AuK's README gives a peak of about 25 GiB, about 17 GiB with the loader's CPU offload
+  (`vramGb` 24). English and Chinese.
+- **Not run**: AuK itself has not run here. `tests/speech-edit-comfy.test.ts` checks the graphs and their expansion.
+
+### World mode (nm10-hy-nomas-world)
+
+One hand-built graph for Cinema's World mode on Nynxz's ComfyUI-HyNomas (Apache-2.0, pinned at `a89e0515`, no Python
+dependencies, not in the Comfy Registry), installed by default. Importing it registers the Hy-Nomas model and its
+PixelUMM decoder with the core loaders. Nobody hosts Hy-Nomas, so World mode is on your GPU only.
+
+```bash
+npm run build -- world-hy-nomas-turn
+node validate-workflows.mjs world-hy-nomas-turn --shared   # missing_node_type without ComfyUI-HyNomas
+```
+
+| id | capability | what | validated here |
+|---|---|---|---|
+| `world-hy-nomas-turn` | world-turn | One turn of a world, from the pack's `nomas_world` example on core loaders (`UNETLoader` with the int8 distilled model, `CLIPLoader` qwen_image with Qwen2.5-VL 7B, `VAELoader` with the PixelUMM decoder). The provider rebuilds it for every run (`expandWorldWorkflow` in `src/lib/world.ts`): the opening (`Nomas World Prompt` → `Nomas World`, 1280x704, 8 Euler steps) and one `Nomas World Continue` per turn up to the one asked for, each flying that turn's camera move (`src/lib/world-path.ts`), then `TrimVideoLatent` keeps this turn's latents for the decode → a 24 fps clip. ComfyUI reuses the earlier turns' outputs while it still holds them, so only the new turn is made; after another job or a restart they are made again from the same seed. No sound and no image input | no: the pack isn't on the CPU validation server; checked against the node definitions in its source at the pinned commit |
+
+- **Weights**, from nynxz/Hy-Nomas and pinned in `model-pins.json`: the int8 distilled model (8.97 GB) and the PixelUMM
+  decoder (15.78 GB), with the bf16 Qwen2.5-VL 7B encoder Kandinsky 6.0 uses too (16.58 GB). The bf16 model (17.11 GB)
+  is optional, a base for LoRA merges, never needed for a run.
+- **Licences, as information**: the Hy-Nomas model and the pack are Apache-2.0; the PixelUMM decoder is under NVIDIA's
+  One-Way Noncommercial License.
+- **GPU**: the port's author measured about 21 s per 3 s turn, plus about 4 s of decode per 10-latent window, on an RTX
+  5090 at 1280x704 in int8; plan on a 24 GB card (`vramGb` 24, not measured here).
+- **Not run**: no turn has run on a GPU. `tests/world-mode.test.ts` checks the rebuilt graph.
+
+### MiniMax H3 in 2K from a saved latent (n7-10)
+
+Two hand-built graphs from rdh9616's "Prompt to 2K" and "Decode Saved Latent" examples, on rdh9616's pack (the finish
+also on LBH's, like `video-regenerate-h3` above; both opt-in, `OPEN_H3_REGEN=1`): MiniMax H3's 2K on your GPU in the
+Video studio and Cinema, and Cinema's Finish in 2K. Both are held with Regenerate: built, but not offered until
+Regenerate has run on a card that fits it (`REGEN_OFFERED` in `src/lib/catalog/regenerate.ts`). The cloud's 2K takes
+and Finish in 2K run on fal's MiniMax H3 and don't use them.
+
+```bash
+npm run build -- video-h3-t2v-2k video-regenerate-h3-latent
+node validate-workflows.mjs video-h3-t2v-2k video-regenerate-h3-latent --shared   # missing_node_type without the packs
+```
+
+| id | capability | what | validated here |
+|---|---|---|---|
+| `video-h3-t2v-2k` | t2v | The draft half of "Prompt to 2K": MiniMax H3 text to video with sound at 768p (the pruned int8 FL2VA model with LightX2V's FL2V Turbo 4-step v1.2 LoRA, 6 steps, er_sde, CFG 1). Between the sampler and the decoder, `OpenH3SaveRefinedLatent` saves the 768p latent with its soundtrack to `output/open_h3_latents/<latentPrefix>_00001.safetensors`, named after the run. 32 GB | no: `missing_node_type` (the pack isn't on the CPU validation server) |
+| `video-regenerate-h3-latent` | upscale-video | `video-regenerate-h3` started from that latent instead of a clip: `OpenH3LoadRefinedLatent` reads it by name (`latent`), so it runs on the ComfyUI that made the draft; the LBH upscaler puts it on the target grid (`resolution`), the refine re-noises it to `startSigma` and runs 3 steps with the prompt, the fast H3 decoder decodes it, and the draft's own sound goes back at 24 fps. No decode and re-encode in between. 48 GB | no: same |
+
+- **The hand-off**: the draft keeps its latent only on a ComfyUI where files stay between jobs (not the owner's workers),
+  and while its Turbo LoRA is switched on. The finish loads it only from the same account's draft (or the owner's) on
+  that same ComfyUI; otherwise it runs `video-regenerate-h3` on the draft's clip (`tests/regenerate-latent.test.ts`).
+- **Weights**: one new file, LightX2V's FL2V Turbo 4-step v1.2 LoRA (1.96 GB, Apache-2.0, at `3ec17a3`, pinned in
+  `model-pins.json`); the rest are the H3 and Regenerate files above.
+- **Not run**: nothing has run on a GPU. rdh measured about 2 minutes for a 5 s draft on a 72 GB RTX PRO 5000.
+
+### WorldCast's person mask (N7-9)
+
+One hand-built graph on core nodes for the WorldCast worker's cases (model `oss-person-mask`, hidden). WorldCast itself
+doesn't run in ComfyUI: it runs on the optional worker (`workers/worldcast/`, `docs/workers/worldcast.md`), after
+ComfyUI has made the still's depth (MoGe 2 by default, `scene-mesh-moge`) and these masks
+(`src/lib/catalog/worldcast-plan.ts`).
+
+```bash
+npm run build -- image-person-mask-sam3
+node validate-workflows.mjs image-person-mask-sam3 --shared
+```
+
+| id | capability | what | validated here |
+|---|---|---|---|
+| `image-person-mask-sam3` | bg-remove | `SAM3_Detect` finds the words (`prompt`, "person" by default; `threshold` 0.4; every match merged into one mask) → `MaskToImage`: white where the person is, the size of the picture. The worker cuts its tight crops of the still and of each view from it. SAM 3.1 (1.75 GB) only; 4 GB | yes (`/prompt` only) |
 
 ## Adding a workflow
 

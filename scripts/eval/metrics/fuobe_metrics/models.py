@@ -205,3 +205,35 @@ class Faces:
             return None
         f = max(faces, key=lambda x: float((x.bbox[2] - x.bbox[0]) * (x.bbox[3] - x.bbox[1])))
         return {"embedding": np.asarray(f.normed_embedding, dtype=np.float64), "box": [float(v) for v in f.bbox]}
+
+
+class Asr:
+    """Whisper base.en (transformers) on 16 kHz mono audio → text. Optional: pnpm eval:setup --asr."""
+
+    def __init__(self, device: str = "cpu"):
+        try:
+            from transformers import WhisperForConditionalGeneration, WhisperProcessor  # noqa: PLC0415
+        except ImportError as e:
+            raise Missing("speech recognition needs transformers: run pnpm eval:setup --asr") from e
+        torch = _torch()
+        m = MODELS["whisper-base-en"]
+        folder = None
+        for f in m["files"]:
+            folder = pathlib.Path(_download("whisper-base-en", f)).parent
+        self.processor = WhisperProcessor.from_pretrained(str(folder))
+        self.model = WhisperForConditionalGeneration.from_pretrained(str(folder)).to(device).eval()
+        self.device = device
+        self.torch = torch
+
+    def text(self, audio: np.ndarray, sr: int = 16000) -> str:
+        """The words in up to the first 30 s of each 30 s window, joined (the suite's clips are 10–30 s)."""
+        out = []
+        for i in range(0, max(1, len(audio)), 30 * sr):
+            chunk = np.asarray(audio[i : i + 30 * sr], dtype=np.float32)
+            if len(chunk) < sr // 10:
+                continue
+            feats = self.processor(chunk, sampling_rate=sr, return_tensors="pt").input_features.to(self.device)
+            with self.torch.no_grad():
+                ids = self.model.generate(feats)
+            out.append(self.processor.batch_decode(ids, skip_special_tokens=True)[0].strip())
+        return " ".join(t for t in out if t)

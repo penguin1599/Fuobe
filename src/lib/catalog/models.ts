@@ -1,7 +1,9 @@
 import { CLOUD_MODELS, ORIGINAL_CLOUD } from "./cloud-models.generated";
+import { HI3D_CHAIN_PARAM } from "@/lib/av/hi3d";
 import { DEFAULT_FPS_TARGET, FPS_TARGETS, SLOW_MOTION } from "@/lib/av/fps";
 import { ASR_LANGUAGES, WHISPER_LANGUAGES } from "../speech-languages";
 import { PROMPT_HELPER_PARAM } from "@/lib/comfy";
+import { KANDINSKY_PLACEHOLDER } from "@/lib/kandinsky-prompt";
 import { QWEN21_DECODER, QWEN21_GPU, QWEN21_SPEED } from "@/lib/qwen21-speed";
 import { QMA_AZIMUTHS, QMA_AZIMUTH_LABELS, QMA_DISTANCES, QMA_DISTANCE_LABELS, QMA_DISTANCE_ZOOM, QMA_ELEVATIONS, QMA_ELEVATION_DEGREES, QMA_ELEVATION_LABELS, QMA_MODEL, QMA_PARAMS } from "@/lib/qma";
 import { H3_DECODER, H3_FAST_DECODE_OFFERED, H3_GPU_TIER } from "@/lib/gpu/h3-tier";
@@ -12,6 +14,7 @@ import { RECOLOR_TAP_FIRST } from "./recolor";
 import { CINEMA_CROP, SOUL_ASPECTS, SOUL_TIERS } from "./soul";
 import { RESTORE, offlineRestorePrompt } from "./restore";
 import { REGEN_COPY, REGEN_DEFAULT_TIER, REGEN_MODEL, REGEN_OFFERED, REGEN_TIERS, REGEN_WORKFLOW } from "./regenerate";
+import { RTX_FRAMEGEN_MODEL, RTX_FRAMEGEN_WORKFLOW, RTX_HDR_MODEL, RTX_HDR_WORKFLOW, RTX_UPSCALE_MODEL, RTX_UPSCALE_WORKFLOW } from "./rtx-video";
 import { COMPOSITE_MODEL, COMPOSITE_WORKFLOW } from "./sharpen";
 import { denoiseFor, EVOLUTION, EVOLUTION_DEFAULT_RESOLUTION, EVOLUTION_RESOLUTIONS, INTENSITIES, type Intensity } from "./evolution";
 import { LAST_FRAME_CHAIN, type ModelDef, type ModelOptions, type ModelRoute, type Operation } from "./types";
@@ -24,6 +27,18 @@ import { LAST_FRAME_CHAIN, type ModelDef, type ModelOptions, type ModelRoute, ty
  */
 
 const comfy = (op: Operation, workflow: string, note?: string): ModelRoute => ({ op, provider: "comfyui", endpoint: workflow, note });
+/**
+ * "Refine detail · Hi3D 1.0" on the open image-to-3D models (hi3d-refine): after the model is built, Hi3D refines its
+ * geometry from the same photo (src/server/chains.ts createRefinedModel). Off unless picked; the Canvas 3D node and
+ * the composer show it as a control, Image to 3D as a switch.
+ */
+const HI3D_REFINE_CONTROL = {
+  param: HI3D_CHAIN_PARAM,
+  label: "Refine detail · Hi3D 1.0",
+  values: ["off", 512, 1024, 1536],
+  default: "off",
+  labels: { off: "Off", 512: "Hi3D 512 (one pass)", 1024: "Hi3D 1024 (two passes)", 1536: "Hi3D 1536 (three passes)" },
+};
 
 /** Chatterbox Multilingual's language list (FL_ChatterboxMultilingualTTS). */
 const CHATTERBOX_LANGUAGES = [
@@ -48,6 +63,9 @@ const CONCAT_SHOTS = { mode: "concat", maxShots: 4 } as const;
 
 const IMG_AR = ["1:1", "4:3", "3:4", "16:9", "9:16", "3:2", "2:3", "21:9", "5:4", "4:5"];
 const VID_AR = ["16:9", "9:16", "1:1"];
+/** Kandinsky 6.0's distilled transformers on your GPU (the graphs' unet): Lite (6.4 GB) and Pro (60.3 GB). */
+const K6_LITE = "Kandinsky-6.0-Lite-distill-5s-Diffusers/transformer/diffusion_pytorch_model.safetensors";
+const K6_PRO = "Kandinsky-6.0-Pro-distill-5s-Diffusers/transformer/diffusion_pytorch_model.safetensors";
 /** Open video upscalers: the result's shorter edge (1080p = 1080 px in any shape). */
 const VIDEO_UPSCALE_TIERS = ["720p", "1080p", "1440p", "2160p"];
 
@@ -614,11 +632,23 @@ const open: ModelDef[] = [
     routes: [comfy("bg-remove", "bg-remove-birefnet")],
     options: {},
   }),
+  // Image cut-outs, Fine hair (nm10-keying): FeyNoBg's matte for hair, fur, lace and glass, its edges refined.
+  o({
+    id: "oss-matte-feynobg",
+    name: "FeyNoBg fine hair",
+    vendor: "1038lab",
+    family: "feynobg",
+    kind: "image",
+    tagline: "Cut-outs that keep every strand of hair, fur and see-through edges",
+    badges: ["new"],
+    routes: [comfy("bg-remove", "image-matte-feynobg")],
+    options: {},
+  }),
 
   // ---------------- Video
-  // MiniMax H3: text, image and start + end frame to video with its own sound, on the fl2va model. Fast runs larryvrh's
-  // turbo v4 LoRA (8 steps) with SLA attention; Best (params.extra.quality) runs the 20-step graph without them
-  // (resolveWorkflowId). The prompt is wrapped in H3's own layout on the server (promptFormat; src/lib/h3-prompt.ts), and
+  // MiniMax H3: text, image and start + end frame to video with its own sound, on the fl2va model. Standard runs larryvrh's
+  // turbo v4 LoRA (8 steps) with SLA attention; Sharper ("best", params.extra.quality) runs the 20-step graph without them,
+  // Pika Flex ("flex") Pika's post-trained adapter in 6 steps (resolveWorkflowId). References (ref2v) run Pika H3 Flex Ref2VA. The prompt is wrapped in H3's own layout on the server (promptFormat; src/lib/h3-prompt.ts), and
   // the canvas and frame count follow H3's grid (the provider). The graphs are not validated yet (validated: false).
   o({
     id: "oss-minimax-h3",
@@ -632,22 +662,35 @@ const open: ModelDef[] = [
       comfy("t2v", "minimax-h3-t2v", "turbo v4 LoRA, 8 steps"),
       comfy("i2v", "minimax-h3-i2v", "turbo v4 LoRA, 8 steps; the clip takes the start frame's shape"),
       comfy("flf2v", "minimax-h3-flf2v", "turbo v4 LoRA, 8 steps; the clip takes the start frame's shape"),
+      // References (Pika H3 Flex Ref2VA, 6 steps): up to 9 images, 3 clips and 3 voice or music clips, cited in order.
+      comfy("ref2v", "minimax-h3-flex-ref2va", "Pika H3 Flex, 6 steps: up to 9 images, 3 clips and 3 voice or music clips"),
+      // Talk from a voice clip (Lipsync & avatars, Fuobe Speak): one image + the voice as references; a new clip, not a re-sync.
+      comfy("avatar", "minimax-h3-flex-ref2va", "Talk from a voice clip: a new clip of the portrait speaking with this voice (2-15 s), not a re-sync of existing footage"),
     ],
     options: {
       aspectRatios: ["auto", "16:9", "9:16", "1:1", "4:3", "3:4"],
       durations: [3, 5, 10, 15],
       resolutions: ["768p"],
+      // 2K in the Video studio and Cinema only: a 768p draft, then Open-H3 Regenerate at 2K from it (from its latent for
+      // text to video), on your GPU: a 48 GB card (its chip says so, own-setup.ts "regenerate:h3-2k").
+      finishTiers: ["2K"],
       seed: true,
       endFrame: true,
       audio: "always",
       promptFormat: "minimax-h3",
+      // References mode (Pika H3 Flex Ref2VA): Pika's limits, 12 files in all (src/lib/h3-references.ts).
+      maxImages: 9,
+      maxVideos: 3,
+      maxAudios: 3,
       controls: [
         {
           param: "quality",
           label: "Quality",
-          values: ["fast", "best"],
+          values: ["fast", "best", "flex"],
           default: "fast",
-          labels: { fast: "Fast · 8 steps", best: "Best · 20 steps, about 2.3x longer" },
+          labels: { fast: "Standard · 8 steps", best: "Sharper · 20 steps, about 2.3x longer", flex: "Fast · Pika Flex (6 steps)" },
+          // References and Talk from a voice clip always run Pika H3 Flex: the chip shows on words and frames only.
+          ops: { fast: ["t2v", "i2v", "flf2v"], best: ["t2v", "i2v", "flf2v"], flex: ["t2v", "i2v", "flf2v"] },
         },
         // On a card under 32 GB the run picks FastH3 V2 or Trim by itself (src/server/h3-gpu.ts); this picks one on any card.
         H3_GPU_TIER,
@@ -656,6 +699,8 @@ const open: ModelDef[] = [
       ],
     },
     defaults: { aspectRatio: "auto", duration: 5, resolution: "768p" },
+    engineNote:
+      "Pika H3 Flex (Quality → Fast · Pika Flex, References with images, clips and voice or music clips, and Talk from a voice clip) runs on your GPU only: no cloud service offers it, so the cloud runs MiniMax H3 as hosted, without Flex",
   }),
   o({
     id: "oss-ltx25",
@@ -746,6 +791,51 @@ const open: ModelDef[] = [
     routes: [comfy("t2v", "ltx2-t2v"), comfy("i2v", "ltx2-i2v")],
     options: { multiShot: CONCAT_SHOTS, aspectRatios: VID_AR, durations: [5, 8], resolutions: ["720p"], seed: true, negativePrompt: true, audio: "always" },
     defaults: { aspectRatio: "16:9", duration: 5, resolution: "720p" },
+  }),
+  // Kandinsky 6.0 (Kandinsky Lab, 2026-10-06, MIT; research #10 §2.1, package nm10-kandinsky6): 5 s clips at 24 fps with 44 kHz
+  // sound and lip-synced dialogue, from words or a first frame, on Kandinsky Lab's own packs (kandinsky6). Quality picks the
+  // 10-step distilled Lite (3B, the default here: it fits ordinary GPUs) or Pro (29B, a 60 GB file); the Prompt helper runs
+  // Kandinsky's Qwen3.5 9B rewrite first. Quoted words are what someone says (promptFormat). The cloud half is kandinsky-6.
+  o({
+    id: "oss-kandinsky6",
+    name: "Kandinsky 6.0",
+    vendor: "Kandinsky Lab",
+    family: "kandinsky",
+    kind: "video",
+    tagline: "Kandinsky 6.0 · both engines: 5 s clips with dialogue, lip sync and sound from words or a first frame · Lite on a 24 GB GPU, Pro about 80 GB · MIT",
+    badges: ["new", "audio"],
+    routes: [
+      comfy("t2v", "kandinsky6-t2av", "10-step distilled model; the sound is made with the picture"),
+      comfy("i2v", "kandinsky6-i2av", "10-step distilled model; the image is the first frame"),
+    ],
+    options: {
+      aspectRatios: ["16:9", "9:16", "1:1", "4:3", "3:4"],
+      durations: [5],
+      resolutions: ["480p"],
+      seed: true,
+      negativePrompt: true,
+      audio: "always",
+      promptFormat: "kandinsky6",
+      promptPlaceholder: KANDINSKY_PLACEHOLDER,
+      controls: [
+        {
+          param: "quality",
+          label: "Quality",
+          values: ["lite", "pro"],
+          default: "lite",
+          labels: { lite: "Lite · 10 steps, fits a 24 GB GPU", pro: "Pro · 10 steps, about 80 GB (extra 60 GB file)" },
+          sets: { lite: { unet: K6_LITE }, pro: { unet: K6_PRO } },
+        },
+        {
+          param: PROMPT_HELPER_PARAM,
+          label: "Prompt helper",
+          values: ["off", "on"],
+          default: "off",
+          labels: { off: "Off · your words as typed", on: "On · Kandinsky writes a fuller caption (extra 19 GB file)" },
+        },
+      ],
+    },
+    defaults: { aspectRatio: "16:9", duration: 5, resolution: "480p" },
   }),
   o({
     id: "oss-hunyuan15",
@@ -887,6 +977,20 @@ const open: ModelDef[] = [
     },
     defaults: { resolution: REGEN_DEFAULT_TIER },
   }),
+  // Kandinsky VSR (nm10-kandinsky6): Kandinsky Lab's 2-step distilled video upscaler (kandinsky6-sr pack), 2x, 2.25x (480p to
+  // 1080p) or 4x by tiled diffusion, keeping the clip's sound; at most 121 frames at 24 fps (about 5 s), as on fal (kandinsky-vsr).
+  o({
+    id: "oss-kandinsky6-vsr",
+    name: "Kandinsky VSR",
+    vendor: "Kandinsky Lab",
+    family: "kandinsky",
+    kind: "video",
+    tagline: "Kandinsky 6.0 · both engines: sharp 2x, 2.25x or 4x video upscale, clips up to 5 s · MIT",
+    badges: ["new"],
+    routes: [comfy("upscale-video", "video-upscale-kandinsky6-vsr", "2-step distilled upscaler, tiled; keeps the sound")],
+    options: { seed: true, resolutions: ["2x", "2.25x", "4x"], maxSourceSeconds: 5 },
+    defaults: { resolution: "2.25x" },
+  }),
   o({
     id: "oss-upscale-video-esrgan",
     name: "ESRGAN video upscale",
@@ -932,6 +1036,68 @@ const open: ModelDef[] = [
     tagline: "SDR footage expanded to 10-bit HDR: HLG or HDR10 (PQ) MP4, or 16-bit EXR frames",
     routes: [comfy("sdr-to-hdr", "video-sdr-to-hdr", "an inverse tone map (core ImageSDRToHDR), not a learned model")],
     options: { formats: ["hlg_10bit", "pq_10bit", "exr"], sliders: [{ param: "peakNits", label: "Peak brightness (nits)", min: 200, max: 2000, step: 50, default: 650 }] },
+    defaults: { format: "hlg_10bit" },
+  }),
+  // NVIDIA RTX Video (nm10-rtx-video, src/lib/catalog/rtx-video.ts): Comfy-Org's NVIDIA VFX nodes on NVIDIA's RTX Video SDK,
+  // only on an NVIDIA RTX card (frame generation: RTX 40 or later). Listed after each tool's own default so nothing picks
+  // them by default; Upscale → Video offers "Quick · RTX" first on a card that runs it. Nobody hosts them: GPU-only.
+  o({
+    id: RTX_UPSCALE_MODEL,
+    name: "RTX Video Super Resolution",
+    vendor: "NVIDIA",
+    family: "nvidia-rtx-video",
+    kind: "video",
+    tagline: "Fast upscale up to 4x on NVIDIA RTX cards; sharpens without adding new detail",
+    badges: ["fast"],
+    routes: [comfy("upscale-video", RTX_UPSCALE_WORKFLOW, "NVIDIA RTX cards only; in passes, so any length fits, sound kept")],
+    options: {
+      resolutions: VIDEO_UPSCALE_TIERS,
+      controls: [
+        {
+          param: "rtxQuality",
+          label: "Source",
+          values: ["ULTRA", "HIGHBITRATE_ULTRA", "HIGH"],
+          default: "ULTRA",
+          labels: { ULTRA: "Most clips", HIGHBITRATE_ULTRA: "Clean, high quality", HIGH: "Faster" },
+        },
+      ],
+    },
+    defaults: { resolution: "1080p" },
+  }),
+  o({
+    id: RTX_FRAMEGEN_MODEL,
+    name: "RTX Frame Generation",
+    vendor: "NVIDIA",
+    family: "nvidia-rtx-video",
+    kind: "video",
+    tagline: "FPS Boost to 24–120 fps and slow motion on RTX 40 series cards and newer; keeps cuts sharp",
+    badges: ["fast"],
+    routes: [comfy("interpolate", RTX_FRAMEGEN_WORKFLOW, "RTX 40 series cards and newer only; frame rate from the clip's header")],
+    options: {
+      fpsTargets: [...FPS_TARGETS],
+      slowdowns: [...SLOW_MOTION],
+      controls: [
+        {
+          param: "rtxQuality",
+          label: "Quality",
+          values: ["MEDIUM", "HIGH", "LOW"],
+          default: "MEDIUM",
+          labels: { MEDIUM: "Balanced", HIGH: "Best", LOW: "Fastest" },
+        },
+      ],
+    },
+    defaults: { targetFps: DEFAULT_FPS_TARGET },
+  }),
+  o({
+    id: RTX_HDR_MODEL,
+    name: "RTX Video HDR",
+    vendor: "NVIDIA",
+    family: "nvidia-rtx-video",
+    kind: "video",
+    tagline: "SDR footage turned into 10-bit HDR by NVIDIA's learned HDR, on NVIDIA RTX cards: HLG or HDR10 (PQ)",
+    badges: ["fast"],
+    routes: [comfy("sdr-to-hdr", RTX_HDR_WORKFLOW, "NVIDIA RTX cards only; tagged BT.2020 HLG or PQ")],
+    options: { formats: ["hlg_10bit", "pq_10bit"], sliders: [{ param: "peakNits", label: "Peak brightness (nits)", min: 400, max: 2000, step: 50, default: 650 }] },
     defaults: { format: "hlg_10bit" },
   }),
   o({
@@ -1057,6 +1223,41 @@ const open: ModelDef[] = [
     tagline: "Keep just what you name (“the dog”, “the red car”) — a transparent WebM, or its alpha mask",
     routes: [comfy("bg-remove-video", "video-bg-remove-sam3")],
     options: { keepsNamed: true, matteOutputs: ["cutout", "matte"] },
+  }),
+  // Bria's VRMBG 3.0 on your GPU (nm10-keying): the model behind the cloud's Bria matte, each frame following the one before.
+  // Its weights are gated (Bria approves access by hand) and placed by hand; the GPU check says so until they are there.
+  o({
+    id: "oss-video-matte-vrmbg3",
+    name: "Bria VRMBG 3.0",
+    vendor: "Bria",
+    family: "bria",
+    kind: "video",
+    tagline: "Steady, flicker-free cut-outs that follow the subject frame to frame — the same model as the cloud's Bria matte · needs Bria's approval for the weights",
+    badges: ["new"],
+    routes: [comfy("bg-remove-video", "video-matte-vrmbg3", "Bria VRMBG 3.0 (gated weights, placed by hand)")],
+    options: { promptless: true, matteOutputs: ["cutout", "matte"], formats: ["webm_alpha", "prores_4444", "exr"] },
+    defaults: { format: "webm_alpha" },
+  }),
+  // Video tools → Green screen on your GPU (nm10-keying): Corridor Digital's CorridorKey 2.0 neural keyer on footage shot on
+  // a green screen (its despill takes out green), at native resolution, in passes so long clips fit. The cut-out, its mask or
+  // the clean foreground; WebM, ProRes 4444 with alpha, or linear EXR frames. NVIDIA RTX 30-series or newer.
+  o({
+    id: "oss-video-key-corridorkey",
+    name: "CorridorKey 2.0",
+    vendor: "Corridor Digital",
+    family: "corridorkey",
+    kind: "video",
+    tagline: "Neural green-screen keying: clean hair, motion blur and see-through edges, with the green spill taken out",
+    badges: ["new"],
+    routes: [comfy("bg-remove-video", "video-key-corridorkey", "CorridorKey 2.0")],
+    options: {
+      promptless: true,
+      greenScreen: true,
+      matteOutputs: ["cutout", "matte", "foreground"],
+      formats: ["webm_alpha", "prores_4444", "exr"],
+      sliders: [{ param: "despill", label: "Spill cleanup", min: 0, max: 1, step: 0.05, default: 0.5 }],
+    },
+    defaults: { format: "webm_alpha" },
   }),
   o({
     id: "oss-video-depth-da3",
@@ -1214,6 +1415,18 @@ const open: ModelDef[] = [
     hidden: true,
     routes: [comfy("describe-video", "video-scene-describe", "Qwen3-VL 8B at 2 frames a second, then rewritten for the picture")],
     options: { maxImages: 1 },
+  }),
+  // Genjutsu's "Describe my character" on a GPU: who the character in one picture is and what they wear.
+  o({
+    id: "oss-character-describe",
+    name: "Describe my character",
+    vendor: "Qwen × Openjutsu",
+    family: "utility",
+    kind: "text",
+    tagline: "Who the character in your picture is and what they wear, in one sentence for the swap · 12 GB GPU",
+    hidden: true,
+    routes: [comfy("write", "character-describe-qwen3vl", "Qwen3-VL 8B on core TextGenerate, the picture at 1024 px")],
+    options: { maxImages: 1, minImages: 1, promptless: true },
   }),
   o({
     id: "oss-from-picture",
@@ -1495,6 +1708,19 @@ const open: ModelDef[] = [
     tagline: "Design or clone a voice in studio-quality 48 kHz, in 30 languages",
     badges: ["new"],
     routes: [comfy("voice-design", "tts-voxcpm2"), comfy("tts", "tts-voxcpm2-clone")],
+    options: { voiceClone: true, seed: true },
+  }),
+  // Edit speech (nm10-speech-edit): Tencent AuK (MIT) changes words, pitch, pace, emotion and noise in a recording, and
+  // speaks a line in a voice. Hosted on neither fal nor Replicate, so it runs on your GPU only (src/lib/speech-edit.ts).
+  o({
+    id: "oss-auk",
+    name: "AuK",
+    vendor: "Tencent",
+    family: "auk",
+    kind: "audio",
+    tagline: "Change what was said in a recording, or how it was said, or speak a line in a voice: English and Chinese",
+    badges: ["new"],
+    routes: [comfy("speech-edit", "speech-edit-auk", "every edit window in one job"), comfy("tts", "speech-tts-auk")],
     options: { voiceClone: true, seed: true },
   }),
   o({
@@ -2145,7 +2371,7 @@ const open: ModelDef[] = [
     tagline: "A textured 3D model (.glb) that stays true to your photo (camera-aware), plus a turntable video · 16 GB GPU",
     badges: ["new", "top"],
     routes: [comfy("image-to-3d", "image-to-3d-pixal3d", "MoGe-2 camera → Pixal3D; ~250k triangles; web GLB + turntable made after the job")],
-    options: { seed: true },
+    options: { seed: true, controls: [HI3D_REFINE_CONTROL] },
   }),
   o({
     id: "oss-trellis2",
@@ -2156,7 +2382,7 @@ const open: ModelDef[] = [
     tagline: "A textured 3D model (.glb) from one product photo, plus a turntable video; the fallback to Pixal3D · 16 GB GPU",
     badges: ["new"],
     routes: [comfy("image-to-3d", "image-to-3d-trellis2", "~250k triangles; web GLB + turntable made after the job")],
-    options: { seed: true },
+    options: { seed: true, controls: [HI3D_REFINE_CONTROL] },
   }),
   o({
     id: "oss-hunyuan3d-21",
@@ -2166,7 +2392,22 @@ const open: ModelDef[] = [
     kind: "model3d",
     tagline: "Untextured 3D shape from a photo · 10 GB GPU",
     routes: [comfy("image-to-3d", "image-to-3d-hunyuan3d-21")],
-    options: { seed: true },
+    options: { seed: true, controls: [HI3D_REFINE_CONTROL] },
+  }),
+  // hi3d-refine (docs/research/hi3d-refine.json): Hi3D 1.0 refines a finished model's geometry from the photo it came from.
+  // Nobody hosts the open model, so it is open-engine only. Geometry only; its results carry "Powered by Hi3D 1.0".
+  o({
+    id: "oss-hi3d-refine",
+    name: "Hi3D 1.0",
+    vendor: "Hi3D (Sparc3D)",
+    family: "hi3d",
+    kind: "model3d",
+    tagline: "Refines a 3D model's geometry at 512, 1024 or 1536 from the photo it was made from; geometry only, no colour · Ampere GPU or newer, CUDA 12 · Powered by Hi3D 1.0",
+    badges: ["new"],
+    routes: [comfy("refine-3d", "mesh-refine-hi3d", "coarse GLB + photo → BiRefNet mask → Hi3D refine (25 steps a pass) → GLB, recentred at unit radius")],
+    options: { seed: true, minImages: 1, maxImages: 1, promptless: true },
+    engineNote: "Runs on your GPU only: no cloud service hosts the open Hi3D model.",
+    hidden: true,
   }),
   // Round 4 (r4/3d-plus): Image to 3D's other modes on the open engine.
   o({
@@ -2179,7 +2420,7 @@ const open: ModelDef[] = [
     badges: ["new"],
     // params.extra.views names each photo's side ("front", "left", "back", "right"); the front is needed.
     routes: [comfy("image-to-3d", "image-to-3d-trellis2-multiview", "Pixal3D multi-view on TRELLIS.2; the front, then any of left, back and right")],
-    options: { seed: true, minImages: 2, maxImages: 4 },
+    options: { seed: true, minImages: 2, maxImages: 4, controls: [HI3D_REFINE_CONTROL] },
   }),
   o({
     id: "oss-text-trellis2",
@@ -2254,6 +2495,25 @@ const open: ModelDef[] = [
       ],
     },
   }),
+  // Idol 3D quick mesh (docs/research/idol-9.md §9): Idol's splat turned into a rough vertex-coloured mesh by core SplatToMesh, in From an
+  // image. Nobody hosts it (fal's speridlabs/idol gives a splat only), so it is open-engine only.
+  o({
+    id: "oss-idol-mesh",
+    name: "Idol 3D quick mesh",
+    vendor: "Speridlabs",
+    family: "idol",
+    kind: "model3d",
+    tagline: "A rough vertex-coloured .glb from one picture, no textures · 8 GB GPU · Apache-2.0 · Built with DINOv3",
+    badges: ["new"],
+    routes: [comfy("image-to-3d", "image-to-mesh-idol", "Idol splat → core Extract Mesh from Splat → vertex-coloured .glb + a 3 s orbit")],
+    options: {
+      seed: true,
+      maxImages: 1,
+      sliders: [{ param: "meshResolution", label: "Mesh detail", min: 128, max: 768, step: 64, default: 384 }],
+      controls: [HI3D_REFINE_CONTROL],
+    },
+    engineNote: "Runs on your GPU only: no cloud service makes this mesh.",
+  }),
   // Photo to 3D: Idol (TripoSplat's architecture, Speridlabs' weights) on core nodes; its splat becomes the GLB (SplatToMesh), with the
   // .spz and an orbit clip of the splat beside it (docs/research/idol-9.md). Not hosted anywhere: open engine only.
   o({
@@ -2305,6 +2565,96 @@ const open: ModelDef[] = [
       requires: { images: 1, video: true, msg: "Add the still and the render of the path (Cinema's 3D scene records it when you film a path)" },
     },
     defaults: { resolution: "480p", aspectRatio: "auto" },
+  }),
+  // World mode (nm10-hy-nomas-world): Hy-Nomas (Tencent Hunyuan, Apache-2.0) through Nynxz's ComfyUI port, a world described
+  // once and steered turn by turn. Hosted on neither fal nor Replicate: open engine only. Cinema's World take runs it
+  // (src/lib/world.ts); it isn't a model of the Video studio's menu.
+  o({
+    id: "oss-hy-nomas-world",
+    name: "Hy-Nomas",
+    vendor: "Tencent Hunyuan",
+    family: "hy-nomas",
+    kind: "video",
+    tagline: "A world you describe once, then steer turn by turn with words and camera moves · 1280 × 704 at 24 fps · Apache-2.0",
+    badges: ["new"],
+    hidden: true,
+    routes: [comfy("world-turn", "world-hy-nomas-turn", "the opening and every turn before this one, then this turn's clip")],
+    options: { seed: true },
+  }),
+  // N7-9: WorldCast (PixCtrol) on the WorldCast worker, outside ComfyUI (docs/workers/worldcast.md). Fly path, Turnaround and
+  // the exact orbits prefer it when the worker answers: the still's depth (MoGe 2), SAM 3.1 masks of the still and the views,
+  // then one case; the back and sides follow the views. 81 frames, portrait 480 × 832, 15 fps.
+  o({
+    id: "oss-worldcast",
+    name: "WorldCast",
+    vendor: "PixCtrol (Xiaomi MiLM Plus, Wuhan University)",
+    family: "wan",
+    kind: "video",
+    tagline: "A still filmed along an exact camera path, with the back and sides following your own views · portrait 480 × 832, 5.4 s · 48 GB+ GPU · Apache-2.0",
+    badges: ["new"],
+    hidden: true,
+    routes: [{ op: "camera-path", provider: "worldcast", endpoint: "cases", note: "WorldCast on Wan 2.1 I2V 720P, on your WorldCast worker" }],
+    licence: {
+      licence: "Apache-2.0",
+      commercial: true,
+      note:
+        "Apache-2.0 (code at PixCtrol/WorldCast 7ccf2e0d; weights ly56/worldcast 27635f27, on Wan2.1-I2V-14B-720P, Apache-2.0). Stage 1 trained on SpatialVID (CC BY-NC-SA 4.0), which the authors say they used \"strictly for academic research purposes and not for any commercial applications\"",
+      checked: "2026-11-02",
+    },
+    options: {
+      seed: true,
+      maxImages: 11,
+      aspectRatios: ["9:16"],
+      requires: { images: 1, msg: "Add the still to film" },
+    },
+    defaults: { aspectRatio: "9:16" },
+  }),
+  // N7-9: the paper's own depth models, on the WorldCast worker when it has them (GET /health "depth"): MoGe 2 stays the default.
+  o({
+    id: "oss-depth-pro",
+    name: "Depth Pro",
+    vendor: "Apple",
+    family: "depth-pro",
+    kind: "image",
+    tagline: "Metric depth of one photo, the depth WorldCast's paper used · on your WorldCast worker · Apple research licence (no commercial use)",
+    hidden: true,
+    routes: [{ op: "edit", provider: "worldcast", endpoint: "depth/depth-pro", note: "apple/DepthPro on the WorldCast worker" }],
+    licence: {
+      licence: "Apple ML Research License (research only; non-commercial)",
+      commercial: false,
+      note: "apple/DepthPro ccd1350a: research use only; it \"does not include any commercial exploitation, product development or use in any commercial product or service\"",
+      checked: "2026-11-02",
+    },
+    options: { maxImages: 1, requires: { images: 1, msg: "Add the still" } },
+  }),
+  o({
+    id: "oss-vggt-omega",
+    name: "VGGT-Omega",
+    vendor: "Meta FAIR",
+    family: "vggt",
+    kind: "image",
+    tagline: "Depth and cameras of a photo, the poses WorldCast's paper used · on your WorldCast worker · FAIR Noncommercial (gated download)",
+    hidden: true,
+    routes: [{ op: "edit", provider: "worldcast", endpoint: "depth/vggt-omega", note: "facebook/VGGT-Omega on the WorldCast worker (gated: the worker needs a Hugging Face token)" }],
+    licence: {
+      licence: "FAIR Noncommercial Research License",
+      commercial: false,
+      note: "facebook/VGGT-Omega 1041e80f: FAIR Noncommercial Research License; a gated download that Meta approves by hand",
+      checked: "2026-11-02",
+    },
+    options: { maxImages: 1, requires: { images: 1, msg: "Add the still" } },
+  }),
+  // N7-9: the person's mask in a picture (SAM 3.1), for WorldCast's still and views.
+  o({
+    id: "oss-person-mask",
+    name: "SAM 3.1 person mask",
+    vendor: "Meta",
+    family: "sam",
+    kind: "image",
+    tagline: "A black-and-white mask of the person in a picture · 4 GB GPU · Meta SAM License",
+    hidden: true,
+    routes: [comfy("bg-remove", "image-person-mask-sam3", "SAM 3.1 finds the person: white where they are")],
+    options: { maxImages: 1, requires: { images: 1, msg: "Add the picture" } },
   }),
   o({
     id: "oss-tryon-klein",
@@ -2946,6 +3296,19 @@ const local: ModelDef[] = [
     kind: "image",
     tagline: "The relit picture blended into the original in your browser",
     routes: [{ op: "relight", provider: "local", endpoint: "webgl" }],
+    options: {},
+    hidden: true,
+  },
+  // Split soundtrack's Export mix: the stems at the levels set in the mixer, written as a WAV in the browser.
+  {
+    id: "local-mix",
+    name: "Stem mix",
+    vendor: "Fuobe",
+    family: "local",
+    engine: "open",
+    kind: "audio",
+    tagline: "The stems at the levels you set, mixed in your browser",
+    routes: [{ op: "mix", provider: "local", endpoint: "webaudio" }],
     options: {},
     hidden: true,
   },

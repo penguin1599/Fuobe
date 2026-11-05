@@ -3,7 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { MODELS } from "@/lib/catalog";
 import type { Manifest } from "@/lib/comfy";
-import { buildLicenceList, kindLabel, licenceTerms, UNKNOWN_LICENCE, workflowLicence } from "@/lib/licences";
+import { buildLicenceList, kindLabel, licenceTerms, NODE_PACKS, UNKNOWN_LICENCE, workflowLicence } from "@/lib/licences";
 
 /** The About & licences page (R4-53): every open model's licence, its catches and notices. */
 
@@ -101,5 +101,10 @@ describe("licences", () => {
     // Without the downloads, a licence with no page of its own has no link.
     const bare = buildLicenceList(MODELS, manifest.workflows.map((w) => ({ ...w, models: undefined })));
     expect(bare.rows.flatMap((r) => r.links).filter(Boolean).length).toBeLessThanOrEqual(linked);
+  });
+
+  it("node pack notes, which everyone can read, name no install switches or scripts", () => {
+    const said = NODE_PACKS.map((p) => `${p.name}: ${p.licence.note ?? ""}`).filter((n) => /\b[A-Z][A-Z0-9]*_[A-Z0-9_]+=|scripts\/|install-[a-z-]+\.sh/.test(n));
+    expect(said).toEqual([]);
   });
 });

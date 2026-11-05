@@ -197,6 +197,7 @@ function titleOf(plan: FixPlan | undefined, name: string): { text: string; Icon:
   if (!plan) return { text: name, Icon: Wrench };
   if (plan.state === "ready") return { text: `${plan.name} is ready`, Icon: CheckCircle2 };
   if (plan.state === "gpu") return { text: `${plan.name} needs a bigger graphics card`, Icon: Cpu };
+  if (plan.state === "unsupported" && plan.gpuNeed) return { text: `${plan.name} needs ${plan.gpuNeed === "nvidia-rtx-40" ? "an NVIDIA RTX 40 series card or newer" : "an NVIDIA RTX card"}`, Icon: Cpu };
   if (plan.state === "unsupported") return { text: `${plan.name} needs a second ComfyUI`, Icon: Layers };
   const n = plan.steps.filter((s) => s.kind !== "restart" && s.kind !== "hf-licence" && s.kind !== "civitai-key").length || 1;
   return { text: n === 1 ? `${plan.name} needs one more thing` : `${plan.name} needs ${n} things`, Icon: Download };
@@ -269,7 +270,11 @@ function Body({ detail, actions, titleRef }: { detail: GpuSetupDetail; actions: 
       {plan?.state === "gpu" && <GpuState plan={plan} actions={actions} />}
       {plan?.state === "unsupported" && (
         <div className="space-y-3 text-[13px] text-muted-foreground">
-          <p>This one needs its own ComfyUI, so it can&apos;t run next to your other add-ons.</p>
+          <p>
+            {plan.gpuNeed
+              ? `It runs on NVIDIA's RTX video engine, which only ${plan.gpuNeed === "nvidia-rtx-40" ? "RTX 40 series cards and newer" : "NVIDIA RTX cards"} have${plan.gpu ? `, and your ${plan.gpu} isn't one` : ""}. Pick another choice in this tool for this clip.`
+              : "This one needs its own ComfyUI, so it can't run next to your other add-ons."}
+          </p>
           <Button variant="secondary" className="h-11 sm:h-9" onClick={actions.close}>
             Close
           </Button>

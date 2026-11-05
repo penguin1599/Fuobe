@@ -6,6 +6,8 @@ import path from "node:path";
 import type { OutputFile } from "@/lib/catalog/types";
 import { absolutePath, deleteAsset, getAsset, saveFile } from "./storage";
 import { inTurn } from "./account-send";
+import { ACCOUNT_LIMITS, accountTotalBytes, accountUsage, diskHasRoom } from "./account-files";
+import { hit } from "./rate";
 
 /**
  * The finish every image-to-3D GLB from ComfyUI gets on this server, in two steps:
@@ -23,6 +25,10 @@ import { inTurn } from "./account-send";
  *
  * Both scripts run as child processes (the work is CPU-heavy and must not stall the server's event loop),
  * one turntable at a time, at below-normal priority. Any failure keeps what was made: the raw GLB always.
+ *
+ * An account's model (public sign-up, made on its own GPU or key) gets step 1 only, under its limits: one account's
+ * finish at a time across the server, the file's size, the server's and its files' room, and an hour's finishes
+ * (accountFinishProblem). Its browser records the turntable.
  */
 
 /** Bump when the finish changes what it writes. */
@@ -37,9 +43,9 @@ const PROGRESS_EVERY_MS = 2_000;
 
 const isGlb = (o: OutputFile) => o.kind === "model3d" && (o.contentType === "model/gltf-binary" || /\.glb(\?|$)/i.test(o.url));
 
-/** Which output a finish works on: the first GLB of an image-to-3D job from ComfyUI (not a scene, splat or rig). */
+/** Which output a finish works on: the first GLB of an image-to-3D job (or Hi3D's refine of one) from ComfyUI (not a scene, splat or rig). */
 export function modelToFinish(r: { provider: string; op: string }, outputs: OutputFile[]): number {
-  if (r.provider !== "comfyui" || r.op !== "image-to-3d") return -1;
+  if (r.provider !== "comfyui" || (r.op !== "image-to-3d" && r.op !== "refine-3d")) return -1;
   return outputs.findIndex((o) => isGlb(o) && !!o.assetId && !o.meta?.finish && !o.meta?.role);
 }
 
@@ -182,6 +188,24 @@ const oneAccountAtATime = <T,>(account: string, fn: () => Promise<T>): Promise<T
 /** An account's raw GLB over this is kept as it is, with no finish. */
 export const ACCOUNT_FINISH_MAX_BYTES = 300 * 2 ** 20;
 
+/**
+ * Why an account's model isn't finished on this server (null: it is), by the account's limits. The raw GLB is kept
+ * either way, to view and download; only the web GLB is left out.
+ * - file size: a raw GLB over ACCOUNT_FINISH_MAX_BYTES;
+ * - disk room: the server keeps its free space and the accounts' share (diskHasRoom), and the account's files have room;
+ * - an hour's finishes: ACCOUNT_LIMITS.modelFinishesPerHour (counted only for a finish that runs).
+ */
+export function accountFinishProblem(account: string, rawBytes: number): string | null {
+  if (rawBytes > ACCOUNT_FINISH_MAX_BYTES) return "the model is over 300 MB, so it is kept as it is";
+  if (!diskHasRoom()) return "the server is short of room, so the model is kept as it is";
+  if (accountUsage(account).total >= accountTotalBytes(account)) return "the account's files are full, so the model is kept as it is";
+  if (!hit(`finish3d:${account}`, ACCOUNT_LIMITS.modelFinishesPerHour, 60 * 60_000).ok) return "this hour's finishes are used up, so the model is kept as it is";
+  return null;
+}
+
+/** Whether an account's files have room for a finished file of this size (its web GLB). */
+const accountHasRoomFor = (account: string, bytes: number) => accountUsage(account).total + bytes <= accountTotalBytes(account);
+
 /** What an account's finished model says of its turntable: none on the server; the 3D page records one in the browser. */
 export const ACCOUNT_TURNTABLE = "skipped: record it in your browser";
 /** A job that came with an orbit clip of its splat keeps it as the turntable. */
@@ -205,8 +229,10 @@ export async function finishModel(
   const raw = absolutePath(asset.relPath);
   const finish: Record<string, unknown> = { version: MODEL_FINISH_VERSION };
   const meta: Record<string, unknown> = { ...mesh.meta };
-  if (o.account && asset.size > ACCOUNT_FINISH_MAX_BYTES) {
-    finish.error = "web GLB: the model is over 300 MB, so it is kept as it is";
+  // An account's model is finished under its own limits (accountFinishProblem), or kept as it came.
+  const problem = o.account ? accountFinishProblem(o.account, asset.size) : null;
+  if (problem) {
+    finish.error = `web GLB: ${problem}`;
     return outputs.map((x, j) => (j === i ? { ...mesh, meta: { ...meta, finish } } : x));
   }
   const tmp = await fs.promises.mkdtemp(path.join(os.tmpdir(), "fuobe-3d-"));
@@ -224,6 +250,11 @@ export async function finishModel(
       });
       stats = run.code === 0 && fs.existsSync(webFile) ? lastJsonLine<FinishStats>(run.stdout) : null;
       if (!stats) finish.error = `web GLB: ${tail(run.stderr) || `exit ${run.code}`}`;
+      // An account's web GLB is one of its files: stored only while the server and its files have room for it.
+      else if (o.account && (!diskHasRoom() || !accountHasRoomFor(o.account, fs.statSync(webFile).size))) {
+        stats = null;
+        finish.error = "web GLB: no room for it in the account's files, so the model is kept as it is";
+      }
     } catch (e) {
       if (signal.aborted) throw e;
       finish.error = `web GLB: ${(e as Error).message}`;

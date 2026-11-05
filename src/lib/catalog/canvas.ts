@@ -18,7 +18,8 @@ import { chainedWaitMessage, keyframeChain } from "./keyframes";
 import { isSpeed, keyTimes, timingFor, timingProblem, type GapTiming, type InbetweenTiming } from "@/lib/inbetween";
 import { estimateCost, inferOperation, planGeneration, routesFor, type Plan } from "./plan";
 import { replacedBy, replacementOf } from "./replaced";
-import { REGEN_COPY, REGEN_MODEL, REGEN_OFFERED } from "./regenerate";
+import { REGEN_COPY, REGEN_MODEL } from "./regenerate";
+import { RTX_UPSCALE_MODEL } from "./rtx-video";
 import { compileWords, LAYOUT_PARAM, readLayout, type LayoutDraft } from "@/lib/layout-prompt";
 import { fillLayout, layoutPlaceholders } from "@/lib/layout-surfaces";
 import { FLY_MODELS, flyKeys, planFlyAround } from "./fly-around";
@@ -38,6 +39,9 @@ import {
   type ModelDef,
   type Operation,
 } from "./types";
+
+/** Upscale node entries fixed to an open model nobody hosts (Open-H3 Regenerate, NVIDIA RTX Video): no cloud stand-in. */
+const GPU_ONLY_FIXED = new Set([REGEN_MODEL, RTX_UPSCALE_MODEL]);
 
 // ---------------------------------------------------------------------------
 // Graph types (stored as JSON in the canvases table)
@@ -321,6 +325,15 @@ export const PALETTE: PaletteItem[] = [
     data: { mediaKind: "video", modelId: REGEN_MODEL },
     keywords: "regenerate redraw 2k 4k h3 creative upscale sharpen finish",
   },
+  // The Upscale node on NVIDIA RTX Video Super Resolution: a fast upscale on an NVIDIA RTX card only (nobody hosts it).
+  {
+    ...pick("upscale"),
+    id: "upscale-rtx",
+    label: "Quick upscale (RTX)",
+    description: "Fast upscale up to 4x on an NVIDIA RTX card: sharpens without adding new detail (your GPU)",
+    data: { mediaKind: "video", modelId: RTX_UPSCALE_MODEL },
+    keywords: "rtx nvidia quick fast upscale super resolution vsr sharpen 4k",
+  },
   { ...pick("bg-remove"), id: "bg-remove", data: { mediaKind: "image" }, keywords: "cutout matte transparent" },
   { ...pick("tts"), id: "tts", keywords: "voice speech narration clone" },
   { ...pick("voice-change"), id: "voice-change", keywords: "voice changer speech to speech revoice convert" },
@@ -360,7 +373,7 @@ export function paletteItems(mode: "both" | "open" | "cloud" = "both", engine?: 
   const hit = paletteCache.get(key);
   if (hit) return hit;
   // Clean up voice has no cloud route: a cloud-only install doesn't offer it at all.
-  const items = PALETTE.filter((p) => (p.id !== "model-text" || MODELS.some((m) => m.kind === "text" && !m.hidden)) && !(mode === "cloud" && p.id === "clean-voice") && (p.id !== "upscale-regenerate" || REGEN_OFFERED)).map((p): PaletteItem => {
+  const items = PALETTE.filter((p) => (p.id !== "model-text" || MODELS.some((m) => m.kind === "text" && !m.hidden)) && !(mode === "cloud" && p.id === "clean-voice")).map((p): PaletteItem => {
     const fixed = p.data?.modelId ? getModel(p.data.modelId) : undefined;
     if (fixed && !runsOn(fixed, "cloud") && (mode === "cloud" || engine === "cloud")) return { ...p, disabled: mode === "cloud" ? GPU_ONLY_INSTALL : GPU_ONLY_ENTRY };
     // Split soundtrack: DBS runs on the open engine only, and no other model stands in for it.
@@ -494,7 +507,7 @@ export function defaultModelForNode(n: Pick<CanvasNode, "type" | "data">, engine
   if (n.type === "split-soundtrack") return engine === "open" ? getModel(SPLIT_MODEL) : undefined;
   const op = nodeOps(n)[0];
   // The Upscale node's Regenerate choice starts on Open-H3 Regenerate (on the cloud the entry is disabled: paletteItems).
-  const fixed = n.data.modelId === REGEN_MODEL ? getModel(REGEN_MODEL) : undefined;
+  const fixed = n.data.modelId && GPU_ONLY_FIXED.has(n.data.modelId) ? getModel(n.data.modelId) : undefined;
   if (fixed && op && supportsOp(fixed, op) && runsOn(fixed, engine)) return fixed;
   return op ? defaultModelFor(op, engine, { hidden: true }) : undefined;
 }
@@ -683,6 +696,8 @@ export function inputPorts(n: Pick<CanvasNode, "type" | "data">): PortDef[] {
   if (ids.has("voice") && model && !model.options.voiceClone && n.type !== "tts" && n.type !== "voice-change") ids.delete("voice");
   // A model that redraws from words even where its operation takes none (Open-H3 Regenerate on the Upscale node).
   if (model?.options.requires?.prompt) ids.add("prompt");
+  // A cut-out that reads optional words on what to keep or drop (Bria's guided cut-out on Remove background).
+  if (model?.options.guided) ids.add("prompt");
   // Visual elements only on image and video models.
   if (ids.has("elements") && model && model.kind !== "image" && model.kind !== "video") ids.delete("elements");
   const maxImages = model?.options.maxImages ?? (ops.some((op) => MULTI_IMAGE_OPS.has(op)) ? 4 : 1);
@@ -1614,8 +1629,8 @@ export function describeNode(graph: CanvasGraph, n: CanvasNode, ctx: DescribeCon
       costUsd: null,
       error:
         mode === "open"
-          ? `${model.name} is a cloud model, which isn't available here. Pick an open-source model`
-          : `${model.name} is an open-source model, which isn't available here. Pick a cloud model`,
+          ? `${model.name} is a cloud model: pick an open-source model`
+          : `${model.name} is an open-source model: pick a cloud model`,
     };
   }
   const built = buildRequest(graph, n, model);
@@ -1879,8 +1894,8 @@ export function counterpart(graph: CanvasGraph, n: CanvasNode, engine: Engine): 
   const current = n.data.modelId ? getModel(n.data.modelId) : undefined;
   // A Fuobe Original runs on both: it stays, on the other engine.
   if (current && runsOn(current, engine)) return current;
-  // Open-H3 Regenerate is GPU-only: nobody hosts it, so it has no cloud stand-in.
-  if (current?.id === REGEN_MODEL) return undefined;
+  // Open-H3 Regenerate and NVIDIA RTX Video are GPU-only: nobody hosts them, so they have no cloud stand-in.
+  if (current && GPU_ONLY_FIXED.has(current.id)) return undefined;
   if (n.type !== "model") return defaultModelForNode(n, engine);
   const op = n.data.op ?? effectiveOp(graph, n) ?? (current ? current.routes[0].op : KIND_OP[n.data.mediaKind ?? "image"]);
   const kind = current?.kind ?? n.data.mediaKind;

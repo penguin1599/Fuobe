@@ -1,16 +1,15 @@
 "use client";
 
-import { Box, Clapperboard, Copy, ExternalLink, MoreHorizontal, Pin, PinOff, Plus, Settings2 } from "lucide-react";
+import { Box, Clapperboard, Copy, ExternalLink, Globe, MoreHorizontal, Pin, PinOff, Plus, Settings2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { PageShell } from "@/components/page-shell";
 import { PageHeader } from "@/components/page-shell";
 import { HadItemsScript, useHadItems } from "@/components/use-had-items";
-import { SelfHostNote } from "@/components/self-host-note";
 import { ExampleRow } from "@/components/studio/example-row";
 import { StarterSection, useStarters } from "@/components/starters/starter-section";
-import { useIsVisitor } from "@/lib/api";
+import { askToSignUp, useIsGuest } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -108,14 +107,16 @@ function ProjectCard({ project, onSettings, query = "" }: { project: CinemaProje
 }
 
 /**
- * /cinema?blockout=1 (the GPU board's Blockout to film row): the list says to pick the project, and a project opened
- * or started from it opens Blockout to film. Read in its own Suspense boundary, so the rest of the list prerenders.
+ * /cinema?blockout=1 (the GPU board's Blockout to film row) or /cinema?world=1 (its World mode row): the list says to
+ * pick the project, and a project opened or started from it opens Blockout to film or World. Read in its own Suspense
+ * boundary, so the rest of the list prerenders.
  */
-function BlockoutQuery({ onBlockout }: { onBlockout: () => void }) {
-  const on = useSearchParams().get("blockout") === "1";
+function OpenerQuery({ onOpener }: { onOpener: (o: "blockout" | "world") => void }) {
+  const params = useSearchParams();
+  const on = params.get("blockout") === "1" ? "blockout" : params.get("world") === "1" ? "world" : null;
   useEffect(() => {
-    if (on) onBlockout();
-  }, [on, onBlockout]);
+    if (on) onOpener(on);
+  }, [on, onOpener]);
   return null;
 }
 
@@ -125,8 +126,7 @@ const GRID = "grid grid-cols-1 gap-x-5 gap-y-7 sm:grid-cols-2 lg:grid-cols-3 xl:
  * The first-production block, or (`loading`) a placeholder of exactly its size: a grid skeleton
  * swapped for this block moved the page (CLS 0.048 in the round-4 audit).
  */
-/** onCreate: none for a guest or an account (a project is saved to the owner's library), who is told so instead. */
-function EmptyProjects({ loading, onCreate, className }: { loading?: boolean; onCreate?: () => void; className?: string }) {
+function EmptyProjects({ loading, onCreate, className }: { loading?: boolean; onCreate: () => void; className?: string }) {
   return (
     <div className={cn("mx-auto flex max-w-md flex-col items-center pt-[8vh] text-center", className)} aria-busy={loading || undefined} aria-label={loading ? "Loading projects" : undefined}>
       {loading ? (
@@ -147,20 +147,11 @@ function EmptyProjects({ loading, onCreate, className }: { loading?: boolean; on
           <div className="grid size-14 place-items-center rounded-2xl bg-brand-faint text-brand-text">
             <Clapperboard className="size-6" />
           </div>
-          {onCreate ? (
-            <>
-              <h2 className="mt-5 font-heading text-[26px] leading-tight">Start your first production</h2>
-              <p className="mt-2 text-[15px] text-muted-foreground">Projects keep your generations, elements, and chats together – create one to start.</p>
-              <Button className="mt-6" onClick={onCreate}>
-                <Plus /> New project
-              </Button>
-            </>
-          ) : (
-            <>
-              <h2 className="mt-5 font-heading text-[26px] leading-tight">Projects aren&apos;t available here</h2>
-              <SelfHostNote className="mt-2 text-[15px]" />
-            </>
-          )}
+          <h2 className="mt-5 font-heading text-[26px] leading-tight">Start your first production</h2>
+          <p className="mt-2 text-[15px] text-muted-foreground">Projects keep your generations, elements, and chats together – create one to start.</p>
+          <Button className="mt-6" onClick={onCreate}>
+            <Plus /> New project
+          </Button>
         </>
       )}
     </div>
@@ -176,32 +167,38 @@ export function CinemaProjects({ examples, starters: given = [] }: { examples?: 
   const router = useRouter();
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<CinemaProject | null>(null);
-  // A project is saved to the studio's library, which is its owner's: a guest or an account can't start one.
-  const visitor = useIsVisitor();
-  const onCreate = visitor ? undefined : () => setCreating(true);
+  // The owner's projects, or a signed-in account's own; a guest is offered a free account first.
+  const guest = useIsGuest();
+  const onCreate = () => (guest ? askToSignUp("run") : setCreating(true));
   // The ready films this viewer sees: a visitor only those with their real cover (the page carries only those), the
   // owner every one.
   const { owner, starters } = useStarters("cinema", given);
   const hasStarters = starters.some((s) => starterShown(s, !owner));
   useHadItems("cinema-projects", data?.length);
-  const [blockout, setBlockout] = useState(false);
-  const markBlockout = useCallback(() => setBlockout(true), []);
-  const query = blockout ? "?blockout=1" : "";
+  const [opener, setOpener] = useState<"blockout" | "world" | null>(null);
+  const markOpener = useCallback((o: "blockout" | "world") => setOpener(o), []);
+  const blockout = opener === "blockout";
+  const query = opener ? `?${opener}=1` : "";
   return (
     <PageShell wide>
       <PageHeader title="Cinema Studio" description="Direct films shot by shot: genre, camera, lens, palette and light, with characters and locations that stay the same.">
-        {!visitor && (
-          <Button onClick={() => setCreating(true)}>
-            <Plus /> New project
-          </Button>
-        )}
+        <Button onClick={onCreate}>
+          <Plus /> New project
+        </Button>
       </PageHeader>
       <Suspense fallback={null}>
-        <BlockoutQuery onBlockout={markBlockout} />
+        <OpenerQuery onOpener={markOpener} />
       </Suspense>
-      {blockout && !!data?.length && (
+      {/* With no projects yet (a guest, a new account), New project opens the new one on Blockout. */}
+      {blockout && !isLoading && (
         <p className="mb-5 flex items-center gap-2 rounded-xl bg-brand-faint px-3 py-2.5 text-[13px] text-brand-text">
-          <Box className="size-4 shrink-0" /> Blockout to film: pick the project to film it in{onCreate ? ", or start a new one" : ""}.
+          <Box className="size-4 shrink-0" />{" "}
+          {data?.length ? "Blockout to film: pick the project to film it in, or start a new one." : "Blockout to film: start a new project to film it in."}
+        </p>
+      )}
+      {opener === "world" && !!data?.length && (
+        <p className="mb-5 flex items-center gap-2 rounded-xl bg-brand-faint px-3 py-2.5 text-[13px] text-brand-text">
+          <Globe className="size-4 shrink-0" /> World: pick the project to film it in, or start a new one.
         </p>
       )}
       {isLoading ? (
@@ -222,10 +219,7 @@ export function CinemaProjects({ examples, starters: given = [] }: { examples?: 
       ) : !data?.length ? (
         <div key="empty">
           {hasStarters ? (
-            <>
-              {!owner && <SelfHostNote className="mb-5">Projects aren&apos;t available here.</SelfHostNote>}
-              <StarterSection surface="cinema" starters={given} />
-            </>
+            <StarterSection surface="cinema" starters={given} />
           ) : (
             <EmptyProjects onCreate={onCreate} />
           )}
@@ -238,7 +232,7 @@ export function CinemaProjects({ examples, starters: given = [] }: { examples?: 
             <ProjectCard key={p.id} project={p} onSettings={() => setEditing(p)} query={query} />
           ))}
           <button
-            onClick={() => setCreating(true)}
+            onClick={onCreate}
             className="flex aspect-video flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border-strong text-[13px] font-medium text-muted-foreground transition-colors hover:border-primary hover:bg-brand-faint hover:text-brand-text"
           >
             <Plus className="size-5" /> New project

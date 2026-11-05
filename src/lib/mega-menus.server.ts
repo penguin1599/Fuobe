@@ -17,9 +17,11 @@ import { HOME_EFFECTS, HOME_MOTIONS, presetHref } from "@/lib/home-showcase";
 import { ROW_CAPS, TILE_COLS, TILE_ROWS, type MegaColumn, type MegaCover, type MegaItem, type MegaModel } from "@/lib/mega-menus";
 import { hasMini, miniOf } from "@/lib/preset-cards";
 import { presetCover } from "@/lib/preset-covers";
+import { presetStillSources } from "@/lib/preset-hd";
 import { PRESET_MINIS } from "@/lib/preset-minis.generated";
 import { featuredAll } from "@/lib/preset-featured";
 import { templateCover } from "@/lib/template-covers";
+import { templateStillSources } from "@/lib/template-hd";
 import { MENU_LINES } from "@/lib/menu-lines";
 
 /** A column of a preset menu: its name, its phone chip, and the catalog categories it holds. */
@@ -178,12 +180,16 @@ export function motionsMenu(): MegaModel {
 /** Who the Canvas menu is for: a visitor (the owner sees the same boards: menus show real covers only). */
 const VISITOR: Viewing = { visitor: true, hasCover: (id) => !!templateCover("canvas", id) };
 
-/** A template cover as a menu tile shows it: its peak frame (the finished scene), never a clip. */
+/**
+ * A template cover as a menu tile shows it: its peak frame (the finished scene), never a clip, with its larger copies
+ * (the preset's peak frame's, or the tile's own poster's), so a 2x or 3x screen gets one at least as wide as the box.
+ */
 function templateMegaCover(id: string): MegaCover | undefined {
   const c = templateCover("canvas", id);
   if (!c) return undefined;
   const framing = coverFraming(c.poster);
-  return { poster: c.poster, thumb: c.thumb, ...(framing && { framing }) };
+  const hd = presetStillSources(c.poster, c.thumb) ?? templateStillSources(c.poster, c.thumb);
+  return { poster: c.poster, thumb: c.thumb, ...(hd && { hd }), ...(framing && { framing }) };
 }
 
 /**

@@ -14,7 +14,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { EngineSwitch } from "@/components/studio/engine-switch";
 import { PageShell } from "@/components/page-shell";
 import { CoverArt, CoverImg, useCoverPlayback } from "@/components/template-cover";
-import { useEngine, useHydrated, useIsOwner, useLikelyVisitor, useModelAccess } from "@/lib/api";
+import { useEngine, useHydrated, useIsAccount, useIsOwner, useLikelyVisitor, useModelAccess } from "@/lib/api";
 // Types only: the catalog (models, templates) stays on the server; the page passes slim template cards.
 import type { CanvasSummary } from "@/lib/catalog/canvas";
 import { firstTemplates, moreTemplates, templateSections, type CanvasIntro, type TemplateCardData, type Viewing } from "@/lib/canvas-sections";
@@ -25,6 +25,7 @@ import { toastError } from "@/lib/refusals";
 import { SkillCanvases } from "./skill-canvases";
 import { Schematic, TemplateCard } from "./template-card";
 import { useCanvasActions, useCanvases } from "./use-canvas";
+import { VisitorBoards } from "./visitor-boards";
 
 export type { TemplateCardData } from "@/lib/canvas-sections";
 
@@ -164,9 +165,11 @@ function ListInner({ templates, intro }: { templates: TemplateCardData[]; intro?
   const params = useSearchParams();
   const askedTemplates = params.get("tab") === "templates";
   const askedSkills = params.get("tab") === "skills";
-  // A canvas is saved to the studio's library, which is its owner's: a guest or an account can look, not start one.
+  // The owner's canvases are the studio's. A guest or an account opens ready boards (and blank ones) in the same editor:
+  // a guest keeps them in this browser, an account saves them to its account (visitor-canvas.tsx).
   // Until the viewer is known to be the owner, the page is a visitor's: only ready boards with their real cover show.
   const owner = useIsOwner();
+  const account = useIsAccount();
   // In a browser the owner used last, their boards are on the way: a skeleton until they come, not the visitor's page.
   const likelyOwner = !useLikelyVisitor();
   const hydrated = useHydrated();
@@ -213,7 +216,7 @@ function ListInner({ templates, intro }: { templates: TemplateCardData[]; intro?
   };
 
   const card = (t: TemplateCardData) => (
-    <TemplateCard key={t.id} t={t} engine={engine} access={access} owner={owner} busy={creating === t.id} onUse={owner ? () => void start(t.id, { templateId: t.id, engine }) : undefined} />
+    <TemplateCard key={t.id} t={t} engine={engine} access={access} owner={owner} busy={creating === t.id} onUse={owner ? () => void start(t.id, { templateId: t.id, engine }) : undefined} tryHref={owner ? undefined : `/canvas/try/${t.id}`} />
   );
   const sections = templateSections(templates, viewing);
   const more = moreTemplates(templates, viewing);
@@ -277,7 +280,13 @@ function ListInner({ templates, intro }: { templates: TemplateCardData[]; intro?
           <Button className="w-fit rounded-full" onClick={() => void start("new", {})} disabled={!!creating}>
             {creating === "new" ? <Loader2 className="animate-spin" /> : <Plus />} New canvas
           </Button>
-        ) : null}
+        ) : (
+          <Button asChild className="w-fit rounded-full">
+            <Link href="/canvas/try/blank">
+              <Plus /> New canvas
+            </Link>
+          </Button>
+        )}
       </div>
 
       {loadingMine ? (
@@ -331,11 +340,12 @@ function ListInner({ templates, intro }: { templates: TemplateCardData[]; intro?
           {/* Before hydration, a browser the owner used last shows the skeleton (html[data-viewer]), not the visitor's page. */}
           {!hydrated && <MineSkeleton className="hidden [html[data-viewer='owner']_&]:grid" />}
           <div className={cn(!hydrated && "[html[data-viewer='owner']_&]:hidden")}>
+            {hydrated && !owner && <VisitorBoards account={account} />}
             <WhatsACanvas intro={intro} />
             <section id="templates" ref={gallery} aria-labelledby="templates-title" className="mt-8 scroll-mt-20">
               {galleryHeading(
                 "Start from a ready board",
-                owner ? "Every step, word and file is already in place. Press Run all, or change anything first." : "See how each one is built, then make it in Video with your own photo.",
+                owner ? "Every step, word and file is already in place. Press Run all, or change anything first." : "Every step, word and photo is already in place. Open one in the editor and change anything.",
               )}
               {fullGallery}
             </section>

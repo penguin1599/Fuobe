@@ -21,8 +21,9 @@ import { adoptFile, contentTypeFor, saveFile, scratchDir } from "@/server/storag
  *
  * - The owner: up to 200 MB, the types below.
  * - An account (public sign-up): with its own ComfyUI connected or its own fal.ai or Replicate key (something to run
- *   its files on), any of the types below; without either, only a Kinetic Motion result rendered in its browser (sent
- *   with KINETIC_UPLOAD_HEADER: an MP4 or WebM clip, or its PNG poster), which no model makes. A picture up to 25 MB
+ *   its files on), any of the types below; without either, only a result rendered in its browser (sent with
+ *   KINETIC_UPLOAD_HEADER: a Kinetic Motion clip or poster, a colour grade, a Relight blend; an MP4 or WebM clip, or a
+ *   PNG picture), which no model makes. A picture up to 25 MB
  *   and 40 megapixels, a
  *   sound up to 50 MB, a clip up to 95 MB; its uploads up to 1 GB and all its files up to 3 GB; 60 uploads an hour,
  *   300 a day, 2 at once. The stored type is read from the file's first bytes, never taken from the client.
@@ -34,7 +35,7 @@ const UNSUPPORTED = "Fuobe can't open that file. Use a JPG, PNG, WebP, GIF, MP4,
 /** Names browsers give AVI and Matroska files, to the one Fuobe stores them under. */
 const VIDEO_ALIASES: Record<string, string> = { "video/avi": "video/x-msvideo", "video/msvideo": "video/x-msvideo", "video/vnd.avi": "video/x-msvideo", "video/mkv": "video/x-matroska" };
 
-/** A Kinetic Motion result rendered in the browser: its clip or its poster (the stored type, read from its bytes). */
+/** A result rendered in the browser: a clip or a picture (the stored type, read from its bytes). */
 const KINETIC_TYPES = /^(video\/(mp4|webm)|image\/png)$/;
 
 const KIND_CAP: Record<SniffKind, number> = { image: ACCOUNT_LIMITS.imageBytes, audio: ACCOUNT_LIMITS.audioBytes, video: ACCOUNT_LIMITS.videoBytes };
@@ -174,7 +175,8 @@ type Kinds = { image: boolean; video: boolean; audio: boolean };
 
 /**
  * What an account with no GPU or key of its own may add: the kinds its runs on this install's GPUs may use (hosted runs
- * on), and a Kinetic Motion result it rendered in its browser (no model makes one).
+ * on), and a result it rendered in its browser (a Kinetic Motion clip or poster, a colour grade, a Relight blend: no
+ * model makes one).
  */
 type Without = { hosted: Kinds | null; kinetic: boolean };
 

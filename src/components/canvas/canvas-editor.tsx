@@ -194,8 +194,44 @@ function framed(g: FlowNode, nodes: FlowNode[]): FlowNode[] {
 
 // ---------------------------------------------------------------------------
 
+/**
+ * Where a board is kept and what its Run does. The owner's canvases save to the studio (/api/canvases) and run there;
+ * a visitor's board (src/components/canvas/visitor-canvas.tsx) saves in this browser or to its account, and its Run
+ * explains what running needs instead (`visitor`).
+ */
+export interface BoardHost {
+  /** Saves every page (the autosave); `keepalive` while leaving the page. */
+  save: (pages: CanvasPage[], keepalive: boolean) => Promise<void>;
+  rename: (name: string) => Promise<void>;
+  visitor?: VisitorHost;
+}
+
+export interface VisitorHost {
+  /** Where the board is kept, said where the owner's editor says "Saved" ("Saved in this browser"). */
+  savedLabel: string;
+  /** Run, Run selected and ⌘↵: what running a board needs, said plainly (it never runs). */
+  run: () => void;
+  /** Beside Run: Save to your account, or Sign up to save; `now` gives the board as it is on screen. */
+  action?: (now: () => BoardNow) => React.ReactNode;
+  /** A note under the header (on a phone: build on a larger screen). */
+  note?: React.ReactNode;
+}
+
+/** The board as it is on screen: every page and its name. */
+export interface BoardNow {
+  pages: CanvasPage[];
+  name: string;
+}
+
 export function CanvasEditor({ id }: { id: string }) {
   const view = useCanvasView(id);
+  const host = useMemo<BoardHost>(
+    () => ({
+      save: async (pages, keepalive) => void (await saveCanvas(id, { pages }, keepalive)),
+      rename: async (name) => void (await saveCanvas(id, { name })),
+    }),
+    [id],
+  );
   if (view.isLoading) return <EditorSkeleton />;
   if (!view.data) {
     // A canvas that isn't there gets the shared 404 state; a request that failed otherwise can be retried.
@@ -204,12 +240,21 @@ export function CanvasEditor({ id }: { id: string }) {
   }
   return (
     <ReactFlowProvider>
-      <Editor key={id} id={id} initial={view.data.canvas} view={view.data} />
+      <Editor key={id} id={id} initial={view.data.canvas} view={view.data} host={host} />
     </ReactFlowProvider>
   );
 }
 
-function EditorSkeleton() {
+/** A visitor's board in the same editor: `initial` from this browser, the account or a ready board; `host` keeps it. */
+export function BoardEditor({ id, initial, view, host }: { id: string; initial: Canvas; view: CanvasView; host: BoardHost }) {
+  return (
+    <ReactFlowProvider>
+      <Editor key={id} id={id} initial={initial} view={view} host={host} />
+    </ReactFlowProvider>
+  );
+}
+
+export function EditorSkeleton() {
   return (
     <div className="flex h-content flex-col">
       <div className="flex h-14 items-center gap-3 border-b px-3 sm:px-4">
@@ -233,8 +278,14 @@ interface MenuState {
   connect?: { nodeId: string; handleId: string | null; from: "source" | "target"; type: PortType };
 }
 
-function Editor({ id, initial, view }: { id: string; initial: Canvas; view: CanvasView }) {
+function Editor({ id, initial, view, host }: { id: string; initial: Canvas; view: CanvasView; host: BoardHost }) {
   const qc = useQueryClient();
+  // The host's latest functions, for the autosave and the handlers (a new host object never re-arms them).
+  const hostNow = useRef(host);
+  useLayoutEffect(() => {
+    hostNow.current = host;
+  }, [host]);
+  const visitor = host.visitor;
   const rf = useReactFlow<FlowNode, Edge>();
   const { resolvedTheme } = useTheme();
   const isMobile = useIsMobile();
@@ -336,7 +387,11 @@ function Editor({ id, initial, view }: { id: string; initial: Canvas; view: Canv
     },
     [status],
   );
-  const globals = useMemo<EditorGlobals>(() => ({ canvasId: id, engine, mode, readOnly: isMobile, running: runM.isPending, isDemo }), [id, engine, mode, isMobile, runM.isPending, isDemo]);
+  const isVisitor = !!host.visitor;
+  const globals = useMemo<EditorGlobals>(
+    () => ({ canvasId: id, engine, mode, readOnly: isMobile, running: runM.isPending, isDemo, visitor: isVisitor }),
+    [id, engine, mode, isMobile, runM.isPending, isDemo, isVisitor],
+  );
   const snapshot = useMemo<EditorSnapshot>(() => ({ graph, byId, plan, views, globals }), [graph, byId, plan, views, globals]);
   store.prime(snapshot);
   useLayoutEffect(() => store.set(snapshot), [store, snapshot]);
@@ -392,7 +447,7 @@ function Editor({ id, initial, view }: { id: string; initial: Canvas; view: Canv
       if (at === savedRev.current) return;
       setSaveState("saving");
       try {
-        await saveCanvas(id, { pages: docOf() }, keepalive);
+        await hostNow.current.save(docOf(), keepalive);
         savedRev.current = Math.max(savedRev.current, at);
         setSaveState("saved");
         setSaveRefused(false);
@@ -444,13 +499,14 @@ function Editor({ id, initial, view }: { id: string; initial: Canvas; view: Canv
     const at = latest.current.rev;
     if (at === savedRev.current) return;
     savedRev.current = at;
-    void saveCanvas(id, { pages: docOf() }, true)
+    void hostNow.current
+      .save(docOf(), true)
       .then(() => qc.invalidateQueries({ queryKey: ["canvases"], exact: true }))
       .catch(() => {
         // Not saved after all: the next edit (or the next visit) saves again.
         savedRev.current = -1;
       });
-  }, [id, qc, docOf]);
+  }, [qc, docOf]);
   useEffect(() => flushOnLeave, [flushOnLeave]);
 
   const rename = async (next: string) => {
@@ -458,7 +514,7 @@ function Editor({ id, initial, view }: { id: string; initial: Canvas; view: Canv
     if (!v) return setName(savedName.current);
     if (v === savedName.current) return;
     try {
-      await saveCanvas(id, { name: v });
+      await hostNow.current.rename(v);
       savedName.current = v;
       void qc.invalidateQueries({ queryKey: ["canvases"], exact: true });
     } catch (e) {
@@ -725,6 +781,8 @@ function Editor({ id, initial, view }: { id: string; initial: Canvas; view: Canv
   // ---- running (the page on the board)
   const run = useCallback(
     (targets?: string[], force?: boolean, group?: string) => {
+      // A visitor's board never runs here: its Run says what running needs.
+      if (hostNow.current.visitor) return hostNow.current.visitor.run();
       const go = (t?: string[], f?: boolean) => {
         const at = latest.current.rev;
         runMutate(
@@ -1232,11 +1290,14 @@ function Editor({ id, initial, view }: { id: string; initial: Canvas; view: Canv
   // A Translate (video) on an open-only install dubs in Translate & dub: nothing to fix on the board.
   const attention = new Set(plan.errors.filter((e) => e.message !== OPEN_DUB_HINT).map((e) => e.nodeId)).size;
   const summary = [
-    plan.steps.length
-      ? `${plan.steps.length} to run · ${planDemo ? "Placeholder · free" : plan.costUnknown ? "price unknown" : plan.costUsd === 0 ? "Free" : `≈ ${formatCost(plan.costUsd)}`}`
-      : generators.length && !attention
-        ? "Up to date"
-        : "",
+    // A visitor's board doesn't run here: no count of steps to run and no price, only what needs attention.
+    visitor
+      ? ""
+      : plan.steps.length
+        ? `${plan.steps.length} to run · ${planDemo ? "Placeholder · free" : plan.costUnknown ? "price unknown" : plan.costUsd === 0 ? "Free" : `≈ ${formatCost(plan.costUsd)}`}`
+        : generators.length && !attention
+          ? "Up to date"
+          : "",
     attention ? `${attention} need${attention === 1 ? "s" : ""} attention` : "",
   ]
     .filter(Boolean)
@@ -1250,9 +1311,10 @@ function Editor({ id, initial, view }: { id: string; initial: Canvas; view: Canv
     rename: typeof rename;
     addAtCenter: typeof addAtCenter;
     saveAsSkill: typeof saveAsSkill;
+    snapshot: () => BoardNow;
   } | null>(null);
   useLayoutEffect(() => {
-    uiHandlers.current = { run, runSelection, switchEngine, rename, addAtCenter, saveAsSkill };
+    uiHandlers.current = { run, runSelection, switchEngine, rename, addAtCenter, saveAsSkill, snapshot: () => ({ pages: docOf(), name: name.trim() || savedName.current }) };
   });
   const ui = useMemo<HeaderUi>(
     () => ({
@@ -1262,6 +1324,7 @@ function Editor({ id, initial, view }: { id: string; initial: Canvas; view: Canv
       switchEngine: (e) => uiHandlers.current!.switchEngine(e),
       rename: (v) => void uiHandlers.current!.rename(v),
       addAtCenter: (p) => uiHandlers.current!.addAtCenter(p),
+      snapshot: () => uiHandlers.current!.snapshot(),
     }),
     [],
   );
@@ -1287,7 +1350,9 @@ function Editor({ id, initial, view }: { id: string; initial: Canvas; view: Canv
             canRun={generators.length > 0 || graph.nodes.some((n) => n.type === "kinetic")}
             mode={mode}
             ui={ui}
+            visitor={visitor}
           />
+          {visitor?.note}
 
           {isMobile && (
             <div className="flex shrink-0 items-center gap-2 border-b px-4 py-2">
@@ -1501,6 +1566,7 @@ interface HeaderUi {
   switchEngine: (e: Engine) => void;
   rename: (name: string) => void;
   addAtCenter: (p: PaletteItem) => void;
+  snapshot: () => BoardNow;
 }
 
 const EditorHeader = memo(function EditorHeader({
@@ -1516,6 +1582,7 @@ const EditorHeader = memo(function EditorHeader({
   canRun,
   mode,
   ui,
+  visitor,
 }: {
   name: string;
   setName: (v: string) => void;
@@ -1529,8 +1596,10 @@ const EditorHeader = memo(function EditorHeader({
   canRun: boolean;
   mode: EngineMode;
   ui: HeaderUi;
+  visitor?: VisitorHost;
 }) {
   const mod = useModKey();
+  const savedText = visitor?.savedLabel ?? "Saved";
   return (
     <header className="z-20 flex h-14 shrink-0 items-center gap-2 border-b bg-background px-2 sm:px-4">
       <Tooltip>
@@ -1552,7 +1621,7 @@ const EditorHeader = memo(function EditorHeader({
       />
       <span className={cn("shrink-0 items-center gap-1 text-[12px] text-muted-foreground", saveState === "error" ? "inline-flex" : "hidden sm:inline-flex")} aria-live="polite">
         {saveState === "saving" ? <Loader2 className="size-3 animate-spin" /> : saveState === "error" ? <TriangleAlert className="size-3 text-warning" /> : <Check className="size-3" />}
-        <span className={cn(saveState === "error" && "max-sm:sr-only")}>{saveState === "saving" ? "Saving…" : saveState === "error" ? (saveRefused ? "Not saved" : "Not saved — retrying") : "Saved"}</span>
+        <span className={cn(saveState === "error" && "max-sm:sr-only")}>{saveState === "saving" ? "Saving…" : saveState === "error" ? (saveRefused ? "Not saved" : "Not saved — retrying") : savedText}</span>
       </span>
       <div className="ml-auto flex shrink-0 items-center gap-2">
         {busy > 0 && (
@@ -1564,6 +1633,20 @@ const EditorHeader = memo(function EditorHeader({
         <div className="hidden md:block">
           <EngineSwitch value={boardEngine} onChange={ui.switchEngine} size="sm" />
         </div>
+        {visitor ? (
+          <>
+            {visitor.action?.(ui.snapshot)}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button size="sm" variant="secondary" className="h-8 rounded-full px-3" onClick={() => ui.run()} disabled={!canRun} data-visitor-run>
+                  <Play /> Run
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>What running a board needs</TooltipContent>
+            </Tooltip>
+          </>
+        ) : (
+          <>
         {selectedCount > 0 && (
           <Button variant="secondary" size="sm" className="h-8 rounded-full px-3" onClick={() => ui.runSelected()} disabled={running}>
             <Play /> Run selected <span className="font-mono text-muted-foreground">{selectedCount}</span>
@@ -1619,6 +1702,8 @@ const EditorHeader = memo(function EditorHeader({
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
+          </>
+        )}
       </div>
       <PhoneNavButton />
     </header>

@@ -67,8 +67,8 @@ describe("the 390 px sweep visits dynamic routes", () => {
     }
   });
 
-  it("reads every hub mode from src/lib/hubs.ts (the first mode is the hub's own page)", () => {
-    const expected = Object.entries(HUB_MODES).flatMap(([hub, modes]) => modes.slice(1).map((m) => `/${hub}/${m.id}`));
+  it("reads every hub mode from src/lib/hubs.ts (each has a path of its own; the first is also the hub's own page)", () => {
+    const expected = Object.entries(HUB_MODES).flatMap(([hub, modes]) => modes.map((m) => `/${hub}/${m.id}`));
     expect((hubModePaths(root) as string[]).sort()).toEqual(expected.sort());
   });
 });

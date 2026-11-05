@@ -345,7 +345,7 @@ async function hosted() {
     await signIn(p, "owner");
     await p.goto(`${SITE}/settings`, { waitUntil: "load" });
     const s = p.locator("#comfyui");
-    check("a phone: the phone line", !!(await until(() => s.getByText(/Your phone can't run ComfyUI\. .* or use a ComfyUI on a server below\./).isVisible(), 30_000)));
+    check("a phone: the phone line", !!(await until(() => s.getByText(/A phone or tablet can't reach the ComfyUI on your computer from a website\. Use a ComfyUI on a server below/).isVisible(), 30_000)));
     check("a phone: the computer's state from the server", await s.getByText(/Your computer/).first().isVisible());
     check("a phone: the server address right there", await s.getByRole("textbox", { name: "Server address" }).isVisible());
     await s.scrollIntoViewIfNeeded();

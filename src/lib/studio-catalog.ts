@@ -33,8 +33,10 @@ export function slimModel(m: ModelDef): ModelDef {
   };
 }
 
-export function studioCatalog(config: Pick<StudioConfig, "kind" | "ops" | "pickerOps" | "defaultModels" | "preset" | "extraModels" | "appModels">): StudioCatalog {
-  const list = modelsFor({ kind: config.kind, ops: config.pickerOps ?? config.ops });
+export function studioCatalog(config: Pick<StudioConfig, "kind" | "ops" | "pickerOps" | "defaultModels" | "preset" | "extraModels" | "appModels" | "greenScreen">): StudioCatalog {
+  // Green-screen keyers are listed in Video tools → Green screen only; Remove background lists the other mattes.
+  const keyers = config.ops.includes("bg-remove-video");
+  const list = modelsFor({ kind: config.kind, ops: config.pickerOps ?? config.ops }).filter((m) => !keyers || !!m.options.greenScreen === !!config.greenScreen);
   const ids = new Set(list.map((m) => m.id));
   // An app's models on both engines: the one its preview was made with and its own route's (withRecipe).
   const own = [...(config.appModels?.cloud ?? []), ...(config.appModels?.open ?? [])];

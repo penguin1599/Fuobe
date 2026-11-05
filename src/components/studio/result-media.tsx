@@ -1,8 +1,11 @@
 "use client";
 
-import { AudioLines, Box, Download, FileText, Film, Layers } from "lucide-react";
+import { AudioLines, Box, Download, FileText, Film, Layers, Rotate3d } from "lucide-react";
 import { createElement, useEffect, useState } from "react";
 import { loadModelViewer, useViewerSrc, viewerLook } from "@/components/model3d/model-viewer";
+import { hasWebgl2, SplatViewer, useReducedMotion } from "@/components/model3d/splat-viewer";
+import { useHydrated } from "@/lib/api";
+import { FALLBACK_TEXT, hazeCutoffFor, splatFallback } from "@/lib/av/splat-view";
 import { TurnChips } from "@/components/model3d/turn-chips";
 import { FORMAT_INFO } from "@/lib/av/formats";
 import { FRONT_YAW, splatFormatOf, turnOrbit, viewerGlb } from "@/lib/av/model3d";
@@ -195,8 +198,9 @@ export function LayersStack({ g, className, bare }: { g: Generation; className?:
 
 /**
  * A .glb in an orbitable viewer. @google/model-viewer (with three.js) loads only when one is opened. A Gaussian
- * splat (.ply / .spz / .ksplat), which it can't load, shows its orbit video or picture and the file to download.
- * A rigged character plays its animation instead of turning; a still model turns, and the chips under it turn it to a side.
+ * splat (.ply / .spz / .ksplat) opens in the splat viewer (Spark, loaded only then), its orbit video or picture
+ * staying where it can't (see SplatPanel). A rigged character plays its animation instead of turning; a still model
+ * turns, and the chips under it turn it to a side.
  */
 export function ModelViewer({ output, g }: { output: OutputFile; g: Generation }) {
   const [ready, setReady] = useState(false);
@@ -218,7 +222,7 @@ export function ModelViewer({ output, g }: { output: OutputFile; g: Generation }
     };
   }, [splat]);
   const { poster, video } = modelPreview(g, output);
-  if (splat) return <SplatPreview output={output} format={splat} poster={poster} video={video} />;
+  if (splat) return <SplatPanel output={output} format={splat} poster={poster} video={video} g={g} />;
   if (failed) return <p className="text-[13px] text-white/80">Couldn&apos;t load the 3D viewer. Download the .glb to open it.</p>;
   if (!ready) {
     return (
@@ -254,24 +258,55 @@ export function ModelViewer({ output, g }: { output: OutputFile; g: Generation }
   );
 }
 
-/** A splat in the full-screen viewer: its orbit video or picture, what Fuobe can't do yet, and the file. */
-function SplatPreview({ output, format, poster, video }: { output: OutputFile; format: string; poster?: string; video?: string }) {
+/**
+ * A splat in the full-screen viewer (the Library's 3D tab and "View in 3D" open it): the splat viewer, with the file
+ * to download. The orbit video (or the picture) stays instead where the browser has no WebGL2 or the file is too big
+ * for the device, and when the user prefers reduced motion until they choose "Look around in 3D". The viewer takes
+ * focus only when they chose it: otherwise the arrow keys keep browsing the results (the Viewer's own keys).
+ */
+function SplatPanel({ output, format, poster, video, g }: { output: OutputFile; format: string; poster?: string; video?: string; g: Generation }) {
+  const hydrated = useHydrated();
+  const reducedMotion = useReducedMotion();
+  const [asked, setAsked] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const fallback = !hydrated ? "reduced-motion" : note ? "too-big" : splatFallback({ webgl2: hasWebgl2(), coarse: false, reducedMotion, asked });
+  const name = (g.modelName ?? "splat").replace(/[^\w .-]+/g, "");
+  const download = (
+    <a href={output.url} download={`${name}.${format}`} className="inline-flex h-8 items-center gap-1.5 rounded-full bg-white/15 px-3.5 text-[13px] font-medium text-white hover:bg-white/25">
+      <Download className="size-4" aria-hidden /> .{format}
+    </a>
+  );
+  if (!fallback) {
+    return (
+      <div className="flex size-full flex-col">
+        <div className="relative min-h-0 flex-1 overflow-hidden md:rounded-lg">
+          <SplatViewer url={output.url} format={format} poster={poster} name={name} defaultCutoff={hazeCutoffFor(g.modelId)} tone="panel" label={g.request.prompt || "the splat"} autoFocus={asked} onUnavailable={setNote} />
+        </div>
+        <div className="flex shrink-0 justify-center pt-2">{download}</div>
+      </div>
+    );
+  }
+  const text = note ?? (fallback === "reduced-motion" ? null : FALLBACK_TEXT[fallback]);
   return (
     <div className="flex size-full flex-col items-center justify-center gap-3 p-4 text-center text-white/80">
       {video ? (
-        <video src={video} controls autoPlay loop muted playsInline aria-label="Orbit video of the splat" className="max-h-[70%] max-w-full" />
+        // Reduced motion: the orbit video waits for play.
+        <video src={video} poster={poster} controls autoPlay={!reducedMotion} loop muted playsInline aria-label="Orbit video of the splat" className="max-h-[70%] max-w-full" />
       ) : poster ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img src={poster} alt="The subject the splat was made from" className="max-h-[70%] max-w-full object-contain" />
       ) : (
         <Box className="size-10" aria-hidden />
       )}
-      <p className="max-w-md text-[13px]">
-        Fuobe doesn&apos;t draw Gaussian splats yet. Download the .{format} and open it in a splat viewer (SuperSplat, for one) to look around it.
-      </p>
-      <a href={output.url} download className="inline-flex h-9 items-center gap-1.5 rounded-full bg-white/15 px-4 text-[13px] font-medium text-white hover:bg-white/25">
-        <Download className="size-4" aria-hidden /> .{format}
-      </a>
+      {text && <p className="max-w-md text-[13px]">{text}</p>}
+      <div className="flex flex-wrap justify-center gap-2">
+        {hydrated && fallback === "reduced-motion" && (
+          <button type="button" onClick={() => setAsked(true)} className="inline-flex h-8 items-center gap-1.5 rounded-full bg-white px-3.5 text-[13px] font-medium text-black hover:bg-white/90">
+            <Rotate3d className="size-4" aria-hidden /> Look around in 3D
+          </button>
+        )}
+        {download}
+      </div>
     </div>
   );
 }

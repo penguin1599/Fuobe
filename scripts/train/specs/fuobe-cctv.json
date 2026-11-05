@@ -1,0 +1,40 @@
+{
+  "id": "fuobe-cctv",
+  "name": "Fuobe CCTV",
+  "kind": "style",
+  "base": "z-image-turbo",
+  "media": "image",
+  "presets": [
+    "CCTV"
+  ],
+  "trigger": "fbcctv",
+  "dataset": {
+    "min": 40,
+    "max": 80,
+    "what": "Frames from cameras Fuobe controls (own CCTV, staged scenes with released actors); no timestamp or camera overlays in the frames.",
+    "captions": [
+      "Every caption starts with \"fbcctv style, \" and goes on in one or two long sentences (Z-Image style): who or what is in the picture, where, the light and the framing.",
+      "Describe the scene, never the look the LoRA learns (no \"grainy\", \"film look\" or the like), so the trigger carries it.",
+      "No names of people, places that identify someone, brands, camera models or photographers."
+    ]
+  },
+  "train": {
+    "steps": 1800,
+    "rank": 16,
+    "learningRate": 0.0001
+  },
+  "routes": {
+    "fal": {
+      "trainer": "fal-ai/z-image-turbo-trainer-v2"
+    },
+    "aiToolkit": {
+      "arch": "zimage:turbo"
+    }
+  },
+  "target": {
+    "file": "fuobe-cctv.safetensors",
+    "strength": 0.8,
+    "hfRepo": "fuobe/fuobe-cctv"
+  },
+  "notes": "The timestamp and camera ID stay an overlay added after the picture."
+}

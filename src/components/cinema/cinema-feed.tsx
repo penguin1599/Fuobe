@@ -20,6 +20,7 @@ import {
   RotateCcw,
   Rows3,
   SlidersHorizontal,
+  Sparkles,
   Trash2,
   UserRoundPlus,
   UserX,
@@ -28,8 +29,7 @@ import {
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
-import { useLikelyVisitor } from "@/lib/api";
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { toast } from "sonner";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -57,6 +57,10 @@ import { getModel } from "@/lib/catalog";
 import type { CinemaFolder } from "@/lib/catalog/cinema";
 import type { Generation, OutputFile } from "@/lib/catalog/types";
 import { formatCost, timeAgo } from "@/lib/format";
+import { useEngineMode, useIsOwner } from "@/lib/api";
+import { finishedTakes, finishIn2k } from "@/lib/catalog/regenerate";
+import { OwnSetupChip, useOwnSetupPress } from "@/components/own-setup";
+import { useSubmitGuard } from "@/components/shorts/hooks";
 import { cn } from "@/lib/utils";
 import { copyWithToast } from "@/lib/clipboard";
 import { toastError } from "@/lib/refusals";
@@ -174,26 +178,47 @@ export interface FeedHandlers {
   onUseTake: (g: CinemaGeneration, o: OutputFile) => void;
   onAnimate: (url: string) => void;
   onReference: (url: string, kind: OutputFile["kind"]) => void;
-  onSaveElement: (g: CinemaGeneration, url: string, kind: "character" | "location") => void;
+  /** Save a still as an element (absent where elements can't be saved: they are the owner's library). */
+  onSaveElement?: (g: CinemaGeneration, url: string, kind: "character" | "location") => void;
   /** "Create 3D scene" from a still (asks first, with the price). */
-  onCreateScene: (g: CinemaGeneration, url: string) => void;
+  onCreateScene?: (g: CinemaGeneration, url: string) => void;
   onOpenScene: (g: CinemaGeneration) => void;
   /** What building a scene costs on the current engine ("Free", "≈ $0.03"). */
   scenePrice: string;
 }
 
-/** A grid contact sheet and its tiles are one take: moving any of them to the Trash moves the lot. */
-export function deleteLabel(g: CinemaGeneration): string {
+/**
+ * A grid contact sheet and its tiles are one take: moving any of them to the Trash moves the lot. `forever`: whoever has
+ * no Trash (a signed-in account) deletes it for good.
+ */
+export function deleteLabel(g: CinemaGeneration, forever = false): string {
   const tiles = g.tiles?.length ?? (g.feature === "cinema-grid" && g.outputs.length > 1 ? g.outputs.length - 1 : 0);
+  if (forever) return tiles ? `Delete grid (sheet + ${tiles} tiles)` : "Delete take";
   return tiles ? `Move grid to Trash (sheet + ${tiles} tiles)` : "Move take to Trash";
 }
 
+/** The takes the feed's list already finishes in 2K (finishedTakes). */
+const FinishedIn2k = createContext<Set<string>>(new Set());
+
 function TileMenu({ u, folders, projectId, handlers, onDelete }: { u: Unit; folders: CinemaFolder[]; projectId: string; handlers: FeedHandlers; onDelete: (ids: string[]) => void }) {
   const actions = useItemActions(projectId);
-  // Remove a person runs on a self-hosted Fuobe only: a guest or an account isn't sent there.
-  const visitor = useLikelyVisitor();
+  const engineMode = useEngineMode();
+  const finished = useContext(FinishedIn2k);
+  // One paid submit at a time, with a nonce the server answers a repeat with (a double click is one 2K render).
+  const guard = useSubmitGuard();
+  // The Trash is the owner's: anyone else's Delete is for good.
+  const owner = useIsOwner();
   const o = u.output;
   const elsewhere = foreign(u.g, projectId);
+  // Finish in 2K: a MiniMax H3 take below 2K (fal renders it again at 2K; your GPU redraws it with Open-H3 Regenerate),
+  // once: not on a take whose 2K finish is under way or made (a 2K run's own 768p draft included).
+  // A take from your GPU is finished by Open-H3 Regenerate (perSecond null): a 48 GB card, so it says so (own-setup.ts)
+  // and a visitor runs it on its own GPU only.
+  const finish = o?.kind === "video" && !u.tile && !finished.has(u.g.id) ? finishIn2k(u.g, engineMode) : null;
+  const ownSetup = finish?.perSecond === null ? "regenerate:cinema-finish" : undefined;
+  const press = useOwnSetupPress();
+  const seconds = Number(u.g.request.params?.duration ?? 0);
+  const finishPrice = !finish ? "" : finish.perSecond === null ? "Free" : seconds > 0 ? `≈ ${formatCost(finish.perSecond * seconds)}` : `$${finish.perSecond.toFixed(2)}/s`;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -219,21 +244,27 @@ function TileMenu({ u, folders, projectId, handlers, onDelete }: { u: Unit; fold
         )}
         {o?.kind === "image" && !u.scene && (
           <>
-            <DropdownMenuItem onClick={() => handlers.onCreateScene(u.g, o.url)}>
-              <Box /> Create 3D scene <span className="ml-auto text-[11.5px] text-muted-foreground">{handlers.scenePrice}</span>
-            </DropdownMenuItem>
+            {handlers.onCreateScene && (
+              <DropdownMenuItem onClick={() => handlers.onCreateScene?.(u.g, o.url)}>
+                <Box /> Create 3D scene <span className="ml-auto text-[11.5px] text-muted-foreground">{handlers.scenePrice}</span>
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem onClick={() => handlers.onAnimate(o.url)}>
               <Clapperboard /> Animate (start frame)
             </DropdownMenuItem>
             <DropdownMenuItem onClick={() => handlers.onReference(o.url, "image")}>
               <ImagePlus /> Use as reference
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => handlers.onSaveElement(u.g, o.url, "character")}>
-              <UserRoundPlus /> Save as character
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => handlers.onSaveElement(u.g, o.url, "location")}>
-              <MapPin /> Save as location
-            </DropdownMenuItem>
+            {handlers.onSaveElement && (
+              <>
+                <DropdownMenuItem onClick={() => handlers.onSaveElement?.(u.g, o.url, "character")}>
+                  <UserRoundPlus /> Save as character
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => handlers.onSaveElement?.(u.g, o.url, "location")}>
+                  <MapPin /> Save as location
+                </DropdownMenuItem>
+              </>
+            )}
           </>
         )}
         {o?.kind === "video" && (
@@ -244,11 +275,24 @@ function TileMenu({ u, folders, projectId, handlers, onDelete }: { u: Unit; fold
             <DropdownMenuItem onClick={() => handlers.onReference(o.url, "video")}>
               <ImagePlus /> Use as reference clip
             </DropdownMenuItem>
-            {!visitor && (
-              <DropdownMenuItem asChild>
-                <Link href={`/video-tools/remove-person?video=${encodeURIComponent(o.url)}`}>
-                  <UserX /> Remove a person
-                </Link>
+            <DropdownMenuItem asChild>
+              <Link href={`/video-tools/remove-person?video=${encodeURIComponent(o.url)}`}>
+                <UserX /> Remove a person
+              </Link>
+            </DropdownMenuItem>
+            {finish && (
+              <DropdownMenuItem
+                onClick={() =>
+                  press(ownSetup, () =>
+                  void guard(`finish-2k:${u.g.id}`, (requestId) => actions.finish2k(u.g, requestId))
+                    .then((done) => done !== undefined && toast(finish.perSecond === null ? "Finishing in 2K on your GPU" : "Rendering it again at 2K"))
+                    .catch((e) => toastError(e)),
+                  )
+                }
+              >
+                <Sparkles /> {finish.label}
+                <OwnSetupChip setup={ownSetup} />
+                <span className="ml-auto text-[11.5px] text-muted-foreground">{finishPrice}</span>
               </DropdownMenuItem>
             )}
           </>
@@ -305,7 +349,7 @@ function TileMenu({ u, folders, projectId, handlers, onDelete }: { u: Unit; fold
         )}
         <DropdownMenuSeparator />
         <DropdownMenuItem variant="destructive" onClick={() => onDelete([u.g.id])}>
-          <Trash2 /> {deleteLabel(u.g)}
+          <Trash2 /> {deleteLabel(u.g, !owner)}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
@@ -486,14 +530,16 @@ function TileView({
                     </TooltipTrigger>
                     <TooltipContent>Animate: use as the start frame</TooltipContent>
                   </Tooltip>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button type="button" onClick={() => handlers.onCreateScene(g, u.output!.url)} className="grid size-7 place-items-center rounded-lg text-white/90 hover:bg-white/20 hover:text-white" aria-label={`Create 3D scene · ${handlers.scenePrice}`}>
-                        <Box className="size-4" />
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent>Create 3D scene · {handlers.scenePrice}</TooltipContent>
-                  </Tooltip>
+                  {handlers.onCreateScene && (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button type="button" onClick={() => handlers.onCreateScene?.(g, u.output!.url)} className="grid size-7 place-items-center rounded-lg text-white/90 hover:bg-white/20 hover:text-white" aria-label={`Create 3D scene · ${handlers.scenePrice}`}>
+                          <Box className="size-4" />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent>Create 3D scene · {handlers.scenePrice}</TooltipContent>
+                    </Tooltip>
+                  )}
                 </>
               )
             )}
@@ -572,6 +618,8 @@ export function CinemaFeed({
   const [prefs, setPrefs] = usePrefs();
   const actions = useItemActions(projectId);
   const qc = useQueryClient();
+  // Takes with a 2K finish under way or made: their menus don't offer Finish in 2K again.
+  const finished = useMemo(() => finishedTakes(items), [items]);
   // Stills on Fuobe Soul Cinema and Soul Location's Movie look finish in the browser (the 21:9 crop, the grade).
   useSoulFinish(items, CINEMA_KEY);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -636,7 +684,9 @@ export function CinemaFeed({
   }, [all, prefs.split]);
 
   const layoutCls = prefs.layout === "square" ? "grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5" : prefs.layout === "masonry" ? "columns-2 gap-3 sm:columns-3 lg:columns-4 2xl:columns-5" : "space-y-2";
-  // Delete moves to the Trash (the takes stay filed in their project): Undo puts them back.
+  // Delete moves to the Trash (the takes stay filed in their project): Undo puts them back. Whoever has no Trash (a
+  // signed-in account) deletes for good.
+  const owner = useIsOwner();
   const del = async (list: string[]) => {
     setSelected(new Set());
     try {
@@ -645,6 +695,7 @@ export function CinemaFeed({
       toastError(e);
       return;
     }
+    if (!owner) return void toast(list.length > 1 ? `${list.length} takes deleted` : "Deleted", { id: "cinema-trash", duration: 3000 });
     toast(list.length > 1 ? `${list.length} takes moved to Trash` : "Moved to Trash", {
       id: "cinema-trash",
       duration: 6000,
@@ -659,6 +710,7 @@ export function CinemaFeed({
   ] as const;
 
   return (
+    <FinishedIn2k.Provider value={finished}>
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
         <div className="min-w-0 basis-full sm:basis-auto sm:flex-1">{title}</div>
@@ -766,7 +818,7 @@ export function CinemaFeed({
             </DropdownMenu>
           )}
           <button type="button" onClick={() => void del(live)} className="inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-[12.5px] font-medium text-destructive hover:bg-destructive/10">
-            <Trash2 className="size-3.5" /> Move to Trash
+            <Trash2 className="size-3.5" /> {owner ? "Move to Trash" : "Delete"}
           </button>
         </div>
       )}
@@ -828,5 +880,6 @@ export function CinemaFeed({
       )}
 
     </div>
+    </FinishedIn2k.Provider>
   );
 }

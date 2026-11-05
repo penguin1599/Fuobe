@@ -1,6 +1,10 @@
 {
   "features": {
     "group-swap": { "passed": true, "date": "2026-11-04" },
-    "finish-colours": { "passed": true, "date": "2026-11-04" }
+    "finish-colours": { "passed": true, "date": "2026-11-04" },
+    "picture-h3-renderer": { "passed": true, "date": "2026-11-05" },
+    "clean-voice-first": { "passed": true, "date": "2026-11-05" },
+    "original-sound": { "passed": true, "date": "2026-11-05" },
+    "group-swap-one-by-one": { "passed": true, "date": "2026-11-05" }
   }
 }

@@ -126,7 +126,8 @@ function NodeCard({ node, index }: { node: CanvasNode; index: number }) {
         {gen && (
           <>
             <p className="text-[12px] text-muted-foreground">
-              {model?.name ?? "No model"} · {costLabel(globals.isDemo, model, v.costUsd)}
+              {model?.name ?? "No model"}
+              {!globals.visitor && ` · ${costLabel(globals.isDemo, model, v.costUsd)}`}
             </p>
             {node.data.prompt !== undefined || node.type === "model" ? (
               <textarea

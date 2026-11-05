@@ -1,4 +1,6 @@
 import { FORMAT_INFO, formatList } from "@/lib/av/formats";
+import { keyFormatValues } from "@/lib/av/keying";
+import { factorTier, factorTierProblem } from "@/lib/av/upscale";
 import type {
   Engine,
   GenerationRequest,
@@ -10,6 +12,7 @@ import type {
   Preset,
   PresetEndStep,
   PresetRoute,
+  Pricing,
 } from "./types";
 import { billedClipSeconds, editClipsProblem, insertRangeProblem, sourceSeconds } from "./clip-windows";
 import { chainGapProblem, chainTiming, FIRST_AT_ZERO, frameTimes, keyframeChain, MAX_KEYFRAMES, spread } from "./keyframes";
@@ -24,9 +27,13 @@ import { carriesLayout, flux3Boxes, flux3Caption, layoutCompilerFor, LAYOUT_MAX_
 import { pricingOn, type PriceClock } from "./promo";
 import { isInstrumental, lyricsOf, lyricsProblem, LYRICS_PARAM, promptLyricsProblem } from "@/lib/lyrics";
 import { presetRoutes } from "./preset-recipe-routes";
+import { readWorld, worldProblem } from "@/lib/world";
 import { checkWatermarkBoxes } from "@/lib/watermark";
 
 export { pricingAt } from "./promo";
+
+/** Operations that make a video from words and stills only: an attached clip has no place in them. */
+const MAKES_FROM_STILLS = new Set<Operation>(["t2v", "i2v", "flf2v", "keyframes", "ref2v", "avatar"]);
 
 /** Infer the operation from what the user attached. */
 export function inferOperation(model: ModelDef, req: Pick<GenerationRequest, "op" | "inputs" | "params">): Operation {
@@ -64,14 +71,35 @@ export function inferOperation(model: ModelDef, req: Pick<GenerationRequest, "op
   }
   if (model.kind === "model3d") {
     if (req.inputs?.model3d && has("rig-3d")) return "rig-3d";
+    if (req.inputs?.model3d && has("refine-3d")) return "refine-3d";
     if (imgs && has("image-to-3d")) return "image-to-3d";
     if (!imgs && has("text-to-3d")) return "text-to-3d";
   }
   return model.routes[0].op;
 }
 
-export function routesFor(model: ModelDef, op: Operation): ModelRoute[] {
-  return model.routes.filter((r) => r.op === op);
+/**
+ * Why a clip is too long for a model that takes clips up to a length (ModelOptions.maxSourceSeconds: Kandinsky VSR's 121
+ * frames at 24 fps), in the words the composer shows and the server refuses with; null when it fits or isn't known.
+ */
+export function sourceLengthProblem(model: Pick<ModelDef, "name" | "options">, seconds: number | undefined): string | null {
+  const max = model.options.maxSourceSeconds;
+  if (!max || !seconds || seconds <= max + 0.05) return null;
+  return `${model.name} takes clips up to ${max} s, and this one is ${Math.round(seconds * 10) / 10} s: trim it first, or pick SeedVR2 for longer clips`;
+}
+
+/**
+ * The routes that run `op`. With the run's params, a route that runs only for one value of a setting (ModelRoute.when:
+ * Kandinsky 6.0's Pro or Lite on fal) qualifies when the setting has that value, or is unset and it is the first such route.
+ */
+export function routesFor(model: ModelDef, op: Operation, params?: GenParams): ModelRoute[] {
+  const routes = model.routes.filter((r) => r.op === op);
+  if (!params || !routes.some((r) => r.when)) return routes;
+  return routes.filter((r) => {
+    if (!r.when) return true;
+    const v = params.extra?.[r.when.param];
+    return v === undefined || v === null ? routes.find((x) => x.when?.param === r.when!.param) === r : String(v) === r.when.value;
+  });
 }
 
 /** Fewer characters than this of the overall prompt in front of a capped shot prompt say too little: it is left out. */
@@ -242,11 +270,11 @@ const PROMPTLESS = new Set<Operation>([
   "concat", "frame", "color-match", "finalize", "reframe", "dialogue", "voice-change", "dub", "bg-remove-video", "depth-video", "upscale-image", "upscale-video", "bg-remove",
   "interpolate", "v2a", "face-swap", "motion-transfer", "lipsync", "avatar",
   // round 3: tools that work from their inputs (open caption burn-in takes timed lines as its prompt and says so when they're missing)
-  "trim", "transcribe", "mux", "separate-audio", "enhance-voice", "layers", "image-to-3d", "captions", "text-layers", "vectorize", "level",
+  "trim", "transcribe", "mux", "separate-audio", "enhance-voice", "speech-edit", "layers", "image-to-3d", "captions", "text-layers", "vectorize", "level",
   // av-tools: the dub voice track (clips placed on the video's timeline)
   "timeline",
   // round 4: tools that work from their inputs (removing an object needs a prompt only on models that read one)
-  "sdr-to-hdr", "export-video", "ocr", "still-motion", "audio-loop", "audio-join", "scene-3d", "splat", "rig-3d", "extract-frames", "images-to-video", "overlay", "composite",
+  "sdr-to-hdr", "export-video", "ocr", "still-motion", "audio-loop", "audio-join", "scene-3d", "splat", "rig-3d", "refine-3d", "extract-frames", "images-to-video", "overlay", "composite",
   // round 5 (O11): the face mosaic names the faces itself ("face")
   "face-mosaic",
   // archive-restore: the scene's words help (period, place, light) but a run without them gets a neutral one
@@ -255,6 +283,8 @@ const PROMPTLESS = new Set<Operation>([
   "song-extend", "song-stems",
   // An inserted moment can be left to the model; a retexture takes words or a style picture
   "insert-moment", "retexture-3d",
+  // World mode: a world turn's words are in its script (params.extra.world)
+  "world-turn",
   // Watermark Remover: the marks are found, kept or brushed; no words
   "watermark-scan", "watermark-remove",
   // Genjutsu's Openjutsu modes: their words (roles, what changes, the scene) travel in their settings, not the prompt
@@ -478,7 +508,22 @@ export function planGeneration(
   } else if (params.multiShot === "auto" && model.options.multiShot?.mode === "prompt") {
     prompt = `${prompt.replace(/[.\s]+$/, "")}. Multi-shot sequence: tell it in several distinct shots with clean cuts between them.`;
   }
+  const inferred = op === undefined;
   op = op ?? inferOperation(model, req);
+  if (model.kind === "video" && inferred) {
+    // What the run would drop without a word: a clip on an operation that makes a new video from words and stills (MiniMax H3
+    // in Lipsync & avatars makes a new talking clip, it doesn't re-sync one), or reference clips and sound beside an end frame.
+    if (req.inputs?.video && MAKES_FROM_STILLS.has(op)) {
+      throw new Error(
+        routesFor(model, "avatar").length && !routesFor(model, "lipsync").length
+          ? `${model.name} makes a new talking video from a portrait and the voice; it doesn't re-sync an existing clip. Add a portrait instead of the video, or pick another model`
+          : `${model.name} can't take a video here. Remove it, or pick another model`,
+      );
+    }
+    if (op === "flf2v" && ((req.inputs?.videos?.length ?? 0) || (req.inputs?.audios?.length ?? 0))) {
+      throw new Error("Reference clips and sound can't go with an end frame. Remove the end frame, or the clips and sound");
+    }
+  }
   // Reference clips and video elements on a model that bills them with the output (Kling 4.0, Pricing.clipInput): priced
   // at the least they bill (twice the output) until the server reads their length (params.clipSeconds).
   if (model.pricing?.clipInput && req.inputs?.videos?.length && params.clipSeconds === undefined) params = { ...params, clipSeconds: 0 };
@@ -552,6 +597,12 @@ export function planGeneration(
   if (op === "dialogue" && !params.dialogue?.some((l) => l.text.trim())) throw new Error("Write at least one line");
   if (op === "dub" && !params.targetLanguage) throw new Error("Pick a language to translate into");
   if (op === "voice-design" && !params.voiceDescription?.trim()) throw new Error("Describe the voice you want");
+  if (op === "speech-edit" && !(Array.isArray(params.extra?.speechWindows) && params.extra.speechWindows.length)) throw new Error("Edit the words, or pick a range and an effect");
+  if (op === "world-turn") {
+    const world = readWorld(params.extra?.world);
+    const problem = world ? worldProblem(world, Number(params.extra?.turn ?? 0)) : "Describe the world first: the opening is where it starts";
+    if (problem) throw new Error(problem);
+  }
   if (model.options.motionPaths && !(params.extra?.motionPaths as { paths?: unknown[] } | undefined)?.paths?.length) {
     throw new Error(`Draw on the start frame — ${model.name} moves things along the paths you draw`);
   }
@@ -602,6 +653,10 @@ export function planGeneration(
   }
   const tooMany = extraImages(model, op, req);
   if (tooMany) throw new Error(tooMany);
+  const tooLong = sourceLengthProblem(model, params.sourceDuration);
+  if (tooLong) throw new Error(tooLong);
+  const tier = op === "upscale-video" ? factorTierProblem(model.name, model.options.resolutions, params.resolution) : null;
+  if (tier) throw new Error(tier);
 
   // Soul Cinema's 21:9 (research §4.5: a crop option): made at 16:9 on both engines, then cropped to 21:9 with
   // its grade after generation (meta.crop).
@@ -757,8 +812,16 @@ function checkVideoToolOptions(model: ModelDef, op: "bg-remove-video" | "depth-v
     const clicked = !!params.points?.length && routesFor(model, op).some((r) => !!r.map?.points);
     if (o.keepsNamed && !prompt && !clicked) throw new Error("Say what to keep, e.g. “the dog” or “the woman in red”");
     const outputs = o.matteOutputs ?? ["cutout"];
+    // ProRes 4444 and EXR carry the cut-out with its alpha (CorridorKey, VRMBG 3.0 on your GPU): not the mask or the foreground.
+    if (params.format && o.formats?.length) keyFormatValues(params.format, params.matteOutput);
     if (params.matteOutput && !outputs.includes(params.matteOutput)) {
-      throw new Error(params.matteOutput === "matte" ? `${model.name} makes the cut-out only — pick BiRefNet or SAM for an alpha mask` : `${model.name} makes the alpha mask only — pick BiRefNet for a cut-out video`);
+      throw new Error(
+        params.matteOutput === "foreground"
+          ? `${model.name} doesn't make a clean foreground — CorridorKey in Green screen does`
+          : params.matteOutput === "matte"
+            ? `${model.name} makes the cut-out only — pick BiRefNet or SAM for an alpha mask`
+            : `${model.name} makes the alpha mask only — pick BiRefNet for a cut-out video`,
+      );
     }
     return;
   }
@@ -848,6 +911,7 @@ const NEEDS: Partial<
   transcribe: { oneOf: ["audio", "video"], msg: "Add the audio or video to transcribe" },
   "separate-audio": { oneOf: ["audio", "video"], msg: "Add the audio or video to split" },
   "enhance-voice": { oneOf: ["audio", "video"], msg: "Add the audio or video to clean" },
+  "speech-edit": { oneOf: ["audio", "video"], msg: "Add the recording to edit" },
   level: { audio: true, msg: "Add the audio to level" },
   // round 4
   "remove-object": { video: true, msg: "Add the video to remove something from" },
@@ -870,6 +934,7 @@ const NEEDS: Partial<
   "scene-3d": { images: 1, msg: "Add the image to build the scene from" },
   splat: { images: 1, msg: "Add a photo of the subject" },
   "rig-3d": { model3d: true, msg: "Add the 3D model to rig" },
+  "refine-3d": { model3d: true, images: 1, msg: "Add the 3D model to refine and the photo it was made from" },
   "retexture-3d": { model3d: true, msg: "Add the 3D model to retexture" },
   "insert-moment": { video: true, msg: "Add the clip to insert a moment into" },
   "extract-frames": { video: true, msg: "Add the video to take frames from" },
@@ -1165,6 +1230,42 @@ function routeMegapixels(model: ModelDef, params: GenParams, op?: Operation): nu
 }
 
 /**
+ * A clip's price by its steps on the variant it runs (Pricing.steps: fal's Kandinsky 6.0): the settings the run carries, else
+ * the ones its controls' defaults stand for; between two step counts fal prices, the line between them. Undefined when the
+ * variant or the operation has no prices.
+ */
+function stepsPrice(model: ModelDef, s: NonNullable<Pricing["steps"]>, params: GenParams, op?: Operation): number | undefined {
+  const own = controlSets(model, { extra: {} }).extra ?? {};
+  const variant = String(params.extra?.[s.variantKey] ?? own[s.variantKey] ?? Object.keys(s.prices)[0]);
+  const byOp = s.prices[variant];
+  const table = byOp?.[op ?? model.routes[0]?.op] ?? Object.values(byOp ?? {})[0];
+  const steps = Number(params.extra?.[s.stepsKey] ?? own[s.stepsKey]);
+  if (!table || !Number.isFinite(steps)) return undefined;
+  const points = Object.entries(table)
+    .map(([k, v]) => [Number(k), v] as const)
+    .sort((a, b) => a[0] - b[0]);
+  if (!points.length) return undefined;
+  const exact = points.find(([k]) => k === steps);
+  if (exact) return exact[1];
+  const hi = points.findIndex(([k]) => k > steps);
+  // Outside the published counts: the nearest two's line, never below nothing.
+  const [a, b] = hi <= 0 ? [points[0], points[1] ?? points[0]] : hi === -1 ? [points.at(-2) ?? points[0], points.at(-1)!] : [points[hi - 1], points[hi]];
+  if (a[0] === b[0]) return a[1];
+  return Math.max(0, a[1] + ((b[1] - a[1]) * (steps - a[0])) / (b[0] - a[0]));
+}
+
+/**
+ * An upscale billed per output megapixel per frame (Pricing.outputFrames: fal's Kandinsky VSR): the clip's size times the
+ * factor, every frame at the API's rate up to its cap. A clip not read yet is priced at the assumed size and the cap.
+ */
+function outputFramesPrice(o: NonNullable<Pricing["outputFrames"]>, params: GenParams, fallback?: string): number {
+  const k = factorTier(params.resolution ?? fallback) ?? 2;
+  const src = params.sourceSize?.width && params.sourceSize.height ? params.sourceSize : o.assume;
+  const frames = params.sourceDuration && params.sourceDuration > 0 ? Math.min(o.maxFrames, Math.round(params.sourceDuration * o.fps)) : o.maxFrames;
+  return o.usd * ((src.width * k * src.height * k) / 1e6) * frames;
+}
+
+/**
  * Rough USD estimate for a plan (BYO-key cloud runs). Open-source runs are free. A launch price (Pricing.promo) is read
  * at `now` (./promo): the clock when not given (the server planning a run, the browser after it hydrates); with null (a
  * page prerendering, the browser before it hydrates) a launch-priced model's price isn't known yet (null).
@@ -1218,6 +1319,11 @@ export function estimateCost(model: ModelDef, params: GenParams, jobs = 1, op?: 
     // Whole minutes of input, at least one (VEED Clean Audio: whole seconds, then up to the next full minute).
     per = usd * (p.roundUp ? Math.max(1, Math.ceil(Math.round(minutes * 60) / 60 - 1e-9)) : minutes);
   }
+  if (p.steps) {
+    const clip = stepsPrice(model, p.steps, params, op);
+    if (clip !== undefined) per = clip * n;
+  }
+  if (p.outputFrames) per = outputFramesPrice(p.outputFrames, params, model.defaults?.resolution);
   // Settings that change the price (60 fps, a Pro tier, a cheaper model).
   for (const f of p.factors ?? []) {
     const v = f.param === "targetFps" ? (params.targetFps ?? model.defaults?.targetFps) : (params.extra?.[f.param] ?? model.options.controls?.find((c) => c.param === f.param)?.default);

@@ -3,15 +3,16 @@
 import { ImagePlus, Loader2, Paintbrush, X } from "lucide-react";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
+import { OwnSetupNote } from "@/components/own-setup";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { uploadFile, useCreateGeneration } from "@/lib/api";
-import { RETEXTURE_MODELS, RETEXTURE_PROMPT_MAX, RETEXTURE_SIZES, retextureRequest, type RetextureModel } from "@/lib/av/model3d";
+import { uploadFile } from "@/lib/api";
+import { MODEL3D_KEY, RETEXTURE_MODELS, RETEXTURE_PROMPT_MAX, RETEXTURE_SIZES, retextureRequest, type RetextureModel } from "@/lib/av/model3d";
 import { toastError } from "@/lib/refusals";
-import { priceLine, useRunPreview } from "./hooks";
+import { priceLine, useCreate3d, useRunPreview } from "./hooks";
 
 const SIZE_LABEL: Record<(typeof RETEXTURE_SIZES)[number], string> = { "2k": "2K textures", "4k": "4K textures", "8k": "8K textures" };
 
@@ -19,8 +20,21 @@ const SIZE_LABEL: Record<(typeof RETEXTURE_SIZES)[number], string> = { "2k": "2K
  * Retexture a finished model: Meshy paints new textures on the same mesh from words or a style picture (the picture wins when
  * both are given). Cloud only (fal.ai): no open retexturer runs in ComfyUI here.
  */
-export function RetextureDialog({ glb, open, onOpenChange, cloudAllowed }: { glb: string; open: boolean; onOpenChange: (v: boolean) => void; cloudAllowed: boolean }) {
-  const create = useCreateGeneration();
+export function RetextureDialog({
+  glb,
+  open,
+  onOpenChange,
+  cloudAllowed,
+  keyInstead,
+}: {
+  glb: string;
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  cloudAllowed: boolean;
+  /** A visitor on open models only: it runs with its own fal.ai key, and says so (own-setup.ts). */
+  keyInstead?: boolean;
+}) {
+  const create = useCreate3d();
   const [prompt, setPrompt] = useState("");
   const [style, setStyle] = useState<{ url: string; preview: string } | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -61,9 +75,15 @@ export function RetextureDialog({ glb, open, onOpenChange, cloudAllowed }: { glb
           <DialogDescription>The same model with new textures: describe the look, or add a picture of the style. Realistic surface detail — shine, roughness and bumps — is included.</DialogDescription>
         </DialogHeader>
         {!cloudAllowed ? (
-          <p className="rounded-xl bg-muted p-3 text-[13px] text-muted-foreground" role="note">
-            Retexturing runs on a cloud model, which isn&apos;t available here.
-          </p>
+          keyInstead ? (
+            <OwnSetupNote setup={MODEL3D_KEY} onOpen={() => onOpenChange(false)}>
+              Retexturing runs on Meshy, a cloud model, with your own fal.ai key. You pay fal.ai directly.
+            </OwnSetupNote>
+          ) : (
+            <p className="rounded-xl bg-muted p-3 text-[13px] text-muted-foreground" role="note">
+              Retexturing runs on Meshy, a cloud model: turn on paid models in Settings → Engine mode.
+            </p>
+          )
         ) : (
           <div className="grid gap-3">
             <div className="grid gap-1.5">

@@ -36,6 +36,19 @@ const manifest = read("manifest.json") as { workflows: ManifestWorkflow[] };
 const entry = (id: string) => manifest.workflows.find((w) => w.id === id)!;
 const graph = (id: string) => read(`${id}.json`) as ComfyWorkflow;
 const pins = read("model-pins.json") as Record<string, { revision: string; sizeBytes: number; sha256: string }>;
+/** The speed graphs that have passed a real run on a GPU. */
+const GPU_PASSED = new Set([
+  "qwen-image-21-t2i-draft",
+  "qwen-image-21-edit-draft",
+  "qwen-image-21-inpaint-draft",
+  "qwen-image-21-outpaint-draft",
+  "qwen-image-21-t2i-fast",
+  "qwen-image-21-edit-fast",
+  "qwen-image-21-inpaint-fast",
+  "qwen-image-21-outpaint-fast",
+  "qwen-image-21-t2i-details",
+  "qwen-image-21-edit-details",
+]);
 const index = read("requirements.json") as { workflows: Record<string, { files: string[]; optional: string[]; packs: Record<string, string[]>; vramGb: number; firstRun: string[]; validated?: boolean }>; files: Record<string, { pinnedUrl: string; sizeBytes: number }>; packs: Record<string, { commit: string; classes: string[] }> };
 const ofClass = (wf: ComfyWorkflow, cls: string) => Object.entries(wf).filter(([, n]) => n.class_type === cls);
 const has = (id: string) => manifest.workflows.some((w) => w.id === id);
@@ -158,8 +171,8 @@ describe("Qwen-Image 2.1's speed graphs", () => {
       expect(e.bindings.seed).toEqual([{ node: "70", input: "noise_seed" }]);
       expect(e.bindings.steps).toBeUndefined();
       expect(e.license).toMatch(/Qwen Research License/);
-      // Unvalidated like the base Qwen-Image 2.1 graphs until it runs on a GPU (the CPU server's graph check isn't that bar).
-      expect(e.validated, t.id).toBe(false);
+      // Validated once it has passed a real run on a GPU (the CPU server's graph check isn't that bar).
+      expect(e.validated, t.id).toBe(GPU_PASSED.has(t.id));
       if (/-(inpaint|outpaint)-/.test(t.id)) expect(e.customNodes.map((c) => c.name)).toEqual(["ausboss-nodes"]);
       // The licence names the optional clean decoder's own.
       expect(e.license).toMatch(/Texture-Fix VAE .*Qwen Research License/);
@@ -478,7 +491,7 @@ describe("Storyboard's next scene on Qwen-Image 2.1", () => {
     expect(wf["11"]).toBeUndefined();
     expect(wf["30"].inputs["images.image_2"]).toBeUndefined();
     expect(wf["32"].inputs).toMatchObject({ steps: 28, cfg: 1 });
-    expect(entry("qwen-image-21-next-scene").validated).toBe(false);
+    expect(entry("qwen-image-21-next-scene").validated).toBe(true);
     expect(index.workflows["qwen-image-21-next-scene"].files).toContain("loras/Qwen-Image-2.1-Next-Scene-step2500.safetensors");
   });
 });

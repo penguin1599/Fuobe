@@ -70,15 +70,15 @@ async function hasCleaned(base) {
 }
 
 async function demoPlayer(page, label, base = app) {
-  const stage = page.getByRole("group", { name: "Demo: a woman talking in a busy brasserie" });
+  const stage = page.getByRole("group", { name: "Demo: a woman talking in a noisy restaurant" });
   if (await hasCleaned(base)) {
     check((await stage.count()) === 0, `${label}: after a clean of your own, the page opens on the tool, not the demo`);
     return;
   }
   await stage.waitFor({ timeout: 20_000 });
-  check(await page.getByRole("heading", { name: "Hear her, not the room." }).isVisible(), `${label}: the demo says what it shows`);
+  check(await page.getByRole("heading", { name: "Studio-clean voice from any recording." }).isVisible(), `${label}: the demo says what it shows`);
   const chip = page.locator("[data-demo-state]");
-  check((await chip.innerText()) === "Busy brasserie", `${label}: the demo starts on the busy room`);
+  check((await chip.innerText()) === "Noisy restaurant", `${label}: the demo starts on the noisy restaurant`);
   await page.getByRole("button", { name: "Tap to listen" }).click();
   const quiet = await page
     .waitForFunction(() => document.querySelector("[data-demo-state]")?.textContent === "Voice only", null, { timeout: 15_000 })
@@ -90,7 +90,7 @@ async function demoPlayer(page, label, base = app) {
   check(shown > 0.95, `${label}: the photo softens with the sound (${shown})`);
   await page.getByRole("button", { name: "Noise on" }).click();
   check((await page.getByRole("button", { name: "Noise on" }).getAttribute("aria-pressed")) === "true", `${label}: Noise on is pressed`);
-  check((await chip.innerText()) === "Busy brasserie", `${label}: Noise on brings the room back`);
+  check((await chip.innerText()) === "Noisy restaurant", `${label}: Noise on brings the room back`);
 }
 
 async function waitDone(feature, ms = 45_000) {
@@ -114,7 +114,7 @@ try {
       const ctx = await setup(browser, device, theme, "cloud");
       const page = await ctx.newPage();
       await openRoute(page, `${app}/audio/clean`);
-      check(await page.getByRole("heading", { name: /^(Clean up voice|Hear her, not the room\.)$/ }).first().isVisible(), `${label}: the empty tool says what it is`);
+      check(await page.getByRole("heading", { name: /^(Clean up voice|Studio-clean voice from any recording\.)$/ }).first().isVisible(), `${label}: the empty tool says what it is`);
       check(await page.getByText("Add a voice recording or a video to clean").isVisible(), `${label}: the drop zone`);
       await demoPlayer(page, label);
       await page.screenshot({ path: path.join(out, `clean-empty-${dname}-${theme}.png`), fullPage: true });
@@ -124,7 +124,7 @@ try {
       check(true, `${label}: the cloud engine says Clean up voice runs on your GPU`);
       await page.screenshot({ path: path.join(out, `clean-cloud-${dname}-${theme}.png`), fullPage: true });
       await page.getByRole("button", { name: "Use open source" }).click();
-      await page.getByText(/Free · runs on your ComfyUI|Demo · free/).waitFor({ timeout: 20_000 });
+      await page.getByText(/Free · your GPU|Placeholder · free/).waitFor({ timeout: 20_000 });
       for (const g of ["Strength", "Model", "Quality", "Background", "Level"]) check(await page.getByRole("radiogroup", { name: g }).isVisible(), `${label}: the ${g} control`);
       check((await page.getByRole("radio", { name: "Full", exact: true }).getAttribute("aria-checked")) === "true", `${label}: audio starts at Full strength`);
       await page.screenshot({ path: path.join(out, `clean-open-${dname}-${theme}.png`), fullPage: true });
@@ -142,7 +142,7 @@ try {
     const page = await ctx.newPage();
     await openRoute(page, `${app}/audio/clean`);
     await page.locator('input[type="file"]').setInputFiles(file);
-    await page.getByText(/Free · runs on your ComfyUI|Demo · free/).waitFor({ timeout: 30_000 });
+    await page.getByText(/Free · your GPU|Placeholder · free/).waitFor({ timeout: 30_000 });
     if (kind === "video") {
       check((await page.getByRole("radio", { name: "Remove everything but the voice" }).getAttribute("aria-checked")) === "true", "video: Remove everything but the voice is the default");
       check((await page.getByRole("radio", { name: "Natural", exact: true }).getAttribute("aria-checked")) === "true", "video: Natural strength is the default");
@@ -171,7 +171,7 @@ try {
     const ctx = await setup(browser, DESKTOP, "light", "open");
     const page = await ctx.newPage();
     await openRoute(page, `${app}/apps/app-clean-up-voice`);
-    check(await page.getByRole("heading", { name: /^(Clean up voice|Hear her, not the room\.)$/ }).first().isVisible(), "app: the app page is the tool");
+    check(await page.getByRole("heading", { name: /^(Clean up voice|Studio-clean voice from any recording\.)$/ }).first().isVisible(), "app: the app page is the tool");
     check(await page.getByRole("link", { name: "Apps" }).first().isVisible(), "app: an Apps breadcrumb");
     await page.screenshot({ path: path.join(out, "clean-app-1440.png"), fullPage: true });
     const g = await waitDone("voice-clean", 1000);
@@ -235,7 +235,7 @@ try {
     const ctx = await setup(browser, PHONE, "dark", "open");
     const page = await ctx.newPage();
     await openRoute(page, `${app}/apps/app-clean-up-voice`);
-    await page.getByRole("heading", { name: /^(Clean up voice|Hear her, not the room\.)$/ }).first().waitFor({ timeout: 20_000 });
+    await page.getByRole("heading", { name: /^(Clean up voice|Studio-clean voice from any recording\.)$/ }).first().waitFor({ timeout: 20_000 });
     await demoPlayer(page, "app 390");
     await noSideScroll(page, "app 390");
     await page.screenshot({ path: path.join(out, "clean-app-390-dark.png"), fullPage: true });

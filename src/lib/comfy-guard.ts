@@ -16,6 +16,12 @@ export const GUARD_FILE_NAME = "fuobe_guard.py";
 /** Its version, as GET /fuobe/guard answers it. */
 export const GUARD_VERSION = 1;
 
+/**
+ * The SHA-256 of GUARD_SOURCE (hex): the steps for an AI ("Set it up with my AI") check the downloaded file against it.
+ * tests/ai-setup-guide.test.ts makes sure that it matches.
+ */
+export const GUARD_SHA256 = "702ba491e91165d693f9665744925e2a8a619f4ef6bd4aa893b97e378191e701";
+
 export const GUARD_SOURCE = `"""Fuobe's guard for ComfyUI.
 
 Started with --enable-cors-header, ComfyUI lets the website it names use it from your browser, but it also stops

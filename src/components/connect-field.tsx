@@ -52,7 +52,7 @@ interface Result extends ConnectionTest {
   saved?: boolean;
 }
 
-const ADDRESS_FIELDS = new Set(["comfyUrl", "comfyIsolatedUrl"]);
+const ADDRESS_FIELDS = new Set(["comfyUrl", "comfyIsolatedUrl", "worldcastUrl"]);
 
 /**
  * A key or address field with one button that does what it says: "Save & test" tests the typed value

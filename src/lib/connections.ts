@@ -4,6 +4,7 @@
  * address looks like, when to offer the first-run guide, and each connection's one-line status.
  */
 import { LLM_PROVIDERS } from "./catalog/llm-providers";
+import { offered, type AccessSummary } from "./model-access";
 
 export type TestProvider = "fal" | "replicate" | "comfyui" | "llm" | "civitai" | "huggingface" | "ai-toolkit";
 
@@ -12,7 +13,7 @@ export const PROVIDER_SETTINGS = {
   fal: ["falKey"],
   replicate: ["replicateToken"],
   // comfyWhere "server": a server address tested while ComfyUI runs on the owner's computer is tested as a server.
-  comfyui: ["comfyUrl", "comfyToken", "comfyIsolatedUrl", "comfyWhere"],
+  comfyui: ["comfyUrl", "comfyToken", "comfyIsolatedUrl", "comfyWhere", "worldcastUrl"],
   // Claude, and the local model servers of Settings → AI helper (Ollama, LM Studio, Unsloth Studio, any OpenAI-compatible one).
   llm: [
     "anthropicKey",
@@ -133,6 +134,8 @@ export function settingProblem(name: string, raw: string): string | null {
       return addressProblem(v, DEFAULT_COMFY_URL);
     case "comfyIsolatedUrl":
       return addressProblem(v, "http://127.0.0.1:8189");
+    case "worldcastUrl":
+      return addressProblem(v, "http://127.0.0.1:8190");
     case "ollamaUrl":
       return addressProblem(v, "http://127.0.0.1:11434");
     case "lmstudioUrl":
@@ -193,6 +196,24 @@ const CLOUD_PROVIDERS = ["fal", "replicate"] as const;
 /** Whether a paid API and ComfyUI are connected. */
 export function connectedEngines(s: ConnectionState): { cloud: boolean; open: boolean } {
   return { cloud: CLOUD_PROVIDERS.some((p) => s.providers[p]?.configured), open: !!s.providers.comfyui?.configured };
+}
+
+/**
+ * The open engine can run here for whoever is looking: the owner's install runs open models (Engine mode open or both),
+ * and ComfyUI is connected (on a server or the owner's computer) or placeholder results are on. A guest or an account
+ * (`viewer`) gets no 3D yet, so actions that need the owner's open engine (Make it 3D) stay off for them. Unknown: off.
+ */
+export function openEngineReady(s: (ConnectionState & { viewer?: unknown }) | undefined): boolean {
+  if (!s || s.viewer || s.engineMode === "cloud") return false;
+  return s.demoMode === "on" || !!s.providers.comfyui?.configured || !!s.ownerGpu;
+}
+
+/**
+ * Whether Idol 3D can run here for the viewer: the open engine can run for the owner (openEngineReady) and Idol 3D is
+ * switched on for it in Settings → Models & licences. (A picture's Make it 3D opens Photo to 3D on every engine.)
+ */
+export function make3dOffered(s: (ConnectionState & { viewer?: unknown; access?: AccessSummary }) | undefined): boolean {
+  return openEngineReady(s) && offered(s?.access, "oss-idol", "open");
 }
 
 /** Nothing this install's engine mode uses is connected, so a run asks to connect one (or makes a placeholder, for a tour). */

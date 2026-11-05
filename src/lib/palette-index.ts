@@ -16,6 +16,7 @@ import {
   EDIT_STUDIO,
   EXTEND_STUDIO,
   FOLEY_STUDIO,
+  FPS_BOOST_STUDIO,
   IMAGE_STUDIO,
   INPAINT_STUDIO,
   JOIN_CLIPS_STUDIO,
@@ -23,6 +24,7 @@ import {
   MOTION_CONTROL_STUDIO,
   MUSIC_STUDIO,
   REFRAME_STUDIO,
+  SDR_TO_HDR_STUDIO,
   SFX_STUDIO,
   SONG_TOOLS_STUDIO,
   TRANSCRIBE_STUDIO,
@@ -30,6 +32,7 @@ import {
   VIDEO_COLOR_MATCH_STUDIO,
   VIDEO_DEPTH_STUDIO,
   VIDEO_EDIT_STUDIO,
+  VIDEO_KEY_STUDIO,
   VIDEO_MATTE_STUDIO,
   VIDEO_RELIGHT_STUDIO,
   VIDEO_STUDIO,
@@ -50,7 +53,9 @@ const MODEL_STUDIOS: [string, StudioConfig][] = [
   ["/reframe", REFRAME_STUDIO],
   ["/upscale", UPSCALE_STUDIO],
   ["/upscale/video", VIDEO_UPSCALE_STUDIO],
-  ["/audio", AUDIO_STUDIO],
+  ["/upscale/fps", FPS_BOOST_STUDIO],
+  ["/upscale/hdr", SDR_TO_HDR_STUDIO],
+  ["/audio/speech", AUDIO_STUDIO],
   ["/audio/dialogue", DIALOGUE_STUDIO],
   ["/audio/voice-change", VOICE_CHANGE_STUDIO],
   ["/audio/transcribe", TRANSCRIBE_STUDIO],
@@ -59,6 +64,7 @@ const MODEL_STUDIOS: [string, StudioConfig][] = [
   ["/audio/song", SONG_TOOLS_STUDIO],
   ["/audio/video", FOLEY_STUDIO],
   ["/video-tools", VIDEO_MATTE_STUDIO],
+  ["/video-tools/green-screen", VIDEO_KEY_STUDIO],
   ["/video-tools/relight", VIDEO_RELIGHT_STUDIO],
   ["/video-tools/depth", VIDEO_DEPTH_STUDIO],
   ["/video-tools/join", JOIN_CLIPS_STUDIO],
@@ -70,7 +76,7 @@ const IN_3D = new Set([...ALL_MODELS_3D.map((m) => m.id), RIG_MODEL, ...RETEXTUR
 /** The Layers editor's tools (cut-out, layers, text detection…): its project list is where they start. */
 const IN_LAYERS = new Set(Object.values(TOOL_MODELS).flatMap((t) => [...t.cloud, ...t.open]));
 /** Where a model no studio, app or tool offers opens: the studio of what it makes. */
-const KIND_HOME: Record<ModelDef["kind"], string> = { image: "/image", video: "/video", audio: "/audio", text: "/assist", model3d: "/image-to-3d" };
+const KIND_HOME: Record<ModelDef["kind"], string> = { image: "/image", video: "/video", audio: "/audio/speech", text: "/assist", model3d: "/image-to-3d" };
 /** Tools with their own flow (and their own model choice), by operation. */
 const TOOL_PAGES: [string, Operation][] = [
   ["/video-tools/captions", "captions"],
@@ -86,7 +92,8 @@ const TOOL_PAGES: [string, Operation][] = [
 export function modelHref(m: ModelDef): string {
   const ops = new Set(m.routes.map((r) => r.op));
   const pick = `?model=${encodeURIComponent(m.id)}`;
-  const studio = MODEL_STUDIOS.find(([, c]) => c.kind === m.kind && (c.pickerOps ?? c.ops).some((op) => ops.has(op)));
+  // A green-screen keyer opens in Video tools → Green screen, the other mattes in Remove background (studioCatalog's split).
+  const studio = MODEL_STUDIOS.find(([, c]) => c.kind === m.kind && (c.pickerOps ?? c.ops).some((op) => ops.has(op)) && (!ops.has("bg-remove-video") || !!c.greenScreen === !!m.options.greenScreen));
   if (studio && !m.hidden) return studio[0] + pick;
   if (IN_3D.has(m.id)) return `/image-to-3d${pick}`;
   const app = APPS.find((a) => a.cloud?.modelId === m.id || a.open?.modelId === m.id);

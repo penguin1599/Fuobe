@@ -14,7 +14,7 @@
  * Pure: the tiers and what each engine makes of them, the cap at the size the film is joined at, the composite's
  * geometry, the windows, the copy, and the steps on your GPU.
  */
-import { REGEN_MODEL, REGEN_OFFERED, REGEN_WINDOW_SECONDS, RERENDER } from "./regenerate";
+import { REGEN_MODEL, REGEN_WINDOW_SECONDS, RERENDER } from "./regenerate";
 import type { PlanStep } from "./shorts";
 import type { ChainSlot, Engine, GenerationRequest } from "./types";
 
@@ -37,11 +37,6 @@ const sigmaOf = (v: number | undefined) => (v !== undefined && v >= SHARPEN_SIGM
 
 /** fal's price per second of the LoRA route (the Character swap's), by resolution. */
 export const SWAP_PER_SECOND: Record<"480P" | "768P" | "2K" | "4K", number> = { "480P": 0.0625, "768P": 0.075, ...RERENDER["fuobe-character-swap"].perSecond };
-
-/** Whether an engine sharpens: the cloud always; your GPU only while Open-H3 Regenerate is offered (REGEN_OFFERED). */
-export const sharpenOffered = (engine: Engine): boolean => engine === "cloud" || REGEN_OFFERED;
-/** Why your GPU doesn't sharpen while Open-H3 Regenerate isn't offered. */
-export const OPEN_SHARPEN_OFF = "Sharpen isn't available on your GPU. Make the project in the cloud to sharpen its takes";
 
 /** The mask composite (core nodes): the hidden model and its graph. */
 export const COMPOSITE_MODEL = "oss-composite-mask";
@@ -144,7 +139,6 @@ export function sharpenOptions(engine: Engine, film: { width: number; height: nu
   const region = film ? redrawnRegion(film, canvas) : null;
   const regionShort = region ? Math.min(region.width, region.height) : 0;
   return SHARPEN_TIERS.map((tier) => {
-    if (!sharpenOffered(engine)) return { tier, available: false, reason: OPEN_SHARPEN_OFF };
     if (engine === "cloud" && !CLOUD_TIERS.includes(tier)) return { tier, available: false, reason: "The cloud makes 2K or 4K" };
     if (engine === "open" && OPEN_TIER_OFF[tier]) return { tier, available: false, reason: OPEN_TIER_OFF[tier] };
     if (!film) return { tier, available: engine === "cloud" && tier === "2K", ...(engine === "cloud" && tier === "2K" ? {} : { reason: SHARPEN_COPY.noSize }) };

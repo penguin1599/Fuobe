@@ -5,7 +5,7 @@ import { soulRecipe } from "@/lib/catalog/soul";
 import { cleanState, INFLUENCER_LOOK, INFLUENCER_OPEN_MODELS, planInfluencer, type InfluencerRun, type InfluencerStart } from "@/lib/influencer";
 import { createPipeline } from "./chains";
 import { createGenerations } from "./generations";
-import { planCaps, previewRun, runEngine } from "./photodump";
+import { ownSteps, planCaps, previewRun, runEngine } from "./photodump";
 
 /**
  * AI Influencer builder runs (/influencer): the pure plan (src/lib/influencer.ts) for the engine the
@@ -52,6 +52,9 @@ export function previewInfluencer(body: InfluencerBody) {
     return { error: (e as Error).message, notes: [] };
   }
 }
+
+/** Its steps, for an account's checks: the face or clothing pass waits for the sheet. */
+export const influencerSteps = (body: InfluencerBody) => ownSteps(plan(body).steps.map((s) => ({ request: s.request, ...(s.after && { deps: 1 }) })));
 
 export function createInfluencer(body: InfluencerBody) {
   const p = plan(body);

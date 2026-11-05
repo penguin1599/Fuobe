@@ -350,7 +350,8 @@ export function customPack(p: CustomPackLike): Pack {
 /** Who the photos are of: a saved character (@element) or one uploaded selfie (Instadump, no training). */
 export type PhotoSubject =
   | { kind: "element"; handle: string; name: string; references: string[]; loras: ElementLora[] }
-  | { kind: "selfie"; url: string };
+  /** One photo of the person (`name`: an account's own character, which starts from its first photo). */
+  | { kind: "selfie"; url: string; name?: string };
 
 /** What the server knows about this install, for planning. */
 export interface PlanCaps {
@@ -415,7 +416,10 @@ export function photodumpModel(subject: PhotoSubject, engine: Engine, _caps: Pla
   const note =
     pick === PHOTODUMP_SOUL && custom
       ? `Your own packs recreate each reference photo — ${name} runs them`
-      : pick === PHOTODUMP_SOUL && subject.kind === "selfie"
+      : pick === PHOTODUMP_SOUL && subject.kind === "selfie" && subject.name
+        ? // An account's own character (its photos, no Soul ID): the edit model keeps its face from its photo.
+          `${name} makes ${subject.name}'s photos from their saved photo, keeping their face`
+        : pick === PHOTODUMP_SOUL && subject.kind === "selfie"
         ? `Fuobe Soul needs a character with a trained Soul ID — ${name} works from your photo`
         : pick === PHOTODUMP_SOUL || (engine === "open" && subject.kind === "element" && !trained && !custom)
           ? `No Soul ID yet — ${name} works from the character's photos (train them for Fuobe Soul on the Elements page)`
@@ -643,14 +647,17 @@ export function fashionModel(step: keyof typeof FASHION_MODELS, engine: Engine, 
 const element = (s: PhotoSubject) => (s.kind === "element" ? `@${s.handle}` : "the person in image 1");
 
 /** Step 2: four base shots of the character in the template's set, 3:4. */
-export function fashionBaseRequest(t: FashionTemplate, subject: Extract<PhotoSubject, { kind: "element" }>, engine: Engine, caps: PlanCaps): GenerationRequest {
-  if (!subject.references.length && !subject.loras.length) throw new Error(`Add a photo of ${subject.name} first`);
+export function fashionBaseRequest(t: FashionTemplate, subject: PhotoSubject, engine: Engine, caps: PlanCaps): GenerationRequest {
+  if (subject.kind === "element" && !subject.references.length && !subject.loras.length) throw new Error(`Add a photo of ${subject.name} first`);
   const { modelId } = photodumpModel(subject, engine, caps);
+  // A saved character by @mention; one photo of them (an account's character) as image 1, its face kept.
+  const photo = subject.kind === "selfie" ? subject.url : undefined;
   return {
     feature: "fashion",
     modelId,
     engine,
-    prompt: `A full-body fashion photo of ${element(subject)} in ${t.look}. A natural, relaxed model pose looking at the camera, simple fitted basics so the outfit can be changed later, photorealistic, sharp detail.`,
+    prompt: `A full-body fashion photo of ${element(subject)} in ${t.look}. A natural, relaxed model pose looking at the camera, simple fitted basics so the outfit can be changed later, photorealistic, sharp detail.${photo ? ` ${KEEP_FACE}.` : ""}`,
+    ...(photo && { inputs: { images: [photo] } }),
     params: { aspectRatio: "3:4", numOutputs: 4 },
     step: { label: "Base shots", index: 0, of: 3 },
   };

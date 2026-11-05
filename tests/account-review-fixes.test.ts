@@ -260,7 +260,8 @@ describe("an answer that won't be read lets its connection go", () => {
       auth.setAccountGpu(a, { url: `http://127.0.0.1:${port}` });
       const own = accountRun(a, "comfyui");
       if (!("run" in own)) throw new Error(own.error);
-      await expect(own.run(() => comfyProvider.poll({ externalId: "abc", meta: {} } as never))).rejects.toThrow(/HTTP 500/);
+      // In the account's words, the answer's status in the details line.
+      await expect(own.run(() => comfyProvider.poll({ externalId: "abc", meta: {} } as never))).rejects.toMatchObject({ message: expect.stringMatching(/couldn't take this run/), trouble: { details: expect.stringMatching(/HTTP 500/) } });
       await new Promise((r) => setTimeout(r, 300));
       expect(closed).toBe(2);
     } finally {
@@ -367,7 +368,8 @@ describe("one slow account can't hold every file send", () => {
     expect(r.status, await r.clone().text()).toBe(201);
     const g = await settle((await r.json()).items[0].id);
     expect(g?.status).toBe("failed");
-    expect(g?.error).toMatch(/upload/i);
+    expect(g?.error).toMatch(/couldn't take this run/);
+    expect(g?.trouble?.details).toMatch(/upload/i);
     expect(fake.log.filter((e) => e.path === "/upload/image")).toHaveLength(1);
     expect(accountSends()).toMatchObject({ total: 0, waiting: [] });
   });

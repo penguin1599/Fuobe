@@ -52,13 +52,16 @@ const ALL = [...FAST, ...HQ, "minimax-h3-orbit"];
 const h3 = getModel("oss-minimax-h3")!;
 
 describe("MiniMax H3 on your GPU: the catalog entry", () => {
-  it("is the first open video model, with sound, three routes and no negative prompt", () => {
+  it("is the first open video model, with sound, its routes and no negative prompt", () => {
     expect(h3).toMatchObject({ name: "MiniMax H3", vendor: "MiniMax", family: "minimax-h3", kind: "video", engine: "open" });
     expect(h3.badges).toEqual(["open", "new", "audio", "top"]);
     expect(h3.routes.map((r) => [r.op, r.provider, r.endpoint])).toEqual([
       ["t2v", "comfyui", "minimax-h3-t2v"],
       ["i2v", "comfyui", "minimax-h3-i2v"],
       ["flf2v", "comfyui", "minimax-h3-flf2v"],
+      // Pika H3 Flex's references and Talk from a voice clip (nm10-pika-flex).
+      ["ref2v", "comfyui", "minimax-h3-flex-ref2va"],
+      ["avatar", "comfyui", "minimax-h3-flex-ref2va"],
     ]);
     expect(h3.options).toMatchObject({
       aspectRatios: ["auto", "16:9", "9:16", "1:1", "4:3", "3:4"],
@@ -70,7 +73,15 @@ describe("MiniMax H3 on your GPU: the catalog entry", () => {
       promptFormat: "minimax-h3",
     });
     expect(h3.options.controls).toEqual([
-      { param: "quality", label: "Quality", values: ["fast", "best"], default: "fast", labels: { fast: "Fast · 8 steps", best: "Best · 20 steps, about 2.3x longer" } },
+      {
+        param: "quality",
+        label: "Quality",
+        values: ["fast", "best", "flex"],
+        default: "fast",
+        labels: { fast: "Standard · 8 steps", best: "Sharper · 20 steps, about 2.3x longer", flex: "Fast · Pika Flex (6 steps)" },
+        // References and Talk from a voice clip always run Pika H3 Flex: no Quality there.
+        ops: { fast: ["t2v", "i2v", "flf2v"], best: ["t2v", "i2v", "flf2v"], flex: ["t2v", "i2v", "flf2v"] },
+      },
       // The GPU tier (FastH3 V2 / Trim on smaller cards); Fast decode is held back until it validates
       // (tests/h3-any-gpu.test.ts).
       H3_GPU_TIER,
@@ -85,12 +96,12 @@ describe("MiniMax H3 on your GPU: the catalog entry", () => {
     expect(getModel("oss-wan22-14b-fast")!.badges).toEqual(["open", "fast", "top"]);
   });
 
-  it("has seven graphs in the library, none validated yet, with their packs, pinned files and bound frames", () => {
+  it("has seven graphs in the library, each validated by a GPU run, with their packs, pinned files and bound frames", () => {
     for (const id of ALL) {
       const w = wf(id);
       expect(w, id).toBeDefined();
-      expect(w.validated, id).toBe(false);
-      expect(requirements.workflows[id].validated, id).toBeUndefined();
+      expect(w.validated, id).toBe(true);
+      expect(requirements.workflows[id].validated, id).toBe(true);
       expect(w.limits).toMatchObject({ maxFrames: 362, dimensionMultiple: 32 });
       expect(w.vramGb).toBe(32);
       expect(w.outputs).toEqual([{ node: "174", kind: "video" }]);

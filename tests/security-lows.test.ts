@@ -224,6 +224,15 @@ describe("L-2: an unknown record or link answers 404 behind an HTTPS reverse pro
     expect(mode.status).toBe(307);
     expect(new URL(mode.headers.get("location")!, "https://fuobe.example").pathname).toBe("/audio/music");
     expect(new URL(mode.headers.get("location")!, "https://fuobe.example").search).toBe("?x=1");
+    // /audio opens on Clean up voice: an old link to Speech there (its voice, words or model) opens Speech, query kept.
+    for (const q of ["?voice=%2Fapi%2Ffiles%2Fa.wav", "?prompt=Hello", "?model=elevenlabs-v4&x=1"]) {
+      const old = at(`https://fuobe.example/audio${q}`);
+      expect(old.status, q).toBe(307);
+      const to = new URL(old.headers.get("location")!, "https://fuobe.example");
+      expect(to.pathname + to.search, q).toBe(`/audio/speech${q}`);
+    }
+    // Clean up voice's own hand-off (?audio=, ?video=) stays on /audio.
+    expect(at("https://fuobe.example/audio?audio=%2Fapi%2Ffiles%2Fa.wav").headers.get("location")).toBeNull();
     // A plain-HTTP install keeps the rewrite to the app's own 404 pages.
     expect(proxy(new NextRequest("http://localhost:3000/apps/does-not-exist")).headers.get("x-middleware-rewrite")).toMatch(/_fuobe-not-found$/);
   });

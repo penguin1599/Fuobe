@@ -7,6 +7,13 @@ import type { FinishOptions, GenjutsuLook, GenjutsuMode, GenjutsuTarget, Genjuts
 import type { Engine, Generation, PixelPoint } from "@/lib/catalog/types";
 import { useDebounced } from "@/components/faceless/hooks";
 import { send } from "@/components/shorts/hooks";
+import { COMPUTER_KICK_EVENT } from "@/lib/api";
+
+/**
+ * A run started: the tab that runs this person's jobs on the ComfyUI on this computer (an account's "Your GPU") asks for
+ * them at once, as after a studio run.
+ */
+const kick = () => window.dispatchEvent(new Event(COMPUTER_KICK_EVENT));
 
 /** React Query hooks for /api/genjutsu/**. */
 
@@ -78,15 +85,24 @@ export function useGenjutsuRun() {
   return useMutation({
     mutationFn: (b: GenjutsuBody) => send<{ final: Generation; items: Generation[] }>("/api/genjutsu", "POST", b),
     onSuccess: (r) => {
+      kick();
       r.items.forEach((g) => qc.setQueryData(["generation", g.id], g));
       void qc.invalidateQueries({ queryKey: ["generations"] });
     },
   });
 }
 
-/** "Describe my character": the engine's text model writes the description from the character picture. */
+/**
+ * "Describe my character": the site's AI helper answers with the description (the owner's cloud engine); otherwise the
+ * GPU describer starts and the page reads the description from its run's text (describeFromRun).
+ */
 export function useDescribeCharacter() {
-  return useMutation({ mutationFn: (b: { engine: Engine; image: string }) => send<{ description: string }>("/api/genjutsu/describe", "POST", b) });
+  return useMutation({
+    mutationFn: (b: { engine: Engine; image: string; requestId?: string }) => send<{ description: string } | { id: string; modelId: string }>("/api/genjutsu/describe", "POST", b),
+    onSuccess: (r) => {
+      if ("id" in r) kick();
+    },
+  });
 }
 
 /** From picture's "What happens": the describer starts on the part (the page waits for its text). */
@@ -94,12 +110,13 @@ export function useDescribeScene() {
   return useMutation({
     mutationFn: (b: { engine: "open"; source: { url: string; duration?: number }; range: { start: number; end: number }; frame?: string; ownPerson?: boolean }) =>
       send<{ id: string; modelId: string }>("/api/genjutsu/scene", "POST", b),
+    onSuccess: kick,
   });
 }
 
 /** The clip's words (one transcription; the page takes the part's lines from its cues). */
 export function useTranscribeClip() {
-  return useMutation({ mutationFn: (b: { engine: Engine; source: { url: string; duration?: number }; cleanVoiceFirst?: boolean }) => send<{ id: string; modelId: string }>("/api/genjutsu/transcribe", "POST", b) });
+  return useMutation({ mutationFn: (b: { engine: Engine; source: { url: string; duration?: number }; cleanVoiceFirst?: boolean }) => send<{ id: string; modelId: string }>("/api/genjutsu/transcribe", "POST", b), onSuccess: kick });
 }
 
 /** Waits for one generation to finish (polling; the page's helpers that fill a field from it). */

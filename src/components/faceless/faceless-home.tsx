@@ -9,10 +9,9 @@ import { PhoneNavButton } from "@/components/nav/phone-nav-button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EngineSwitch } from "@/components/studio/engine-switch";
 import { radioKeys, radioTab } from "@/components/studio/radio-keys";
-import { SelfHostNote } from "@/components/self-host-note";
 import { useEdgeFade } from "@/components/studio/use-edge-fade";
 import { StarterSection, useStarters } from "@/components/starters/starter-section";
-import { useEngine, useIsOwner, useLikelyVisitor } from "@/lib/api";
+import { useEngine, useIsOwner } from "@/lib/api";
 import { GENRE_IDEAS, GENRES, MAX_IDEA, MAX_SCRIPT, wordCount, youtubeKind, YOUTUBE_ERROR, type FacelessGenre } from "@/lib/catalog/faceless";
 import { starterShown, type StarterCardData } from "@/lib/starters/types";
 import { cn } from "@/lib/utils";
@@ -47,8 +46,6 @@ export function FacelessHome({ starters: given = [] }: { starters?: StarterCardD
   const g = GENRES.find((x) => x.id === genre)!;
   const [genreRow, genreFade] = useEdgeFade<HTMLDivElement>();
   const [ideaRow, ideaFade] = useEdgeFade<HTMLDivElement>();
-  // A channel doesn't run on an account's own GPU yet (only the studios' generations do): said here, not after Next.
-  const visitor = useLikelyVisitor();
   const owner = useIsOwner();
   const hasChannels = !!channels.data?.length;
   // Until the viewer is known to be the owner, only starters with their real cover show (StarterSection).
@@ -61,7 +58,6 @@ export function FacelessHome({ starters: given = [] }: { starters?: StarterCardD
   };
 
   const submit = () => {
-    if (visitor) return;
     if (!idea.trim()) return void toast("Describe the channel first", { id: "faceless-blocker" });
     if (!checkRef(reference)) return;
     create.mutate(
@@ -85,7 +81,7 @@ export function FacelessHome({ starters: given = [] }: { starters?: StarterCardD
       <header className="max-md:sticky top-chrome z-20 flex h-14 items-center gap-2 bg-background/85 px-4 backdrop-blur sm:px-6">
         <h1 className="truncate font-heading text-[22px] leading-none">Faceless Studio</h1>
         <div className="ml-auto">
-          <EngineSwitch value={engine} onChange={setEngine} selfHostedOnly />
+          <EngineSwitch value={engine} onChange={setEngine} />
         </div>
         <PhoneNavButton />
       </header>
@@ -189,7 +185,7 @@ export function FacelessHome({ starters: given = [] }: { starters?: StarterCardD
                   setScript({ name: f.name, text });
                 }}
               />
-              <Button onClick={submit} disabled={create.isPending || visitor} className="ml-auto h-9 rounded-full px-4">
+              <Button onClick={submit} disabled={create.isPending} className="ml-auto h-9 rounded-full px-4">
                 {create.isPending ? <Loader2 className="animate-spin" /> : <ArrowRight />}
                 {create.isPending ? "Creating…" : "Next"}
               </Button>
@@ -199,7 +195,6 @@ export function FacelessHome({ starters: given = [] }: { starters?: StarterCardD
                 {refError}
               </p>
             )}
-            {visitor && <SelfHostNote className="px-1 pt-2">Faceless channels aren&apos;t available here.</SelfHostNote>}
           </div>
         </div>
 

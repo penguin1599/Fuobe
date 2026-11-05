@@ -156,7 +156,7 @@ describe("the graph each tier runs", () => {
   it("the composer's note says what a smaller tier changes", () => {
     expect(h3TierNote({ gpuTier: "trim" }, "t2v")).toMatch(/experimental/);
     expect(h3TierNote({ gpuTier: "trim" }, "i2v")).toBeUndefined();
-    expect(h3TierNote({ gpuTier: "fast", quality: "best" }, "i2v")).toMatch(/Best needs a 32 GB GPU/);
+    expect(h3TierNote({ gpuTier: "fast", quality: "best" }, "i2v")).toMatch(/Sharper needs a 32 GB GPU/);
     expect(h3TierNote({}, "t2v")).toBeUndefined();
     expect(h3TierNote({ gpuTier: "trim", decoder: "fast" }, "t2v")).toMatch(/Fast decode needs a 32 GB GPU/);
     // Auto: what the card the GPU check read runs, in plain words.

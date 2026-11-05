@@ -465,6 +465,19 @@ describe("which browsers can reach the ComfyUI on this computer", () => {
     expect(browserSupport(nav("Mozilla/5.0 (Windows NT 10.0) Chrome/141.0 Safari/537.36", { brands: true }), { narrow: true, coarse: true })).toBe("phone");
   });
 
+  it("an iPad's browsers say Macintosh, as a Mac's do: its touch screen makes them a tablet, at any width", () => {
+    const ipadSafari = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15";
+    const ipadChrome = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/141.0 Version/18.0 Safari/605.1.15";
+    const ipadFirefox = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) FxiOS/141.0 Safari/605.1.15";
+    for (const ua of [ipadSafari, ipadChrome, ipadFirefox]) expect(browserSupport({ userAgent: ua, maxTouchPoints: 5 }, { narrow: false, coarse: false })).toBe("phone");
+    // A Mac has no touch screen: Safari there is Safari, Chrome and Firefox there can.
+    expect(browserSupport({ userAgent: ipadSafari, maxTouchPoints: 0 }, { narrow: false })).toBe("safari");
+    expect(browserSupport({ userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0 Safari/537.36", maxTouchPoints: 0, userAgentData: { platform: "macOS", mobile: false } }, { narrow: false })).toBe("ok");
+    expect(browserSupport({ userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 15.6; rv:151.0) Gecko/20100101 Firefox/151.0", maxTouchPoints: 0 }, { narrow: false })).toBe("ok");
+    // A Windows laptop with a touch screen is still a computer.
+    expect(browserSupport({ userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0 Safari/537.36", maxTouchPoints: 10, userAgentData: { platform: "Windows", mobile: false } }, { narrow: false })).toBe("ok");
+  });
+
   it("an http page on a network address can't ask Chrome for the permission; localhost and https can", () => {
     expect(pageCanReach("https://fuobe.com")).toBe(true);
     expect(pageCanReach("http://localhost:3000")).toBe(true);

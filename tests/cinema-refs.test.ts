@@ -51,8 +51,8 @@ describe("reference clips", () => {
     expect(original.steps[0].request.op).toBeUndefined();
     expect(original.notes.join(" ")).toMatch(/Fuobe Cinema doesn't take reference videos and reference audio — MiniMax H3 or Seedance 2\.5/);
     expect(original.notes.join(" ")).not.toMatch(/Cinema Studio/);
-    // Open models and stills never take them.
-    expect(planCinema({ ...VIDEO, ...CLIPS, engine: "open" }, ctx).notes.join(" ")).toMatch(/aren't sent to Fuobe Cinema/);
+    // On your GPU only MiniMax H3 takes them (Pika H3 Flex's references, nm10-pika-flex); stills never do.
+    expect(planCinema({ ...VIDEO, ...CLIPS, engine: "open" }, ctx).notes.join(" ")).toMatch(/Fuobe Cinema doesn't take reference videos and reference audio — MiniMax H3 does/);
     expect(planCinema({ ...VIDEO, ...CLIPS, mode: "image", settings: { camera: "modern", lens: "clean-sharp", focal: "50mm" } }, ctx).notes).toContain(
       "Stills use image references — reference videos and audio are left out",
     );

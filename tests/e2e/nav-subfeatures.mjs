@@ -22,7 +22,7 @@ const shot = async (page, name, opts = {}) => shots && (await page.screenshot({ 
 const publicSignup = !!(await fetch(`${app}/api/auth/me`).then((r) => r.json()).catch(() => null))?.publicSignup;
 
 /** Features a visitor never gets a menu or sheet link to: the owner's own, and pages that say "isn't available here". */
-const OWNER_SUBS = ["From picture", "Blockout", "Split soundtrack", "Remove dialogue", "From an image", "From several images", "From a selfie", "From Reference", "Skills as canvases"];
+const OWNER_SUBS = ["From picture", "Split soundtrack", "Remove dialogue", "From an image", "From several images", "From a selfie", "From Reference", "Skills as canvases"];
 
 const browser = await launch();
 const accounts = [];
@@ -411,11 +411,11 @@ try {
         }
         if (shots && who !== "account" && (g === "Sell" || g === "People")) await shot(p, `phone-sheet-${g.toLowerCase()}-${who}-${scheme}`);
       }
-      if (who === "owner") {
-        await chip("Film").tap();
-        await p.waitForTimeout(300);
-        check((await body.locator("[data-sheet-subs]").innerText()).includes("Blockout"), `${label}: the owner's Cinema Studio Blockout in Film`);
-      }
+      // Cinema Studio's Blockout is linked for everyone.
+      await chip("Film").tap();
+      await p.waitForTimeout(300);
+      check((await body.locator("[data-sheet-subs]").innerText()).includes("Blockout"), `${label}: Cinema Studio's Blockout in Film`);
+      check((await body.locator('[data-sheet-subs] a[href="/cinema?blockout=1"]').count()) === 1, `${label}: Blockout links /cinema?blockout=1`);
       // A pill opens its feature on the right tab.
       await chip("People").tap();
       await p.waitForTimeout(300);
@@ -441,9 +441,8 @@ try {
       const people = await p.locator('[data-studio-features="people"]').innerText().catch(() => "");
       check(["Genjutsu", "Restyle", "Character Sheet", "Build from scratch"].every((x) => people.includes(x)), `${label}: People lists Genjutsu's and Character Sheet's`, people.replace(/\n/g, " · "));
       // The owner's own rows come once the viewer is known.
-      if (who === "owner") await p.waitForFunction(() => document.querySelector('[data-studio-features="film"]')?.textContent?.includes("Blockout"), null, { timeout: 10_000 }).catch(() => {});
       const film = await p.locator('[data-studio-features="film"]').innerText().catch(() => "");
-      check(film.includes("Blockout") === (who === "owner"), `${label}: Cinema Studio's Blockout for the owner only`);
+      check(film.includes("Blockout"), `${label}: Cinema Studio's Blockout for everyone`);
       const all = await p.locator("[data-studio-features]").allInnerTexts();
       if (who !== "owner") check(!all.join("\n").includes("From picture"), `${label}: no owner-only mode`);
       const r = await p.evaluate(() => ({
@@ -489,7 +488,7 @@ try {
     const cta = await ask("click to ad");
     check(/Click to Ad/.test(cta[0] ?? ""), `search (${who}): "click to ad" finds Click to Ad first`, cta.slice(0, 3).join(" | "));
     const blockout = await ask("blockout");
-    check(blockout.some((t) => /^Blockout|Blockout Cinema|Cinema Studio.*Blockout|Blockout.*Cinema/.test(t)) === (who === "owner"), `search (${who}): Blockout ${who === "owner" ? "found" : "not found"}`, blockout.slice(0, 3).join(" | "));
+    check(blockout.some((t) => /^Blockout|Blockout Cinema|Cinema Studio.*Blockout|Blockout.*Cinema/.test(t)), `search (${who}): Blockout found`, blockout.slice(0, 3).join(" | "));
     {
       await ask("genjutsu");
       const heads = await p.locator("[cmdk-group-heading]").allInnerTexts();

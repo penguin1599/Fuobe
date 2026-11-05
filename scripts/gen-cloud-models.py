@@ -1175,6 +1175,12 @@ model("birefnet-video", "BiRefNet video (hosted)", "ZhengPeng7", "birefnet", "vi
 model("bria-video-bg", "Bria video background removal", "Bria", "bria", "video", "Production-grade video matting with audio kept",
       [("bg-remove-video", "bria/video/background-removal/v3")], pricing=("second", 0.05),
       fixed={"background_color": "Transparent", "output_container_and_codec": "webm_vp9"}, options={"matteOutputs": ["cutout"]})
+# Video tools → Green screen on the cloud (nm10-keying): Bria's chroma key with the green spill pulled out of the edges, a
+# transparent WebM with the sound kept. greenScreen keeps it out of Remove background's list (footage shot on a screen only).
+model("bria-green-screen", "Bria green screen", "Bria", "bria", "video", "Keys green-screen footage onto transparency and cleans the green spill off the edges",
+      [("bg-remove-video", "bria/video/background-removal/green-screen-despill")], badges=["new"], pricing=("second", 0.05),
+      fixed={"output_container_and_codec": "webm_vp9"}, sliders=[("spill_suppression", "Spill cleanup", 0.1)],
+      options={"matteOutputs": ["cutout"], "greenScreen": True})
 model("depth-anything-video-cloud", "Video Depth Anything (hosted)", "ByteDance", "depth-anything", "video", "Stable depth maps for every frame",
       # The colour map follows params.colormap (Higgsfield's Depth Map picker); grayscale unless asked. Side by side
       # puts the original clip next to the map.
@@ -1207,6 +1213,12 @@ model("ideogram-3-text-layers", "Ideogram 3.0 Text Layers", "Ideogram", "ideogra
       [("text-layers", "fal-ai/ideogram/v3/layerize-text")], badges=["new"])
 model("ideogram-remove-bg", "Ideogram Remove Background", "Ideogram", "ideogram", "image", "Clean transparent cut-outs for one cent",
       [("bg-remove", "fal-ai/ideogram/remove-background")], badges=["fast"], pricing=("image", 0.01))
+# Image cut-outs, Guided (nm10-keying): Bria's cut-out of the obvious subject, adjusted by plain words ("keep the shadow",
+# "without the hand"); the words are optional (empty = the plain cut-out). Offered in Layers' Remove background, the Canvas
+# node and the Remove Background app's picker.
+model("bria-guided-cutout", "Bria guided cut-out", "Bria", "bria", "image", "Cut out the subject, then say what to keep or drop: “keep the shadow”, “without the hand”",
+      [("bg-remove", "bria/guided-remove-background")], badges=["new"], pricing=("image", 0.03),
+      options={"promptOptional": True, "guided": True, "promptPlaceholder": "What to keep or drop, e.g. “keep the shadow” or “without the hand”"})
 model("recraft-vectorize", "Recraft Vectorize", "Recraft", "recraft", "image", "Turn any image into a clean, editable SVG",
       [("vectorize", "fal-ai/recraft/vectorize"), ("vectorize", "recraft-ai/recraft-vectorize", "replicate")], badges=["top"])
 model("image2svg", "Image to SVG (VTracer)", "VTracer", "vtracer", "image", "Half-cent tracing for logos, icons and flat art",
@@ -1471,6 +1483,51 @@ model("heygen-video", "HeyGen Video", "HeyGen", "heygen", "video",
       badges=["new", "fast"], defaults={"aspectRatio": "16:9", "duration": 5, "resolution": "768p"}, ranged_durations=True,
       pricing=("second", 0.02, "480p and 768p; 1080p and 2K $0.06", {"byResolution": {"480p": 0.02, "768p": 0.02, "1080p": 0.06, "2k": 0.06}}),
       controls=[("prompt_enhancement", "Prompt boost")])
+# Kandinsky 6.0 on fal (nm10-kandinsky6; research new-models-10.json endpointRecords, read 2026-11-02 with
+# fetch-hosted-schemas.py --kandinsky6): Kandinsky Lab's MIT model, 5 s at 480p with its own sound and lip-synced dialogue,
+# from words or a first frame. One model in Fuobe: Quality picks Pro (29B) or Lite (3B), each at fal's Fast / Standard / Best
+# steps (Pro 8 / 20 / 50, Lite 4 / 10 / 16), priced at fal's published price for that step count (Pricing.steps). Each
+# endpoint is a route that runs for its variant (ModelRoute.when). The same model runs on your GPU (oss-kandinsky6).
+K6_REC = {e["endpoint"]: e for e in NEW_MODELS_10["endpointRecords"] if e.get("family") == "kandinsky-6"}
+K6_STEPS = {"pro": {"fast": 8, "standard": 20, "best": 50}, "lite": {"fast": 4, "standard": 10, "best": 16}}
+K6_OPS = {"t2v": "text-to-video", "i2v": "image-to-video"}
+K6_PRICES = {v: {op: K6_REC[f"fal-ai/kandinsky6-{v}/{kind}"]["pricing"]["bySteps"] for op, kind in K6_OPS.items()} for v in K6_STEPS}
+K6_QUALITY = {
+    "param": "quality", "label": "Quality",
+    "values": [f"{v}-{t}" for v in K6_STEPS for t in K6_STEPS[v]], "default": "pro-standard",
+    # fal's Lite endpoints take no negative prompt: their labels say so, as the field stays for Pro.
+    "labels": {f"{v}-{t}": f"{'Pro' if v == 'pro' else 'Lite'} · {t.capitalize()}, {n} steps{'' if v == 'pro' else ' · no negative prompt'}" for v in K6_STEPS for t, n in K6_STEPS[v].items()},
+    "sets": {f"{v}-{t}": {"variant": v, "num_inference_steps": n} for v in K6_STEPS for t, n in K6_STEPS[v].items()},
+}
+for _v, _tiers in K6_STEPS.items():
+    for _op in K6_OPS:
+        for _n in _tiers.values():
+            if str(_n) not in K6_PRICES[_v][_op]:
+                warn(f"kandinsky-6: fal publishes no {_v} {_op} price at {_n} steps")
+K6_HELPER = {"param": "promptHelper", "label": "Prompt helper", "values": ["off", "on"], "default": "off",
+             "labels": {"off": "Off · your words as typed", "on": "On · Kandinsky writes a fuller caption"}}
+K6_LICENCE = {"licence": "MIT", "commercial": True, "note": "Kandinsky Lab's weights (Pro, Lite, VSR) on Hugging Face; the Qwen2.5-VL text encoder is Apache-2.0",
+              "checked": "2026-11-02"}
+_k6 = lambda op, v: (op, f"fal-ai/kandinsky6-{v}/{K6_OPS[op]}", "fal", {"when": {"param": "variant", "value": v}})
+model("kandinsky-6", "Kandinsky 6.0", "Kandinsky Lab", "kandinsky", "video",
+      "Kandinsky 6.0 · both engines: 5 s clips with dialogue, lip sync and sound from words or a first frame · MIT",
+      [_k6("t2v", "pro"), _k6("t2v", "lite"), _k6("i2v", "pro"), _k6("i2v", "lite")], badges=["new", "audio"],
+      defaults={"aspectRatio": "16:9", "duration": 5, "resolution": "480p"}, api_defaults={"enable_prompt_expansion": False},
+      pricing=("video", K6_PRICES["pro"]["t2v"]["20"], "a 5 s clip at 480p: Pro about $0.027 a step ($0.24 Fast, $0.56 Standard, $1.35 Best), Lite about $0.013 ($0.08, $0.16, $0.24); from a first frame a little more",
+               {"steps": {"variantKey": "variant", "stepsKey": "num_inference_steps", "prices": K6_PRICES}}),
+      options={"durations": [5], "resolutions": ["480p"], "controls": [K6_QUALITY, K6_HELPER], "promptFormat": "kandinsky6",
+               "promptPlaceholder": "Describe the shot. Put what someone says in quotes: she smiles and says “Look over there!” · end with Sound: … for ambience or music"},
+      licence=K6_LICENCE)
+# Kandinsky VSR on fal: the same upscaler as on your GPU (oss-kandinsky6-vsr), 2x, 2.25x (480p to 1080p) or 4x, billed per
+# output megapixel per frame ($0.00036; clips are resampled to 24 fps and capped at 121 frames). The Lite endpoint's 2 steps
+# cost the same rate per frame, so the full one (5 steps) runs.
+model("kandinsky-vsr", "Kandinsky VSR", "Kandinsky Lab", "kandinsky", "video",
+      "Kandinsky 6.0 · both engines: sharp 2x, 2.25x or 4x video upscale, clips up to 5 s · MIT",
+      [("upscale-video", "fal-ai/kandinsky6-vsr")], badges=["new", "fast"], defaults={"resolution": "2.25x"}, upscale_tiers=["2x", "2.25x", "4x"],
+      pricing=("video", 0.09, "$0.00036 per output megapixel per frame: about $0.09 for 5 s of 480p to 1080p, $0.29 at 4x",
+               {"outputFrames": {"usd": K6_REC["fal-ai/kandinsky6-vsr"]["pricing"]["usd"], "fps": 24, "maxFrames": 121, "assume": {"width": 848, "height": 480}}}),
+      # fal's page: "For 2x and 4x upscaling, width and height must be multiples of 16" (2.25x pads the clip itself).
+      options={"maxSourceSeconds": 5, "sideMultiple": {"of": 16, "factors": ["2x", "4x"]}}, licence=K6_LICENCE)
 # Its routes take different values (fal's reference-to-video stops at 720p), so each lists its own (fit_values).
 model("grok-imagine-video-1-5", "Grok Imagine Video 1.5", "xAI", "grok", "video", "xAI's video model with references and audio",
       [("t2v", "xai/grok-imagine-video/v1.5/text-to-video"), ("i2v", "xai/grok-imagine-video/v1.5/image-to-video"),
@@ -2210,7 +2267,8 @@ def build_route(op, ep, provider, m, opts, ropts=None):
     # Upscalers that take a factor: the resolution tier becomes target / the clip's shorter edge.
     if m.get("upscale_tiers") and op == "upscale-video":
         spec = inputs.get("upscale_factor") or {}
-        if spec.get("type") in ("number", "integer"):
+        # A number field, or an enum of numbers (fal's Kandinsky VSR: 2, 2.25 or 4, offered as factor tiers).
+        if spec.get("type") in ("number", "integer") or (spec.get("type") == "enum" and spec.get("valueType") == "number"):
             fmap["upscaleFactor"] = {"key": "upscale_factor", **{k: num(spec[f]) for k, f in (("min", "minimum"), ("max", "maximum")) if num(spec.get(f)) is not None}}
             opts["resolutions"] = union(opts.get("resolutions", []), m["upscale_tiers"])
         else:
@@ -2364,7 +2422,7 @@ def build_route(op, ep, provider, m, opts, ropts=None):
             del fmap["defaults"]
     # A model that reads layouts (ModelOptions.layout) turns the API's own prompt expansion off for a layout request
     # (FieldMap.promptExpansion), which would rewrite the boxes; a plain prompt keeps the API's default.
-    if (m["options"] or {}).get("layout"):
+    if (m["options"] or {}).get("layout") or any(c.get("param") == "promptHelper" for c in (m["options"] or {}).get("controls") or []):
         pe = kf.get("enhancePrompt") or ("enable_prompt_expansion" if "enable_prompt_expansion" in inputs else None)
         if pe and (inputs.get(pe) or {}).get("type") == "boolean":
             fmap["promptExpansion"] = pe
@@ -2415,6 +2473,10 @@ def build_route(op, ep, provider, m, opts, ropts=None):
     route = {"op": op, "provider": provider, "endpoint": f"{ep}:{version}" if ropts.get("pin") else ep, "map": fmap}
     if ropts.get("note"):
         route["note"] = ropts["note"]
+    # A route that runs for one value of a setting (Kandinsky 6.0's Pro or Lite): the setting is Fuobe's, never sent.
+    if ropts.get("when"):
+        route["when"] = ropts["when"]
+        fmap["ignore"] = sorted(set(fmap.get("ignore") or []) | {ropts["when"]["param"]})
     # The picture follows image 1's shape at the chosen tier (ModelRoute.followsImage: fal's FLUX 3 Klein edit; the server sizes it).
     if ropts.get("followsImage"):
         if "size" not in fmap:

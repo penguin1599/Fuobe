@@ -137,7 +137,7 @@ try {
     await gp.goto("/kinetic", { waitUntil: "load", timeout: 120_000 });
     await gp.locator("[data-kinetic-picker]:visible").first().waitFor({ timeout: 60_000 });
     check((await gp.locator("[data-kinetic-examples] [data-kinetic-tile]").count()) === 4, `guest ${name}: four examples`);
-    check((await gp.locator("[data-kinetic-scenes] [data-kinetic-tile]").count()) === 10, `guest ${name}: all ten scenes`);
+    check((await gp.locator("[data-kinetic-scenes] [data-kinetic-tile]").count()) === 18, `guest ${name}: all eighteen scenes`);
     // The examples are drawn by the engine (a canvas each, not blank).
     await gp.waitForFunction(() => document.querySelectorAll("[data-kinetic-examples] canvas").length === 4, null, { timeout: 60_000 }).catch(() => {});
     await gp.waitForTimeout(1500);

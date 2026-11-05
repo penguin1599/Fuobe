@@ -345,7 +345,7 @@ describe("the runner on the demo provider", () => {
   });
 
   it("runs each Genjutsu mode's own partner model on fal", async () => {
-    type Plan = { jobs: { case: string; variant: string; model: string; skip?: string }[] };
+    type Plan = { jobs: { case: string; variant: string; model: string; skip?: string; costUsd?: number | null }[] };
     const dry = async (args: string[]) => JSON.parse((await cli(["run", ...args, "--dry-run", "--json"])).stdout) as Plan;
     setSetting("falKey", "fal-test-key");
     // Group swap, Scene edit, From picture and Finish run on your GPU only: on the cloud their jobs say so and skip.
@@ -401,6 +401,29 @@ describe("the runner on the demo provider", () => {
         ["shorts/session", "fuobe-shorts", null],
         ["shorts/session", "fuobe-shorts", null],
       ]);
+      // Clean up dialogue's hosted cleaners: planned and priced as dry runs, each on its own op.
+      // The video case reads your own clip (scripts/eval/local, git-ignored); where there is none, it borrows the fixture
+      // clip (a video with sound) for this check, so the case is a video here too, not the audio fixture it falls back to.
+      const clip = path.join(process.cwd(), "scripts/eval/local/separation/video/clip.mp4");
+      const lent = !fs.existsSync(clip);
+      // The first folder this check made (none if the folder was already there): removed afterwards with the clip.
+      const made = lent ? fs.mkdirSync(path.dirname(clip), { recursive: true }) : undefined;
+      if (lent) fs.copyFileSync(path.join(process.cwd(), "scripts/eval/fixtures/walk-6s.mp4"), clip);
+      let sep: Plan;
+      try {
+        sep = await dry(["--suite", "separation", "--engine", "cloud", "--variants", "clean-veed,clean-deepfilternet,demucs", "--cases", "separation/centre,separation/video", "--allow-fixtures"]);
+      } finally {
+        if (lent) fs.rmSync(made ?? clip, { recursive: true, force: true });
+      }
+      expect(sep.jobs.map((j) => [j.case, j.variant, j.model, j.skip ? "refused" : typeof j.costUsd])).toEqual([
+        ["separation/centre", "clean-veed", "veed-clean-audio", "number"],
+        ["separation/centre", "clean-deepfilternet", "deepfilternet3", "number"],
+        ["separation/centre", "demucs", "demucs", "number"],
+        // VEED takes a video's file itself; DeepFilterNet 3 and Demucs take audio only.
+        ["separation/video", "clean-veed", "veed-clean-audio", "number"],
+        ["separation/video", "clean-deepfilternet", "deepfilternet3", "refused"],
+        ["separation/video", "demucs", "demucs", "refused"],
+      ]);
       const shp = await dry(["--suite", "shorts", "--engine", "cloud", "--variants", "partner", "--seeds", "1001", "--allow-fixtures"]);
       expect(shp.jobs.map((j) => [j.case, j.model, j.skip ?? null])).toEqual([
         ["shorts/segment", "gemini-omni-flash", null],
@@ -423,6 +446,94 @@ describe("the runner on the demo provider", () => {
     } finally {
       setSetting("falKey", "");
     }
+  });
+
+  it("runs the separation suite: stems keep their names, and each variant asks for its DBS model and channels", async () => {
+    const r = await cli(["run", "--suite", "separation", "--engine", "demo", "--cases", "separation/centre", "--no-metrics"]);
+    expect(r.code, r.stderr).toBe(0);
+    const rows = store.latestJobs(path.join(results, runIdFrom(r.stderr)));
+    expect(rows.map((x) => [x.caseId, x.status])).toEqual([["separation/centre", "succeeded"]]);
+    const outs = (rows[0].outputs ?? []) as { kind: string; stem?: string }[];
+    // The demo split answers a voice and a background stem, recorded by name for the scorer.
+    expect(outs.filter((o) => o.kind === "audio").map((o) => o.stem)).toEqual(expect.arrayContaining(["voice", "background"]));
+    const suite = cases.loadSuite("separation") as unknown as { file: string; kind: string; decides: string; description: string };
+    expect(suite).toMatchObject({ kind: "audio", defaults: { candidate: "bsrnn-mono", metrics: ["separation", "wer"] } });
+    expect(suite.description).toMatch(/DBS-TIGER-DnR Apache-2\.0.*MelBand RoFormer MIT/);
+    expect(suite.decides).toMatch(/reviewed code change/);
+    const jobs = plan.expandJobs(suite, { engine: "open", variants: ["bsrnn-mono", "bsrnn-stereo", "tiger-mono", "tiger-stereo", "dbs-dub", "melband", "demucs"], cases: ["separation/centre"], exists: () => true }) as unknown as {
+      variant: string;
+      skip?: string;
+      request: { modelId: string; op?: string; params: { extra?: Record<string, unknown> } };
+    }[];
+    expect(jobs.map((j) => [j.variant, j.request.modelId, j.request.params.extra?.separationModel ?? null, j.request.params.extra?.channels ?? null, j.skip ?? null])).toEqual([
+      ["bsrnn-mono", "oss-dbs-separate", "DBS-BSRNN-DnR", "mono", null],
+      ["bsrnn-stereo", "oss-dbs-separate", "DBS-BSRNN-DnR", "each channel", null],
+      ["tiger-mono", "oss-dbs-separate", "DBS-TIGER-DnR", "mono", null],
+      ["tiger-stereo", "oss-dbs-separate", "DBS-TIGER-DnR", "each channel", null],
+      ["dbs-dub", "oss-dbs-voice-separate", "DBS-BSRNN-DnR", null, null],
+      ["melband", "oss-voice-separate", null, null, null],
+      ["demucs", "oss-dbs-separate", null, null, "the demucs variant runs on cloud only"],
+    ]);
+    expect(jobs.every((j) => j.request.op === "separate-audio")).toBe(true);
+    // Clean up dialogue on the open engine: graph C with the music and effects at −18 dB; the cloud cleaners run enhance-voice.
+    const clean = plan.expandJobs(suite, { engine: "open", variants: ["clean-dialogue", "clean-veed"], cases: ["separation/hiss"], exists: () => true }) as unknown as typeof jobs;
+    expect(clean.map((j) => [j.variant, j.request.modelId, j.request.op, j.request.params.extra ?? null, j.skip ?? null])).toEqual([
+      ["clean-dialogue", "oss-dbs-remix", "separate-audio", { separationModel: "DBS-BSRNN-DnR", channels: "mono", voiceDb: 0, musicDb: -18, effectsDb: -18 }, null],
+      ["clean-veed", "oss-dbs-separate", "enhance-voice", null, "the clean-veed variant runs on cloud only"],
+    ]);
+    // The cloud runs Demucs as today's cloud dub does; DBS isn't hosted, so its variants say they run on the open engine.
+    const cloud = plan.expandJobs(suite, { engine: "cloud", variants: ["demucs", "bsrnn-mono"], cases: ["separation/centre"], exists: () => true }) as unknown as { variant: string; skip?: string; request: { modelId: string } }[];
+    expect(cloud.map((j) => [j.variant, j.request.modelId, j.skip ?? null])).toEqual([
+      ["demucs", "demucs", null],
+      ["bsrnn-mono", "demucs", "the bsrnn-mono variant runs on open / demo only"],
+    ]);
+  });
+
+  it("runs the splat suite: Idol 3D's Best and Quick against TripoSplat on the orbit video, the photo crop on photos only", async () => {
+    const r = await cli(["run", "--suite", "splat", "--engine", "demo", "--cases", "splat/photo-mug,splat/bottle", "--seeds", "1001", "--variants", "all", "--no-metrics"]);
+    expect(r.code, r.stderr).toBe(0);
+    const runDir = path.join(results, runIdFrom(r.stderr));
+    expect(JSON.parse(fs.readFileSync(path.join(runDir, "run.json"), "utf8"))).toMatchObject({ suite: "splat", kind: "video", candidate: "idol-best", styleModel: "dinov2" });
+    const rows = store.latestJobs(runDir);
+    const done = rows.filter((x) => x.status === "succeeded");
+    expect(done.map((x) => `${x.caseId} ${x.variant}`).sort()).toEqual(
+      ["idol-best", "idol-quick", "idol-photo-crop", "triposplat-today"].map((v) => `splat/photo-mug ${v}`).concat(["idol-best", "idol-quick", "triposplat-today"].map((v) => `splat/bottle ${v}`)).sort(),
+    );
+    // The demo's splat comes with its turntable, as a real open run comes with the orbit video the scorer and the blind
+    // review read.
+    for (const row of done) expect((row.outputs as { kind: string }[]).map((o) => o.kind)).toEqual(["model3d", "video"]);
+    expect(rows.filter((x) => x.status === "skipped").map((x) => [x.caseId, x.variant, x.skip])).toEqual(
+      expect.arrayContaining([
+        ["splat/bottle", "idol-photo-crop", "the idol-photo-crop variant runs on cases tagged photo only"],
+        ["splat/bottle", "triposplat-cloud", "the triposplat-cloud variant runs on cloud only"],
+      ]),
+    );
+    const suite = cases.loadSuite("splat") as unknown as { decides: string };
+    expect(suite.decides).toMatch(/MODELS_3D\.splat\.open.*IDOL_PRESETS\.quick.*photo crop/s);
+    type Job = { variant: string; skip?: string; request: { modelId: string; op?: string; params: { extra?: Record<string, unknown> } } };
+    const all = ["idol-best", "idol-quick", "triposplat-today", "idol-photo-crop", "triposplat-cloud"];
+    const open = plan.expandJobs(suite, { engine: "open", variants: all, cases: ["splat/photo-mug"], seeds: [1], exists: () => true }) as unknown as Job[];
+    expect(open.map((j) => [j.variant, j.request.modelId, j.request.op, j.request.params.extra ?? null, j.skip ?? null])).toEqual([
+      ["idol-best", "oss-idol", "splat", { steps: 50, sampler: "euler", cfg: 4, numGaussians: 262144 }, null],
+      ["idol-quick", "oss-idol", "splat", { steps: 20, sampler: "dpmpp_2m", cfg: 4, numGaussians: 65536 }, null],
+      ["triposplat-today", "oss-triposplat", "splat", null, null],
+      ["idol-photo-crop", "oss-idol", "splat", { steps: 50, sampler: "euler", cfg: 4, numGaussians: 262144, photoCrop: true, cropMode: "real" }, null],
+      ["triposplat-cloud", "oss-idol", "splat", null, "the triposplat-cloud variant runs on cloud only"],
+    ]);
+    // No Idol on the cloud: only fal's TripoSplat runs there, as itself.
+    const cloud = plan.expandJobs(suite, { engine: "cloud", variants: ["triposplat-cloud", "idol-best"], cases: ["splat/bottle"], seeds: [1], exists: () => true }) as unknown as Job[];
+    expect(cloud.map((j) => [j.variant, j.request.modelId, j.skip ?? null])).toEqual([
+      ["triposplat-cloud", "triposplat", null],
+      ["idol-best", "", "the idol-best variant runs on open / demo only"],
+    ]);
+    // Idol's presets in the suite are the ones the page sends.
+    const { IDOL_PRESETS } = await import("@/lib/av/model3d");
+    expect(open[0].request.params.extra).toEqual(IDOL_PRESETS.best);
+    expect(open[1].request.params.extra).toEqual(IDOL_PRESETS.quick);
+    // A variant limited to tags no case has is refused.
+    const bad = path.join(dir, "bad-tags.json");
+    fs.writeFileSync(bad, JSON.stringify({ suite: "bad-tags", title: "x", description: "x", original: "x", kind: "video", targets: { demo: { models: ["x"] } }, variants: { a: {}, b: { tags: ["photo"] } }, cases: [{ id: "x/1", title: "x", inputs: { images: ["fixtures/start-frame.png"] } }] }));
+    expect(() => cases.loadSuite(bad)).toThrow(/variants\.b\.tags: no case is tagged photo/);
   });
 
   it("runs Fuobe Cinema's Director and camera-move cases, and plans its cloud variants", async () => {
@@ -576,6 +687,31 @@ describe("report, blind review, compare and promote", () => {
     const html = fs.readFileSync(path.join(runDir, "report.html"), "utf8");
     expect(html).toContain('<meta name="viewport"');
     expect(html).toContain("prefers-color-scheme: dark");
+  });
+
+  it("serves both sounds of a blind pair in one format, so the file type doesn't give the model away", () => {
+    if (spawnSync("ffmpeg", ["-version"]).status !== 0) return; // re-encoding needs ffmpeg
+    const runDir = tempDir("fuobe-review-audio-");
+    const tone = (file: string) => spawnSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=0.5", path.join(runDir, file)]);
+    const rows = [
+      ["dbs-dub", ".flac"],
+      ["melband", ".mp3"],
+    ].map(([variant, ext]) => {
+      fs.mkdirSync(path.join(runDir, variant), { recursive: true });
+      for (const stem of ["voice", "background"]) tone(`${variant}/${stem}${ext}`);
+      return { id: `separation__centre--p1--s1001--${variant}`, key: "separation/centre/p1/s1001", variant, status: "succeeded", caseId: "separation/centre", caseTitle: "Centre", outputs: ["voice", "background"].map((stem) => ({ file: `${variant}/${stem}${ext}`, kind: "audio", stem })) };
+    });
+    fs.writeFileSync(path.join(runDir, "run.json"), JSON.stringify({ candidate: "dbs-dub" }));
+    try {
+      expect(review.writeReview({ dir: runDir, runId: "fake-sep", rows }).pairs).toBe(2);
+      const media = fs.readdirSync(path.join(runDir, "review", "media"));
+      expect(media).toHaveLength(4);
+      expect(media.every((f) => f.endsWith(".flac"))).toBe(true);
+      for (const f of media) expect(spawnSync("ffprobe", ["-v", "error", "-show_entries", "format=format_name", "-of", "csv=p=0", path.join(runDir, "review", "media", f)], { encoding: "utf8" }).stdout.trim()).toBe("flac");
+      expect(fs.readFileSync(path.join(runDir, "review", "index.html"), "utf8")).not.toMatch(/\.mp3|melband|dbs-dub/);
+    } finally {
+      fs.rmSync(runDir, { recursive: true, force: true });
+    }
   });
 
   it("builds blind pairs whose page doesn't say which side is which, saves ratings and unblinds them in the summary", async () => {
@@ -1238,5 +1374,27 @@ describe("what a job measures", () => {
   it("measures a studio route that doesn't say where its steps run (an older Fuobe)", async () => {
     const older = { costUsd: 1, demo: false, modelId: "kling-motion-control" };
     expect((await plan(studioStub(older, { fal: { configured: true } }))).jobs[0].skip).toBeUndefined();
+  });
+
+  it("prices a saved skill's case (pnpm eval:from-skill) by its estimate's total, and skips one that can't run", async () => {
+    const fromSkill = (await import("../scripts/eval/from-skill.mjs")) as { caseFromSkill: (view: object, server: string) => { suite: string } };
+    const view = { name: "promo", title: "Promo", recipe: { params: [{ id: "topic", type: "text", label: "Topic", example: "a desk lamp" }], steps: [{ kind: "generate", request: { modelId: "z-image-turbo-cloud" } }], checks: {} } };
+    const file = path.join(dir, "skill-promo.json");
+    fs.writeFileSync(file, JSON.stringify(fromSkill.caseFromSkill(view, "http://stub.local")));
+    const skillStub = (estimate: Record<string, unknown>) => ({
+      url: "http://stub.local",
+      async request(method: string, p: string) {
+        if (p === "/api/status") return { engineMode: "both", demoMode: "auto", cloudProvider: "auto", providers: { fal: { configured: true } } };
+        if (p === "/api/models") return { items: [{ id: "z-image-turbo-cloud" }] };
+        if (p === "/api/assist/skills/promo/estimate") return estimate;
+        throw new Error(`stub: no ${method} ${p}`);
+      },
+    });
+    const dry = (client: object) => runner.runEval({ suite: cases.loadSuite(file), engine: "cloud", dryRun: true, root: path.join(dir, "skill") }, { client }) as Promise<{ estimateUsd: number; jobs: { skip?: string }[] }>;
+    const priced = await dry(skillStub({ engine: "cloud", total: 0.12, demo: false, runnable: true, errors: [], jobs: [], runs: [{ line: 1, jobs: [], total: 0.12, errors: [] }] }));
+    expect(priced.jobs[0].skip).toBeUndefined();
+    expect(priced.estimateUsd).toBeCloseTo(0.12, 6);
+    const stopped = await dry(skillStub({ engine: "cloud", total: null, demo: false, runnable: false, errors: [], jobs: [], runs: [{ line: 1, jobs: [], total: null, errors: ["Step 1's model is switched off"] }] }));
+    expect(stopped.jobs[0].skip).toBe("the server refused it: Step 1's model is switched off");
   });
 });

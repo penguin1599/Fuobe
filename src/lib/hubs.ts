@@ -15,6 +15,8 @@ export interface HubMode {
   ownerOnly?: true;
   /** The mode's tool runs on a self-hosted Fuobe only: the hub's engine badge says so to anyone but the owner (EngineSwitch). */
   selfHostedOnly?: true;
+  /** The mode runs with the visitor's own setup (an own-setup.ts id): its tab carries the label's icon. */
+  ownSetup?: string;
 }
 
 export const HUB_TITLE: Record<HubKind, string> = { upscale: "Upscale", audio: "Audio", "video-tools": "Video tools" };
@@ -27,29 +29,32 @@ export const HUB_MODES: Record<HubKind, HubMode[]> = {
     { id: "hdr", label: "SDR to HDR" },
     { id: "export", label: "Export" },
   ],
+  // Clean up voice leads: /audio opens on it, and every list of Audio's modes starts with it.
   audio: [
+    { id: "clean", label: "Clean up voice" },
     { id: "speech", label: "Speech" },
     { id: "dialogue", label: "Dialogue" },
     { id: "voice-change", label: "Voice change" },
     { id: "design", label: "Design a voice" },
-    { id: "translate", label: "Translate", selfHostedOnly: true },
+    { id: "edit-speech", label: "Edit speech", ownSetup: "audio:edit-speech" },
+    { id: "translate", label: "Translate" },
     { id: "transcribe", label: "Transcribe" },
-    { id: "clean", label: "Clean up voice" },
-    { id: "split", label: "Split soundtrack", selfHostedOnly: true },
+    { id: "split", label: "Split soundtrack" },
     { id: "sfx", label: "Sound effects" },
     { id: "music", label: "Music" },
-    { id: "song", label: "Extend & remix", ownerOnly: true },
+    { id: "song", label: "Extend & remix", ownSetup: "mureka-extend" },
     { id: "loop", label: "Loop / extend" },
     { id: "join", label: "Join" },
     { id: "video", label: "Sound for video" },
   ],
   "video-tools": [
     { id: "matte", label: "Remove background" },
-    { id: "remove-object", label: "Remove object", selfHostedOnly: true },
-    { id: "remove-dialogue", label: "Remove dialogue", selfHostedOnly: true },
-    { id: "remove-person", label: "Remove a person", ownerOnly: true, selfHostedOnly: true },
-    { id: "evolution", label: "Evolution", selfHostedOnly: true },
-    { id: "restore", label: "Restore & colourise", ownerOnly: true, selfHostedOnly: true },
+    { id: "green-screen", label: "Green screen" },
+    { id: "remove-object", label: "Remove object" },
+    { id: "remove-dialogue", label: "Remove dialogue" },
+    { id: "remove-person", label: "Remove a person" },
+    { id: "evolution", label: "Evolution" },
+    { id: "restore", label: "Restore & colourise", ownSetup: "video-tools:restore" },
     { id: "relight", label: "Relight" },
     { id: "depth", label: "Depth map" },
     { id: "captions", label: "Captions" },
@@ -57,6 +62,14 @@ export const HUB_MODES: Record<HubKind, HubMode[]> = {
     { id: "join", label: "Join clips" },
     { id: "colors", label: "Match colors" },
   ],
+};
+
+/**
+ * A hub whose own URL opened another mode before, and the link params only that mode reads: /audio opened on Speech
+ * until Clean up voice came first, so an old `/audio?voice=…`, `?prompt=…` or `?model=…` link opens Speech (src/proxy.ts).
+ */
+export const FORMER_HOME: Partial<Record<HubKind, { mode: string; params: readonly string[] }>> = {
+  audio: { mode: "speech", params: ["voice", "prompt", "model", "preset", "example", "lyrics"] },
 };
 
 /** The URL of one mode: the hub itself for the first one, else /<hub>/<mode>. */

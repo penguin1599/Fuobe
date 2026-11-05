@@ -235,7 +235,8 @@ describe("an account's ComfyUI can't hold up the server", () => {
       const id = (await r.json()).items[0].id as string;
       const g = await settle(id);
       expect(g?.status).toBe("failed");
-      expect(g?.error).toMatch(/couldn't save this result/);
+      // Said as what it is: a file over what a run on your GPU keeps.
+      expect(g?.error).toBe("Your ComfyUI made a file over 2 MB. Try a shorter clip or a lower size.");
       expect(fs.readdirSync(scratchDir()).filter((f) => f.startsWith(`${id}-out-`))).toEqual([]);
     } finally {
       OWN_OUTPUT_LIMITS.maxBytes = was;

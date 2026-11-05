@@ -26,6 +26,9 @@ importers:
       '@google/model-viewer':
         specifier: 4.3.1
         version: 4.3.1(three@0.183.2)
+      '@sparkjsdev/spark':
+        specifier: 2.3.1
+        version: 2.3.1(three@0.183.2)
       '@tanstack/react-query':
         specifier: ^5.104.3
         version: 5.104.3(react@19.3.0)
@@ -1477,6 +1480,11 @@ packages:
   '@sindresorhus/merge-streams@4.0.0':
     resolution: {integrity: sha512-tlqY9xq5ukxTUZBmoOp+m61cqwQD5pHJtFY3Mn8CA8ps6yghLH/Hw8UPdqg4OLmFW3IFlcXnQNmo/dh8HzXYIQ==}
     engines: {node: '>=18'}
+
+  '@sparkjsdev/spark@2.3.1':
+    resolution: {integrity: sha512-K+SyIbkO/dx1TLLudK8Jp3/noS13z/kdNPo6OK2waxQaGy81HBmKGnNBT/t/K9Ew3dsIXmWqsJXxGfmAu1T5Jg==}
+    peerDependencies:
+      three: '>=0.180.0'
 
   '@stablelib/base64@1.0.1':
     resolution: {integrity: sha512-1bnPQqSxSuc3Ii6MhBysoWCg58j97aUjuCSZrGSmDxNqtytIi0k8utUenAwTZN4V5mXXYGsVUI9zeBqy+jBOSQ==}
@@ -6041,6 +6049,11 @@ snapshots:
       - supports-color
 
   '@sindresorhus/merge-streams@4.0.0': {}
+
+  '@sparkjsdev/spark@2.3.1(three@0.183.2)':
+    dependencies:
+      fflate: 0.8.3
+      three: 0.183.2
 
   '@stablelib/base64@1.0.1': {}
 

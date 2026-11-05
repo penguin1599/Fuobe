@@ -11,7 +11,7 @@ import type { ReadinessView } from "@/hooks/use-gpu";
 import { copyWithToast } from "@/lib/clipboard";
 import { GUARD_FILE_NAME, GUARD_SOURCE, isGuard } from "@/lib/comfy-guard";
 import { LIVE_NODES_FILE_NAME, LIVE_NODES_SOURCE } from "@/lib/comfy-live-nodes";
-import { isConnectAnswer } from "@/lib/fuobe-connect";
+import { FUOBE_CONNECT_PUBLISHED, isConnectAnswer } from "@/lib/fuobe-connect";
 import { corsFlag, fixFor, guessInstall, installFromStats, platformOf, startFile, START_FILE_NAME, type ComfyInstall } from "@/lib/comfy-install";
 import { checkThisComputer, loopbackFetch, sendCheck } from "@/lib/gpu/browser-check";
 import { deviceLabel } from "@/lib/gpu/readiness";
@@ -20,6 +20,7 @@ import { madeNoun } from "@/lib/relay";
 import { cn } from "@/lib/utils";
 import { computerState, rememberComfy, rememberedComfy, restartComputerRunner, store, stored } from "./computer-runtime";
 import { InstallConnect, PairInstead } from "./fuobe-connect";
+import { OTHER_BROWSERS } from "./open-connect";
 import { useLocalComfy, type Finder } from "./use-local-comfy";
 
 /**
@@ -71,7 +72,7 @@ function Watching({ children }: { children: React.ReactNode }) {
 }
 
 /** What the browser's question looks like, with the button to press. */
-function PromptPicture() {
+export function PromptPicture() {
   const host = typeof window === "undefined" ? "fuobe.com" : window.location.host;
   return (
     <div aria-hidden className="w-56 max-w-full shrink-0 rounded-lg border bg-background p-2.5 text-[11px] shadow-sm">
@@ -86,7 +87,7 @@ function PromptPicture() {
 }
 
 /** The browser's question, explained: its picture and what to press. */
-function AllowNote() {
+export function AllowNote() {
   return (
     <div className="flex flex-wrap items-center gap-3">
       <PromptPicture />
@@ -95,27 +96,40 @@ function AllowNote() {
   );
 }
 
-function blockedSteps(): string {
+export function blockedSteps(): string {
   const ua = typeof navigator === "undefined" ? "" : navigator.userAgent;
   if (/Firefox\//.test(ua)) return "Click the icon to the left of the address and allow apps and services on this device, then reload.";
   if ((navigator as Navigator & { brave?: unknown }).brave) return "Click the Brave icon and allow localhost access, then reload.";
   return "Click the icon to the left of the address, turn on Apps on device, then reload.";
 }
 
-const UNSUPPORTED: Record<"safari" | "phone" | "http", string> = {
-  phone: "Your phone can't run ComfyUI. Open Fuobe on your computer to use its ComfyUI, or give your ComfyUI a web address.",
-  safari: "Safari can't reach apps on this computer from a website. Open Fuobe in Chrome, Edge or Firefox to use your ComfyUI directly, or give your ComfyUI a web address.",
-  http: "Your browser only lets a secure page reach apps on this computer. Open Fuobe on the computer that runs ComfyUI, or give your ComfyUI a web address.",
+type Unsupported = "safari" | "phone" | "http";
+
+/**
+ * Why this browser can't use the ComfyUI on the person's computer, in their terms, then the way that works from right
+ * here: the web address form shown below these words. Two short sentences. The person already has Fuobe open, so no
+ * line tells them to open it.
+ */
+const UNSUPPORTED: Record<Unsupported, string> = {
+  phone: "A phone or tablet can't reach the ComfyUI on your computer from a website. Give your ComfyUI a web address below, and your runs reach it from here.",
+  safari: "Safari doesn't let a website talk to programs on your Mac, so this page can't reach your ComfyUI. Give your ComfyUI a web address below, and it works from Safari.",
+  http: "Your browser marks this page as not secure, so it doesn't let the page talk to programs on this computer, like ComfyUI. Give your ComfyUI a web address below, and it works from here.",
 };
 
-/** The owner's second way is a ComfyUI at a server address (a cloud GPU, a tunnel), not an account's link. */
-const UNSUPPORTED_OWNER: Record<"safari" | "phone" | "http", string> = {
-  phone: "Your phone can't run ComfyUI. Open Fuobe on your computer to use its ComfyUI, or use a ComfyUI on a server below.",
-  safari: "Safari can't reach apps on this computer from a website. Open Fuobe in Chrome, Edge or Firefox to use your ComfyUI directly, or use a ComfyUI on a server below.",
-  http: "Your browser only lets a secure page reach apps on this computer. Open the studio over https, or on the computer that runs ComfyUI, or use a ComfyUI on a server below.",
+/** The owner's way from here is a ComfyUI at a server address (a cloud GPU, a tunnel), shown below these words. */
+const UNSUPPORTED_OWNER: Record<Unsupported, string> = {
+  phone: "A phone or tablet can't reach the ComfyUI on your computer from a website. Use a ComfyUI on a server below, and your runs reach it from here.",
+  safari: "Safari doesn't let a website talk to programs on your Mac, so this page can't reach your ComfyUI. Use a ComfyUI on a server below, and it works from Safari.",
+  http: "Your browser marks this page as not secure, so it doesn't let the page talk to programs on this computer, like ComfyUI. Use a ComfyUI on a server below, or give this studio a secure address.",
 };
 
-export const unsupportedWords = (why: "safari" | "phone" | "http", owner = false) => (owner ? UNSUPPORTED_OWNER : UNSUPPORTED)[why];
+/** The words, for a <p>: the two sentences, and on Safari the other browsers' line below them. */
+export const unsupportedWords = (why: Unsupported, owner = false) => (
+  <>
+    {(owner ? UNSUPPORTED_OWNER : UNSUPPORTED)[why]}
+    {why === "safari" && <span className="mt-1 block text-[12px]">{OTHER_BROWSERS}</span>}
+  </>
+);
 
 /** Save a file the page made (the start file, the guard). */
 function save(name: string, text: string) {
@@ -229,7 +243,11 @@ function OtherPorts({
 /** What the card says about the port shown, and why this page can't use it yet. */
 function settingWords(port: number, o: { back: boolean; again?: boolean }): { heading: string; why: string } {
   const trust = "ComfyUI only answers the websites it's told to trust, so this page can't use it yet. One step lets Fuobe in:";
-  if (o.back) return { heading: "ComfyUI is back, but it still doesn't let this page in.", why: "Did ComfyUI restart after the install? Fuobe Connect starts with ComfyUI." };
+  if (o.back)
+    return {
+      heading: "ComfyUI is back, but it still doesn't let this page in.",
+      why: FUOBE_CONNECT_PUBLISHED ? "Did ComfyUI restart after the install? Fuobe Connect starts with ComfyUI." : "Did ComfyUI start again with Fuobe's setting? Check it below.",
+    };
   if (o.again) return { heading: "ComfyUI is running, but Fuobe can't use it this time.", why: trust };
   if (port === COMFY_PORT) return { heading: `Something is running on port ${port}, ComfyUI's usual port.`, why: trust };
   if (rememberedComfy()?.port === port) return { heading: `Something is running on port ${port}, where your ComfyUI was before.`, why: trust };
@@ -269,7 +287,8 @@ function WeakCandidate({ port, onCheck, onChoose, checking }: { port: number; on
 /**
  * ComfyUI answers, but this page can't use it yet: the one step is Fuobe Connect (it lets this studio in, and keeps every
  * other website out), and Fuobe connects by itself once ComfyUI restarts with it. The start setting with Fuobe's guard
- * (the way before Fuobe Connect) is under Advanced. `back`: ComfyUI restarted, still not usable. `again`: it was usable
+ * (the way before Fuobe Connect) is under Advanced. Until Fuobe Connect is published (FUOBE_CONNECT_PUBLISHED), the start
+ * setting with Fuobe's guard is the one step. `back`: ComfyUI restarted, still not usable. `again`: it was usable
  * before (started the usual way this time). `weak`: maybe not ComfyUI (another port, nothing on 8188). `chosen`: the
  * person picked this port. `others`: more ports where something answers, under "Other ports". `onCheck`: Check again.
  */
@@ -309,6 +328,23 @@ export function SettingFix({
       </div>
     );
   const { heading, why } = settingWords(port, { back, again });
+  if (!FUOBE_CONNECT_PUBLISHED)
+    return (
+      <div className="space-y-3">
+        <div>
+          <p className="text-[15px] font-medium">{heading}</p>
+          <p className="mt-1 text-[13px] text-muted-foreground">{why}</p>
+        </div>
+        <FlagFix port={port} back={back} again={again} />
+        <Watching>Fuobe connects by itself once ComfyUI lets this page in.</Watching>
+        {onCheck && (
+          <Button size="sm" variant="secondary" onClick={onCheck}>
+            <RefreshCw /> Check again
+          </Button>
+        )}
+        {otherPorts}
+      </div>
+    );
   return (
     <div className="space-y-3">
       <div>
@@ -424,7 +460,7 @@ function FlagFix({ port, back, again }: { port: number; back: boolean; again?: b
   );
 }
 
-function OtherPort({ onLook, missed, notComfy }: { onLook: (port: number, host: string) => void; missed?: number; notComfy?: number }) {
+export function OtherPort({ onLook, missed, notComfy }: { onLook: (port: number, host: string) => void; missed?: number; notComfy?: number }) {
   const [typed, setTyped] = useState(String(rememberedComfy()?.port ?? 8188));
   const [bad, setBad] = useState(false);
   const go = () => {
@@ -713,15 +749,15 @@ function Screen({
       return (
         <div className="space-y-3">
           <p className="flex items-start gap-2 text-muted-foreground">
-            <MonitorSmartphone className="mt-0.5 size-4 shrink-0" /> {UNSUPPORTED[state.why]}
+            <MonitorSmartphone className="mt-0.5 size-4 shrink-0" /> <span>{unsupportedWords(state.why)}</span>
           </p>
-          <PairInstead />
+          {FUOBE_CONNECT_PUBLISHED && <PairInstead />}
         </div>
       );
     case "start":
       return (
         <div className="space-y-3">
-          <InstallConnect then="Already have it? Skip this step." />
+          {FUOBE_CONNECT_PUBLISHED && <InstallConnect then="Already have it? Skip this step." />}
           <Button className="h-11 sm:h-9" onClick={() => void look()}>
             <Search /> Find my ComfyUI
           </Button>
@@ -791,7 +827,7 @@ function Screen({
           <Button size="sm" variant="secondary" onClick={() => window.location.reload()}>
             <RefreshCw /> Reload
           </Button>
-          <PairInstead className="mt-2" />
+          {FUOBE_CONNECT_PUBLISHED && <PairInstead className="mt-2" />}
         </div>
       );
   }

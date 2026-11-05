@@ -4,6 +4,7 @@
 // keyboard; ratings land in review/ratings.json (pnpm eval:review serves the page and saves them;
 // opened as a file it keeps them in the browser and offers a download). review/key.json, which the
 // page never loads, says which side was which; the summary unblinds the ratings with it.
+import { spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
@@ -13,10 +14,38 @@ import { candidateOf, latestJobs, readJson, writeJson } from "./store.mjs";
 
 const IMAGE = /\.(png|jpe?g|webp|gif|svg)$/i;
 const VIDEO = /\.(mp4|mov|m4v|webm)$/i;
+const AUDIO = /\.(flac|wav|mp3|m4a|ogg)$/i;
+/** The one format a blind audio pair is served in (lossless; every current browser plays it). */
+const AUDIO_EXT = ".flac";
+/** A sound re-encoded as FLAC for the review; false when ffmpeg can't (the file is then served as it is, under the FLAC name). */
+function toAudio(file, dest) {
+  const r = spawnSync("ffmpeg", ["-v", "error", "-y", "-i", file, "-vn", "-c:a", "flac", dest], { stdio: "ignore" });
+  return r.status === 0 && fs.existsSync(dest);
+}
 const hash = (s) => crypto.createHash("sha256").update(s).digest("hex");
 
-/** The first picture or clip of a succeeded row (helpers like masks left out). */
-const mainOutput = (row) => (row.outputs ?? []).find((o) => (o.kind === "image" || o.kind === "video") && !["mask", "first-frame", "depth"].includes(o.role));
+/** The first picture or clip of a succeeded row (helpers like masks left out); a separation's first stem. */
+const mainOutput = (row) => (row.outputs ?? []).find((o) => (o.kind === "image" || o.kind === "video") && !["mask", "first-frame", "depth"].includes(o.role)) ?? (row.outputs ?? []).find((o) => o.kind === "audio");
+
+/** What a separation's two stems are judged on, blind (the words above each pair). */
+const STEM_ASKS = {
+  voice: "Dialogue: which is clearer, with the least music, effects or noise left in it?",
+  background: "Music & effects: which keeps the music and effects fuller, with no speech left in it?",
+};
+
+/** The results to pair for a row: a separation's dialogue and its music & effects (each judged on its own), else the main output. */
+function sidesOf(row) {
+  const audio = (row.outputs ?? []).filter((o) => o.kind === "audio");
+  if (audio.length) {
+    const pick = Object.keys(STEM_ASKS).flatMap((stem) => {
+      const o = audio.find((x) => x.stem === stem);
+      return o ? [{ out: o, stem, ask: STEM_ASKS[stem] }] : [];
+    });
+    if (pick.length) return pick;
+  }
+  const o = mainOutput(row);
+  return o ? [{ out: o, stem: null, ask: null }] : [];
+}
 
 /**
  * The pairs to rate.
@@ -37,7 +66,12 @@ export function buildPairs(run, opts = {}) {
     for (const r of ok.filter((x) => x.variant === base)) {
       for (const v of variants.filter((x) => x !== base)) {
         const o = byKey.get(`${r.key}|${v}`);
-        if (o) pairs.push({ a: side(base, path.join(run.dir, mainOutput(r).file), { job: r.id }), b: side(v, path.join(run.dir, mainOutput(o).file), { job: o.id }), prompt: r.prompt, caseTitle: r.caseTitle, caseId: r.caseId });
+        if (!o) continue;
+        const theirs = sidesOf(o);
+        for (const mine of sidesOf(r)) {
+          const other = theirs.find((t) => t.stem === mine.stem);
+          if (other) pairs.push({ a: side(base, path.join(run.dir, mine.out.file), { job: r.id, ...(mine.stem && { stem: mine.stem }) }), b: side(v, path.join(run.dir, other.out.file), { job: o.id, ...(mine.stem && { stem: mine.stem }) }), prompt: mine.ask ?? r.prompt, caseTitle: r.caseTitle, caseId: r.caseId });
+        }
       }
     }
   } else if (against === "references") {
@@ -72,21 +106,26 @@ export function writeReview(run, opts = {}) {
   fs.rmSync(mediaDir, { recursive: true, force: true });
   fs.mkdirSync(mediaDir, { recursive: true });
   const placed = new Map();
-  const place = (file) => {
-    if (placed.has(file)) return placed.get(file);
-    const name = `${hash(`media|${file}`).slice(0, 10)}${path.extname(file).toLowerCase()}`;
+  const place = (file, audio = false) => {
+    const key = `${audio ? "a" : "m"}|${file}`;
+    if (placed.has(key)) return placed.get(key);
+    const name = `${hash(`media|${file}`).slice(0, 10)}${audio ? AUDIO_EXT : path.extname(file).toLowerCase()}`;
     const dest = path.join(mediaDir, name);
-    try {
-      fs.linkSync(file, dest);
-    } catch {
-      fs.copyFileSync(file, dest);
+    if (!audio || path.extname(file).toLowerCase() === AUDIO_EXT || !toAudio(file, dest)) {
+      try {
+        fs.linkSync(file, dest);
+      } catch {
+        fs.copyFileSync(file, dest);
+      }
     }
-    placed.set(file, `media/${name}`);
+    placed.set(key, `media/${name}`);
     return `media/${name}`;
   };
   const items = pairs.map((p) => {
     const [left, right] = p.aLeft ? [p.a, p.b] : [p.b, p.a];
-    return { id: p.id, prompt: p.prompt ?? "", title: p.caseTitle ?? "", left: place(left.file), right: place(right.file), video: [left.file, right.file].some((f) => VIDEO.test(f)) };
+    // Two sounds are served in one format, so a file type (DBS's FLAC against MelBand's MP3) can't say which is which.
+    const audio = [left.file, right.file].every((f) => AUDIO.test(f));
+    return { id: p.id, prompt: p.prompt ?? "", title: p.caseTitle ?? "", left: place(left.file, audio), right: place(right.file, audio), video: [left.file, right.file].some((f) => VIDEO.test(f)), audio };
   });
   writeJson(path.join(out, "key.json"), {
     runId: run.runId,
@@ -105,6 +144,7 @@ export function reviewHtml(runId, items) {
 .side { position: relative; border: 2px solid var(--border); border-radius: 12px; padding: 8px; background: var(--card); min-width: 0; }
 .side.picked { border-color: var(--accent); }
 .side .tag { position: absolute; top: 12px; left: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 0 6px; font-weight: 600; }
+.side .sound { padding: 40px 0 8px; }
 .side img, .side video { width: 100%; max-height: 62vh; object-fit: contain; display: block; border-radius: 8px; background: var(--chip); }
 .bar { position: sticky; bottom: 0; background: var(--bg); border-top: 1px solid var(--border); padding: 12px 0; margin-top: 16px; }
 .bar .row { justify-content: center; }
@@ -147,7 +187,8 @@ let shownAt = performance.now();
 const $ = (id) => document.getElementById(id);
 const doneIds = () => new Set(ratings.map((r) => r.pair));
 const next = () => PAIRS.find((p) => !doneIds().has(p.id));
-function media(src, video, label) {
+function media(src, video, label, audio) {
+  if (audio) return '<div class="sound"><audio src="' + src + '" controls preload="auto" aria-label="' + label + '"></audio></div>';
   return video ? '<video src="' + src + '" muted loop playsinline autoplay controls aria-label="' + label + '"></video>' : '<img src="' + src + '" alt="' + label + '">';
 }
 function render() {
@@ -159,8 +200,8 @@ function render() {
   if (!p) { $("stage").innerHTML = "<h2>All done</h2><p>Thanks — " + rated + " ratings. " + (served ? "They are saved in the run folder." : "Download them and put ratings.json in the run's review folder.") + "</p>"; return; }
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
   $("stage").innerHTML = '<p><b>' + esc(p.title) + '</b></p><p class="muted">' + esc(p.prompt) + '</p><div class="pair">' +
-    '<div class="side" id="L"><span class="tag">Left</span>' + media(p.left, p.video, "Left result") + '</div>' +
-    '<div class="side" id="R"><span class="tag">Right</span>' + media(p.right, p.video, "Right result") + '</div></div>';
+    '<div class="side" id="L"><span class="tag">Left</span>' + media(p.left, p.video, "Left result", p.audio) + '</div>' +
+    '<div class="side" id="R"><span class="tag">Right</span>' + media(p.right, p.video, "Right result", p.audio) + '</div></div>';
   shownAt = performance.now();
 }
 async function persist() {
@@ -192,9 +233,9 @@ document.addEventListener("keydown", (e) => {
   const k = e.key;
   // Space and Enter on a focused button press that button (a keyboard user's "Left is better"), and a focused
   // clip keeps its own keys: only the page's shortcuts are taken here.
-  const control = e.target instanceof Element ? e.target.closest("button, a, input, select, textarea, summary, video, [contenteditable]") : null;
+  const control = e.target instanceof Element ? e.target.closest("button, a, input, select, textarea, summary, video, audio, [contenteditable]") : null;
   if (control && (k === " " || k === "Enter")) return;
-  if (control && control.tagName === "VIDEO" && k.startsWith("Arrow")) return;
+  if (control && (control.tagName === "VIDEO" || control.tagName === "AUDIO") && k.startsWith("Arrow")) return;
   const choice = k === "ArrowLeft" || k === "1" ? "left" : k === "ArrowRight" || k === "2" ? "right" : k === "ArrowDown" || k === "0" || k === " " ? "same" : k === "s" || k === "S" ? "skip" : null;
   if (choice) { e.preventDefault(); rate(choice); }
   else if (k === "u" || k === "U" || k === "Backspace") { e.preventDefault(); undo(); }
@@ -245,7 +286,7 @@ export function aggregateRatings(loaded, opts = {}) {
   return { total, pairs: [...groups.values()].map((g) => ({ ...g, preferA: g.aWins + g.bWins ? g.aWins / (g.aWins + g.bWins) : null })), ...(opts.caseId && { available }) };
 }
 
-const TYPES = { ".html": "text/html; charset=utf-8", ".json": "application/json", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif", ".svg": "image/svg+xml", ".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime", ".m4v": "video/mp4" };
+const TYPES = { ".html": "text/html; charset=utf-8", ".json": "application/json", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif", ".svg": "image/svg+xml", ".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime", ".m4v": "video/mp4", ".flac": "audio/flac", ".wav": "audio/wav", ".mp3": "audio/mpeg", ".m4a": "audio/mp4", ".ogg": "audio/ogg" };
 
 /**
  * Serve a run's review folder on 127.0.0.1 and save ratings it POSTs. Only files inside review/

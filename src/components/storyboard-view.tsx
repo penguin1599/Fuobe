@@ -1,9 +1,10 @@
 "use client";
 
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUp, Clapperboard, Film, ImagePlus, Loader2, Minus, Plus, Sparkles, Trash2, Wand2, X } from "lucide-react";
+import { ArrowUp, Clapperboard, Film, ImagePlus, LayoutGrid, Loader2, Minus, Plus, Sparkles, Trash2, Wand2, X } from "lucide-react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Suspense, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { nanoid } from "nanoid";
 import { toast } from "sonner";
@@ -20,9 +21,21 @@ import { fileToSlot, MediaSlot, type SlotValue } from "@/components/studio/media
 import { Viewer } from "@/components/studio/viewer";
 import { StarterParam } from "@/components/starters/starter-param";
 import { StarterSection, useStarters } from "@/components/starters/starter-section";
-import { useCreateGeneration, useEngine, useGenerationActions, useGenerations, useHydrated, useIsAccount, useIsVisitor, useStatus } from "@/lib/api";
+import { COMPUTER_KICK_EVENT, useCreateGeneration, useEngine, useGenerationActions, useGenerations, useHydrated, useIsAccount, useStatus, uploadFile } from "@/lib/api";
 import { askDeleteForGood } from "@/components/studio/delete-for-good";
-import { MAX_FRAMES, STORYBOARD_ASPECTS, STORYBOARD_PARTNER_IDS, type StoryboardNextScene, type StoryboardPartner } from "@/lib/catalog/storyboard";
+import {
+  MAX_FRAMES,
+  ONE_SHEET_GPU_TEST,
+  sheetCrop,
+  sheetPanelLimit,
+  sheetPanelStyle,
+  sheetState,
+  STORYBOARD_ASPECTS,
+  STORYBOARD_PARTNER_IDS,
+  type SheetFrames,
+  type StoryboardNextScene,
+  type StoryboardPartner,
+} from "@/lib/catalog/storyboard";
 import { lookCard } from "@/lib/catalog/soul-cards";
 import type { Engine, Generation } from "@/lib/catalog/types";
 import { timeAgo } from "@/lib/format";
@@ -30,6 +43,7 @@ import { BOARD_TITLES_KEY, boardTitle, filmReady, rememberTitle } from "@/lib/st
 import { animateHref, MAX_KEYS } from "@/lib/inbetween";
 import { starterShown, type StarterCardData, type StarterFill } from "@/lib/starters/types";
 import { cn } from "@/lib/utils";
+import { ratioValue } from "@/lib/format";
 import { responseError, toastError } from "@/lib/refusals";
 import { BoardExample, hasBoardExample } from "@/components/empty-examples";
 
@@ -78,6 +92,22 @@ function useBoardTitles() {
 }
 
 const modelName = (g: Generation, names: Record<string, string>) => (g as Generation & { modelName?: string }).modelName ?? names[g.modelId] ?? g.modelId;
+
+/**
+ * Start a board or its film. Stopped by the GPU pre-flight, the guided fix opens (src/lib/api.ts watchGuestRefusals), so
+ * no error toast goes on top of it. A run started on the ComfyUI on this computer (an account's "Your GPU") is asked for by
+ * the tab that runs it at once.
+ */
+async function startRun<T>(url: string, body: unknown): Promise<T> {
+  const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const b = (await res.json().catch(() => ({}))) as T & { error?: string; gpuWarning?: string };
+  if (res.status === 409 && res.headers.get("x-fuobe-gpu-setup") === "1") throw Object.assign(new Error(b.error ?? "This needs setting up on your GPU"), { refusalShown: true });
+  if (!res.ok) throw responseError(res, b.error ?? "Something went wrong. Please try again.");
+  window.dispatchEvent(new Event(COMPUTER_KICK_EVENT));
+  // Its own ComfyUI seems to miss something: said, never a stop.
+  if (b.gpuWarning) toast.warning(b.gpuWarning);
+  return b;
+}
 
 function RatioPill({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   return (
@@ -141,6 +171,32 @@ function NextScenePill({ value, onChange }: { value?: StoryboardNextScene; onCha
           onClick={() => onChange(o.v)}
           className={cn("h-7 rounded-full px-2.5 text-[12px] font-medium whitespace-nowrap text-muted-foreground transition", value === o.v && "bg-background text-foreground shadow-soft")}
         >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** How the board is drawn: frame by frame (each from the last), or every panel together on one sheet. */
+function SheetPill({ value, onChange }: { value: boolean; onChange: (v: boolean) => void }) {
+  const options = [
+    { v: false, label: "Frame by frame", title: "Each frame is made from the one before" },
+    { v: true, label: "One sheet", title: "Every panel drawn together on one page, then cut into frames" },
+  ];
+  return (
+    <div role="radiogroup" aria-label="How the board is drawn" className="flex flex-wrap gap-1 rounded-full bg-muted p-0.5">
+      {options.map((o) => (
+        <button
+          key={String(o.v)}
+          type="button"
+          role="radio"
+          aria-checked={value === o.v}
+          title={o.title}
+          onClick={() => onChange(o.v)}
+          className={cn("inline-flex h-7 items-center gap-1 rounded-full px-2.5 text-[12px] font-medium whitespace-nowrap text-muted-foreground transition", value === o.v && "bg-background text-foreground shadow-soft")}
+        >
+          {o.v && <LayoutGrid className="size-3.5" />}
           {o.label}
         </button>
       ))}
@@ -219,6 +275,84 @@ function FrameTile({ g, index, ratio, onOpen }: { g: Generation; index: number; 
   );
 }
 
+/** A panel of a one-sheet board cut out of the sheet in the browser, stored as a picture of its own (its URL). */
+async function cropPanel(url: string, box: SheetFrames["panels"][number]["box"], name: string): Promise<string> {
+  const img = new Image();
+  img.crossOrigin = "anonymous";
+  img.src = url;
+  await img.decode();
+  const [x, y, w, h] = sheetCrop(box, img.naturalWidth, img.naturalHeight);
+  const c = document.createElement("canvas");
+  c.width = w;
+  c.height = h;
+  c.getContext("2d")!.drawImage(img, x, y, w, h, 0, 0, w, h);
+  const blob = await new Promise<Blob>((ok, fail) => c.toBlob((b) => (b ? ok(b) : fail(new Error("Couldn't cut the panel out"))), "image/png"));
+  return (await uploadFile(new File([blob], `${name}.png`, { type: "image/png" }))).url;
+}
+
+/** A one-sheet board: the page as it came out, then each panel shown from it as a frame (cut out when it is used). */
+function SheetPanels({ g, sheet, onOpen }: { g: Generation; sheet: SheetFrames; onOpen: (g: Generation) => void }) {
+  const create = useCreateGeneration();
+  const router = useRouter();
+  const [busy, setBusy] = useState<string | null>(null);
+  const o = g.status === "succeeded" ? g.outputs[0] : undefined;
+  const panelRatio = ratioValue(sheet.aspect, 16 / 9);
+  const sheetRatio = tileRatio(g);
+  const use = async (i: number, to: "video" | "edit") => {
+    if (!o) return;
+    const key = `${to}-${i}`;
+    setBusy(key);
+    try {
+      const url = await cropPanel(o.url, sheet.panels[i].box, `storyboard-panel-${i + 1}`);
+      router.push(to === "video" ? `/video?image=${encodeURIComponent(url)}&prompt=${encodeURIComponent(sheet.panels[i].scene)}` : `/edit?image=${encodeURIComponent(url)}`);
+    } catch (e) {
+      toastError(e);
+    } finally {
+      setBusy(null);
+    }
+  };
+  if (!o) {
+    return (
+      <div className="max-w-xl">
+        {g.status === "failed" || g.status === "canceled" ? (
+          <FailedTile g={g} ratio={sheetRatio} onRetry={() => create.mutate(g.request, { onError: (e) => toastError(e) })} />
+        ) : (
+          <PendingTile g={g} ratio={sheetRatio} />
+        )}
+      </div>
+    );
+  }
+  const action = "pointer-events-auto inline-flex h-7 items-center gap-1 rounded-full bg-white/20 px-2.5 text-[12px] font-medium whitespace-nowrap text-white backdrop-blur hover:bg-white/30 disabled:opacity-60";
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-[repeat(auto-fill,minmax(220px,1fr))]">
+        {sheet.panels.map((p, i) => (
+          <figure key={i} className="min-w-0 space-y-1.5">
+            <div className="group/tile relative overflow-hidden rounded-xl bg-muted" style={{ aspectRatio: panelRatio }}>
+              <button
+                onClick={() => onOpen(g)}
+                className="block size-full cursor-zoom-in bg-no-repeat"
+                style={{ backgroundImage: `url("${o.url}")`, ...sheetPanelStyle(p.box) }}
+                aria-label={`Open the sheet at panel ${i + 1}`}
+              />
+              <span className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-end gap-1 bg-gradient-to-t from-black/60 to-transparent p-2 pt-8 transition-opacity group-focus-within/tile:opacity-100 sm:opacity-0 sm:group-hover/tile:opacity-100">
+                <button type="button" className={action} disabled={!!busy} onClick={() => void use(i, "video")}>
+                  {busy === `video-${i}` ? <Loader2 className="size-3.5 animate-spin" /> : <Clapperboard className="size-3.5" />} Animate
+                </button>
+                <button type="button" className={action} disabled={!!busy} onClick={() => void use(i, "edit")}>
+                  {busy === `edit-${i}` ? <Loader2 className="size-3.5 animate-spin" /> : <Wand2 className="size-3.5" />} Edit
+                </button>
+              </span>
+              <span className="pointer-events-none absolute top-2 left-2 grid size-6 place-items-center rounded-full bg-background/90 font-mono text-[11px] font-semibold shadow-soft">{i + 1}</span>
+            </div>
+            <figcaption className="line-clamp-2 px-0.5 text-[12px] leading-snug text-muted-foreground">{p.scene}</figcaption>
+          </figure>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function Board({
   frames,
   film,
@@ -241,14 +375,13 @@ function Board({
   // A look board's frames are graded (and cropped) here first: the film starts from them as they look.
   const ready = filmReady(frames, finishGaveUp);
   const ratio = tileRatio(first);
+  const sheet = first.request.frame?.sheet;
+  // A click's film, once: a repeat of the request (a second click that got through) gets the film the first one started.
+  const filmRequest = useRef(nanoid());
   const makeFilm = useMutation({
-    mutationFn: async () => {
-      const res = await fetch(`/api/storyboards/${first.batchId}/film`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
-      const body = await res.json();
-      if (!res.ok) throw responseError(res, body.error);
-      return body as { items: Generation[] };
-    },
+    mutationFn: () => startRun<{ items: Generation[] }>(`/api/storyboards/${first.batchId}/film`, { requestId: filmRequest.current }),
     onSuccess: (b) => {
+      filmRequest.current = nanoid();
       toast.success(`Animating ${b.items.length - 1} shots, then joining them into one film`);
       void qc.invalidateQueries({ queryKey: ["generations"] });
     },
@@ -265,7 +398,10 @@ function Board({
         <div className="min-w-0 flex-1 basis-60">
           <h3 className="line-clamp-2 font-heading text-[19px] leading-snug">{boardTitle(frames, idea)}</h3>
           <p className="text-[12px] text-muted-foreground">
-            {frames.length} frames · {done === frames.length ? "done" : `${done}/${frames.length} ready`} · {modelName(first, names)} · {timeAgo(first.createdAt)}
+            {sheet
+              ? `${sheet.panels.length} panels on one sheet · ${sheetState(first.status)}`
+              : `${frames.length} frames · ${done === frames.length ? "done" : `${done}/${frames.length} ready`}`}{" "}
+            · {modelName(first, names)} · {timeAgo(first.createdAt)}
           </p>
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-1">
@@ -316,11 +452,15 @@ function Board({
           </Button>
         </div>
       </header>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-[repeat(auto-fill,minmax(220px,1fr))]">
-        {frames.map((g, i) => (
-          <FrameTile key={g.id} g={g} index={i} ratio={ratio} onOpen={onOpen} />
-        ))}
-      </div>
+      {sheet ? (
+        <SheetPanels g={first} sheet={sheet} onOpen={onOpen} />
+      ) : (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-[repeat(auto-fill,minmax(220px,1fr))]">
+          {frames.map((g, i) => (
+            <FrameTile key={g.id} g={g} index={i} ratio={ratio} onOpen={onOpen} />
+          ))}
+        </div>
+      )}
       {film.length > 0 && <FilmStrip items={film} ratio={ratio} onOpen={onOpen} />}
     </section>
   );
@@ -345,8 +485,6 @@ export function StoryboardView({
   const hydrated = useHydrated();
   const status = useStatus().data;
   const statusReady = hydrated && !!status;
-  // A storyboard doesn't run on an account's own GPU yet (only the studios' generations do), nor for a guest who signs up.
-  const visitor = useIsVisitor();
   const [mode, setMode] = useState<"auto" | "manual">("auto");
   const [story, setStory] = useState("");
   const [count, setCount] = useState(4);
@@ -360,8 +498,13 @@ export function StoryboardView({
   const [partner, setPartner] = useState<StoryboardPartner | undefined>();
   // Your GPU only: the next frames' model (Qwen-Image 2.1 unless the classic recipe is picked).
   const [nextScene, setNextScene] = useState<StoryboardNextScene | undefined>();
+  // One sheet: every panel on one MOSS-Image page, offered up to the panels a GPU render showed (the owner's until then).
+  // Known once the page has hydrated (useStarters' owner): the server renders it without the viewer.
+  const sheetLimit = sheetPanelLimit(owner);
+  const [sheetPicked, setSheet] = useState(false);
+  const sheet = sheetPicked && sheetLimit > 0;
   const [open, setOpen] = useState<Generation | null>(null);
-  // A ready story fills the composer (for everyone: the price shows at once, and Generate is the owner's), from its
+  // A ready story fills the composer (for everyone: the price shows at once), from its
   // page's link (?starter=<id>) or its card here, then the composer comes into view.
   const storyRef = useRef<HTMLTextAreaElement>(null);
   const applyStarter = (id: string) => {
@@ -409,16 +552,19 @@ export function StoryboardView({
   const boardNextScene = engine === "open" ? nextScene : undefined;
   const lookName = look ? lookCard(look)?.name : undefined;
   const filled = scenes.filter((s) => s.trim());
-  const boardBody = {
-    engine,
-    ...(boardPartner && { partner: boardPartner }),
-    ...(boardNextScene && { nextScene: boardNextScene }),
-    ...(mode === "auto" ? { story, frames: count } : { scenes: filled }),
-    references: refs.filter((r) => r.ref && !r.uploading).map((r) => r.ref),
-    style: style || undefined,
-    ...(look && { look, lookStrength }),
-    aspectRatio: aspect,
-  };
+  const sheetCount = Math.min(count, sheetLimit || MAX_FRAMES);
+  const boardBody = sheet
+    ? { engine, sheet: true, ...(mode === "auto" ? { story, frames: sheetCount } : { scenes: filled.slice(0, sheetLimit) }), references: [] as string[], style: style || undefined, aspectRatio: aspect }
+    : {
+        engine,
+        ...(boardPartner && { partner: boardPartner }),
+        ...(boardNextScene && { nextScene: boardNextScene }),
+        ...(mode === "auto" ? { story, frames: count } : { scenes: filled }),
+        references: refs.filter((r) => r.ref && !r.uploading).map((r) => r.ref),
+        style: style || undefined,
+        ...(look && { look, lookStrength }),
+        aspectRatio: aspect,
+      };
   // The price before it runs: the words don't change it, so typing doesn't ask again.
   const priceKey = useDebounced(JSON.stringify({ ...boardBody, story: undefined, scenes: mode === "auto" ? undefined : filled.map(() => "·") }), 300);
   const estimate = useQuery({
@@ -435,27 +581,26 @@ export function StoryboardView({
     enabled: statusReady && (JSON.parse(priceKey) as { engine?: string }).engine === engine,
   });
   const est = estimate.data && !estimate.isError ? estimate.data : undefined;
+  // A click's board, once: a repeat of the request (a second click that got through) gets the board the first one started.
+  const boardRequest = useRef(nanoid());
   const submit = useMutation({
-    mutationFn: async () => {
-      const res = await fetch("/api/storyboards", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...boardBody, references: refs.filter((r) => r.ref).map((r) => r.ref) }),
-      });
-      const body = await res.json();
-      if (!res.ok) throw responseError(res, body.error);
-      return body as { scenes: string[]; batchId?: string };
-    },
+    // A board for anyone: the owner's, or an account's on its own GPU or key. A guest's click opens the sign-up card.
+    mutationFn: () =>
+      startRun<{ scenes: string[]; batchId?: string }>("/api/storyboards", {
+        ...(sheet ? boardBody : { ...boardBody, references: refs.filter((r) => r.ref).map((r) => r.ref) }),
+        requestId: boardRequest.current,
+      }),
     onSuccess: (b) => {
+      boardRequest.current = nanoid();
       const idea = mode === "auto" ? story : scenes.find((s) => s.trim());
       if (b.batchId && idea?.trim()) saveTitle(b.batchId, idea);
-      toast.success(`${b.scenes.length} frames on the way — each one builds on the last`);
+      toast.success(sheet ? `${b.scenes.length} panels on the way, drawn together on one sheet` : `${b.scenes.length} frames on the way — each one builds on the last`);
       void qc.invalidateQueries({ queryKey: ["generations"] });
     },
     onError: (e) => toastError(e),
   });
 
-  const ready = (mode === "auto" ? story.trim().length > 3 : scenes.some((s) => s.trim())) && !refs.some((r) => r.uploading);
+  const ready = (mode === "auto" ? story.trim().length > 3 : scenes.some((s) => s.trim())) && (sheet || !refs.some((r) => r.uploading));
   const addRef = (f: File) => {
     const id = nanoid(6);
     void fileToSlot(f, (v) =>
@@ -484,8 +629,10 @@ export function StoryboardView({
         <div className="mx-auto max-w-[820px] pt-6 text-center">
           <h2 className="font-heading text-display text-balance">Tell it frame by frame</h2>
           <p className="mt-2 text-[13px] text-muted-foreground">
-            Up to {MAX_FRAMES} consistent frames. Each one is made from the one before, so faces, wardrobe and light carry through.
-            {lookName && !refs.length ? ` Frame 1 sets the ${lookName} look.` : ""}
+            {sheet
+              ? `Up to ${sheetLimit} panels drawn together on one page, so faces, wardrobe and light match, then cut into frames.`
+              : `Up to ${MAX_FRAMES} consistent frames. Each one is made from the one before, so faces, wardrobe and light carry through.`}
+            {!sheet && lookName && !refs.length ? ` Frame 1 sets the ${lookName} look.` : ""}
           </p>
           <div className="mt-6 rounded-[20px] border bg-background p-3 text-left shadow-soft focus-within:border-primary focus-within:ring-4 focus-within:ring-brand-faint sm:rounded-composer">
             <div role="radiogroup" aria-label="How to write it" className="mb-2 flex items-center gap-1 rounded-full bg-muted p-0.5 text-[13px] font-medium sm:w-fit">
@@ -535,7 +682,7 @@ export function StoryboardView({
                     </button>
                   </div>
                 ))}
-                {scenes.length < MAX_FRAMES && (
+                {scenes.length < (sheet ? sheetLimit : MAX_FRAMES) && (
                   <button type="button" onClick={() => setScenes((xs) => [...xs, ""])} className="inline-flex items-center gap-1 px-1 text-[12px] font-medium text-brand-text hover:underline">
                     <Plus className="size-3" /> Add frame
                   </button>
@@ -550,7 +697,7 @@ export function StoryboardView({
               className="mt-2 h-9 w-full rounded-lg border bg-background px-2.5 text-[13px] outline-none focus:border-primary"
             />
             <div className="mt-3 flex flex-wrap items-center gap-2">
-              {refs.map((r) => (
+              {!sheet && refs.map((r) => (
                 <div key={r.id} className="relative size-12 overflow-hidden rounded-lg border bg-muted">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src={r.preview} alt="" className="size-full object-cover" />
@@ -565,50 +712,46 @@ export function StoryboardView({
                   </button>
                 </div>
               ))}
-              {refs.length < 4 && <MediaSlot label="Look ref" kind="image" value={null} onChange={(v) => v && setRefs((rs) => [...rs, { ...v, id: nanoid(6) }])} onFile={addRef} />}
+              {!sheet && refs.length < 4 && <MediaSlot label="Look ref" kind="image" value={null} onChange={(v) => v && setRefs((rs) => [...rs, { ...v, id: nanoid(6) }])} onFile={addRef} />}
               {mode === "auto" && (
                 <div className="flex items-center gap-1 rounded-full bg-secondary px-1 py-0.5 text-[13px] font-medium">
                   <button type="button" onClick={() => setCount((c) => Math.max(2, c - 1))} className="grid size-7 place-items-center rounded-full hover:bg-accent" aria-label="Fewer frames">
                     <Minus className="size-3.5" />
                   </button>
                   <span className="w-16 text-center whitespace-nowrap tabular-nums" aria-live="polite">
-                    {count} frames
+                    {sheet ? `${sheetCount} panels` : `${count} frames`}
                   </span>
-                  <button type="button" onClick={() => setCount((c) => Math.min(MAX_FRAMES, c + 1))} className="grid size-7 place-items-center rounded-full hover:bg-accent" aria-label="More frames">
+                  <button type="button" onClick={() => setCount((c) => Math.min(sheet ? sheetLimit : MAX_FRAMES, c + 1))} className="grid size-7 place-items-center rounded-full hover:bg-accent" aria-label="More frames">
                     <Plus className="size-3.5" />
                   </button>
                 </div>
               )}
-              <LookChip value={look} strength={lookStrength} onChange={(id) => setLook(id)} onStrength={setLookStrength} none="No look" />
+              {sheetLimit > 0 && <SheetPill value={sheet} onChange={setSheet} />}
+              {!sheet && <LookChip value={look} strength={lookStrength} onChange={(id) => setLook(id)} onStrength={setLookStrength} none="No look" />}
               <RatioPill value={aspect} onChange={setAspect} />
-              {engine === "cloud" && <PartnerPill value={partner} onChange={setPartner} names={modelNames} />}
-              {engine === "open" && <NextScenePill value={nextScene} onChange={setNextScene} />}
+              {!sheet && engine === "cloud" && <PartnerPill value={partner} onChange={setPartner} names={modelNames} />}
+              {!sheet && engine === "open" && <NextScenePill value={nextScene} onChange={setNextScene} />}
               <div className="ml-auto flex shrink-0 items-center gap-2">
                 <span className="text-right text-[12px] leading-tight tabular-nums text-muted-foreground" aria-live="polite">
-                  {visitor ? (
-                    <span className="block font-semibold text-foreground">Not available here</span>
-                  ) : estimate.isError ? (
+                  {estimate.isError ? (
                     <span className="text-destructive">{(estimate.error as Error).message}</span>
                   ) : (
                     <>
                       <span className="block font-semibold text-foreground">{costText(est, engine as Engine)}</span>
-                      {est && `${est.frames} frame${est.frames === 1 ? "" : "s"}`}
+                      {est && (sheet ? `${est.frames} panels · 1 sheet` : `${est.frames} frame${est.frames === 1 ? "" : "s"}`)}
                     </>
                   )}
                 </span>
-                <Button size="icon" className="size-10 shrink-0 rounded-full" disabled={!ready || submit.isPending || estimate.isError || visitor} onClick={() => submit.mutate()} aria-label="Generate storyboard">
+                <Button size="icon" className="size-10 shrink-0 rounded-full" disabled={!ready || submit.isPending || estimate.isError} onClick={() => submit.mutate()} aria-label="Generate storyboard">
                   {submit.isPending ? <Loader2 className="animate-spin" /> : <ArrowUp />}
                 </Button>
               </div>
             </div>
             <p className="mt-2 flex items-start gap-1.5 text-[11px] text-muted-foreground">
               <Sparkles className="mt-px size-3 shrink-0" />
-              {mode === "auto"
-                ? visitor
-                  ? "Fuobe splits your story into frames."
-                  : "Fuobe splits your story into frames."
-                : "One prompt per frame. References keep the cast consistent."}
-              {lookName && ` Every frame gets the ${lookName} look's grade${aspect === "21:9" ? ", made at 16:9 and cropped to 21:9" : ""}.`}
+              {mode === "auto" ? "Fuobe splits your story into frames." : "One prompt per frame. References keep the cast consistent."}
+              {sheet && ` One sheet draws every panel at once on MOSS-Image, then cuts it into frames.${ONE_SHEET_GPU_TEST ? "" : " Not yet tested on a GPU (shown to you as the owner)."}`}
+              {!sheet && lookName && ` Every frame gets the ${lookName} look's grade${aspect === "21:9" ? ", made at 16:9 and cropped to 21:9" : ""}.`}
             </p>
           </div>
         </div>

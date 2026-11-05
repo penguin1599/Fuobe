@@ -1,11 +1,16 @@
 import "server-only";
 import { z } from "zod";
 import { BLOCKOUT } from "@/lib/blockout";
+import { GUEST_HEADER, GUEST_LIBRARY_MESSAGE } from "@/lib/guest-access";
+import { PERSPECTIVES, STYLES, WORLD_LIMITS, type Perspective, type WorldStyle } from "@/lib/world";
 import { DISTANCE, MAX_KEYS } from "@/lib/camera-path";
 import { APERTURE, LENS } from "@/lib/scene3d";
+import { AccountProjectError, projectRefsProblem, projectSavesLimited } from "./account-projects";
+import { guestRun, toolViewer, type ToolViewer } from "./account-tool-run";
 import { CinemaError } from "./cinema";
 import { connectRefusal } from "./connect-refusal";
-import { ConnectComfyError } from "./generations";
+import { asAccount, ConnectComfyError } from "./generations";
+import { ShortsError } from "./shorts";
 import { TurnaroundSchema } from "./turnaround";
 
 /** Request bodies of /api/cinema/** (zod drops unknown keys). */
@@ -103,12 +108,34 @@ export const BlockoutSchema = z.object({
   avoid: z.array(z.string().trim().max(120)).max(16).optional(),
 });
 
+/** A World take (src/lib/catalog/cinema.ts WorldRun): the opening and the turns, the turn to run, or the clips to join. */
+const WorldTurnSchema = z.object({
+  words: z.string().max(WORLD_LIMITS.maxScene).default(""),
+  action: z.string().max(WORLD_LIMITS.maxWords).optional(),
+  move: z.string().max(40),
+  seconds: z.number().min(WORLD_LIMITS.minSeconds).max(WORLD_LIMITS.maxSeconds),
+});
+export const WorldSchema = z.object({
+  script: z.object({
+    opening: WorldTurnSchema.extend({
+      subject: z.string().max(120).optional(),
+      details: z.string().max(WORLD_LIMITS.maxWords).optional(),
+      perspective: z.enum(PERSPECTIVES.map((p) => p.id) as [Perspective, ...Perspective[]]).optional(),
+      style: z.enum(STYLES.map((p) => p.id) as [WorldStyle, ...WorldStyle[]]).optional(),
+    }),
+    turns: z.array(WorldTurnSchema).max(WORLD_LIMITS.maxTurns - 1),
+    seed: z.number().int().min(0).max(2 ** 31),
+  }),
+  turn: z.number().int().min(0).max(WORLD_LIMITS.maxTurns - 1),
+  join: z.array(FileRef).min(2).max(WORLD_LIMITS.maxTurns).optional(),
+});
+
 export const GenerateBody = z.object({
   folderId: z.string().max(40).nullable().optional(),
   input: z.object({
     engine: z.enum(["cloud", "open"]),
     mode: z.enum(["video", "image"]),
-    action: z.enum(["generate", "extend-forward", "extend-backward", "edit", "grid", "cast", "location", "location-view", "scene", "recompose", "path", "turnaround", "blockout"]).default("generate"),
+    action: z.enum(["generate", "extend-forward", "extend-backward", "edit", "grid", "cast", "location", "location-view", "scene", "recompose", "path", "turnaround", "blockout", "world"]).default("generate"),
     modelId: z.string().max(80).optional(),
     prompt: z.string().max(60_000).default(""),
     moves: z.array(z.string().max(40)).max(12).optional(),
@@ -174,6 +201,8 @@ export const GenerateBody = z.object({
     turnaround: TurnaroundSchema.omit({ engine: true, realPerson: true, consent: true }).optional(),
     // Blockout to film: the grey box (its depth and first frame when the builder made them), beats, references, words.
     blockout: BlockoutSchema.optional(),
+    // World mode (nm10-hy-nomas-world): the script, the turn to run, or the turns' clips to join (src/lib/world.ts).
+    world: WorldSchema.optional(),
   }),
 });
 
@@ -192,9 +221,60 @@ export async function handle(fn: () => Promise<Response> | Response, request?: R
     return await fn();
   } catch (e) {
     if (e instanceof CinemaError) return Response.json({ error: e.message }, { status: e.status });
+    // An account's project refused (its limit of projects, a project too big to save).
+    if (e instanceof AccountProjectError) return Response.json({ error: e.message }, { status: e.status });
     // A run nothing connected can make: the connect card in the owner's browser (src/server/connect-refusal.ts).
     if (e instanceof ConnectComfyError) return (request && connectRefusal(e, request)) || Response.json({ error: e.message }, { status: 422 });
     console.error("[cinema]", e);
     return Response.json({ error: (e as Error).message || "Something went wrong" }, { status: 500 });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Who asks (public sign-up)
+
+const NO_STORE = { "Cache-Control": "no-store" };
+
+/**
+ * A Cinema route as its asker sees it: the owner's projects as always; a signed-in account's own projects, inside its
+ * own work (asAccount: cinema.ts then reads and changes its projects only, and another's reads as not found); a guest's
+ * change gets the sign-up card and its read nothing of the owner's (as the proxy answers it). `change`: a save, counted
+ * against the account's saves a minute (account-projects.ts).
+ */
+export async function asCinemaViewer(request: Request, fn: (viewer: ToolViewer) => Response | Promise<Response>, opts: { change?: boolean } = {}): Promise<Response> {
+  const viewer = toolViewer(request);
+  if (viewer.kind === "guest") return opts.change ? guestRun() : Response.json({ error: GUEST_LIBRARY_MESSAGE }, { status: 401, headers: { [GUEST_HEADER]: "1", ...NO_STORE } });
+  if (viewer.kind === "owner") return handle(() => fn(viewer), request);
+  if (opts.change) {
+    const limited = projectSavesLimited(viewer.account.id);
+    if (limited) return limited;
+  }
+  const id = viewer.account.id;
+  return handle(() => asAccount(id, () => fn(viewer)), request);
+}
+
+/** The files an account's project names (a cover, a grid's tiles): its own uploads and results only. Null: fine. */
+export function refsRefused(viewer: ToolViewer, files: (string | null | undefined)[]): Response | null {
+  if (viewer.kind !== "account") return null;
+  const problem = projectRefsProblem(viewer.account.id, { files: files.filter((f): f is string => !!f) });
+  return problem ? Response.json({ error: problem.error, code: problem.code }, { status: problem.status, headers: NO_STORE }) : null;
+}
+
+/** Every stored file a request names, wherever it sits in it (each FileRef above: an account's run takes only its own). */
+export function fileRefs(value: unknown, out: string[] = []): string[] {
+  if (typeof value === "string") {
+    if (value.startsWith("/api/files/")) out.push(value);
+  } else if (Array.isArray(value)) for (const v of value) fileRefs(v, out);
+  else if (value && typeof value === "object") for (const v of Object.values(value)) fileRefs(v, out);
+  return out;
+}
+
+/** An account's plan refused with the status Cinema gives it (account-tool-run.ts keeps a ShortsError's status). */
+export function withStatus<T>(fn: () => T): T {
+  try {
+    return fn();
+  } catch (e) {
+    if (e instanceof CinemaError) throw new ShortsError(e.message, e.status);
+    throw e;
   }
 }

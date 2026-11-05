@@ -50,6 +50,7 @@ import {
 } from "@/lib/catalog/canvas";
 import type { Engine, Generation, GenerationRequest, MediaKind } from "@/lib/catalog/types";
 import { readLayout } from "@/lib/layout-prompt";
+import { LATENT_EXTRA } from "@/lib/catalog/regenerate";
 import { createPipeline } from "./chains";
 import { db } from "./db";
 import { listElements } from "./elements";
@@ -58,7 +59,7 @@ import { createGenerations, getGeneration } from "./generations";
 import { silentWav } from "./marketing";
 import { engineMode } from "./settings";
 import { absolutePath, saveFile } from "./storage";
-import { fillSamples } from "./canvas-samples";
+import { fillSamples, isPublishedSample } from "./canvas-samples";
 
 /**
  * Canvas boards (Higgsfield Canvas): the pages the user edits (each a graph, with its groups, comments and
@@ -111,6 +112,7 @@ const NODE_TYPES = [
   "clone-voice",
   "translate",
   "concat",
+  "restore",
   "table",
   "layout",
   "camera-path",
@@ -132,7 +134,11 @@ const Params = z.object({
   voice: z.string().max(200).optional(),
   targetLanguage: z.string().max(80).optional(),
   sourceLanguage: z.string().max(80).optional(),
-  extra: z.record(z.string(), z.union([z.string().max(2000), z.number(), z.boolean()])).optional(),
+  // Less the server's own (MiniMax H3's 2K hand-off), as POST /api/generations drops them.
+  extra: z
+    .record(z.string(), z.union([z.string().max(2000), z.number(), z.boolean()]))
+    .transform((extra) => Object.fromEntries(Object.entries(extra).filter(([k]) => !(LATENT_EXTRA as readonly string[]).includes(k))))
+    .optional(),
 });
 
 /** Free text is clamped, not refused: one over-long paste must never stop the whole board from saving. */
@@ -159,15 +165,28 @@ const LayoutData = z
       : undefined,
   );
 
-const NodeData = z.object({
+/** Media on the owner's boards: Fuobe's own storage (uploads, the library, generated outputs). */
+const OWN_MEDIA = z.string().startsWith("/api/files/").max(2000);
+
+/**
+ * Media on an account's own board: a stored file (the file route checks whose it is when it is read), or one of Fuobe's
+ * published example files a ready board starts with (/examples/…, /samples/…, /previews/presets/…, /starters/…), as a
+ * plain path that never steps out of its folder.
+ */
+const VISITOR_MEDIA = z
+  .string()
+  .max(2000)
+  .refine((u) => u.startsWith("/api/files/") || isPublishedSample(u), "Not a file this board can hold");
+
+const nodeData = (media: z.ZodType<string>) =>
+  z.object({
   label: clamped(80).optional(),
   text: clamped(TEXT_MAX).optional(),
-  // Media comes from Fuobe's own storage (uploads, the library, generated outputs).
-  url: z.string().startsWith("/api/files/").max(2000).optional(),
+  url: media.optional(),
   name: clamped(200).optional(),
   elementId: z.string().max(40).optional(),
   handle: Handle.optional(),
-  preview: z.string().startsWith("/api/files/").max(2000).optional(),
+  preview: media.optional(),
   modelId: z.string().max(120).optional(),
   // A Fuobe Original (runs on both engines): the engine the node runs it on.
   engine: z.enum(["open", "cloud"]).optional(),
@@ -252,14 +271,15 @@ const Shape = z.object({
   points: z.array(z.tuple([z.number().min(-1).max(2), z.number().min(-1).max(2)])).max(BOARD_LIMITS.penPoints).optional(),
 });
 
-export const GraphSchema = z.object({
+const graphSchema = (media: z.ZodType<string>) =>
+  z.object({
   nodes: z
     .array(
       z.object({
         id: z.string().min(1).max(80),
         type: z.enum(NODE_TYPES),
         position: z.object({ x: Num, y: Num }),
-        data: NodeData,
+        data: nodeData(media),
         width: Num.positive().max(4000).optional(),
         height: Num.positive().max(4000).optional(),
       }),
@@ -282,10 +302,17 @@ export const GraphSchema = z.object({
   shapes: z.array(Shape).max(BOARD_LIMITS.shapes).optional(),
 });
 
-export const PagesSchema = z
-  .array(z.object({ id: z.string().min(1).max(40), name: clamped(60), graph: GraphSchema }))
-  .min(1)
-  .max(BOARD_LIMITS.pages);
+export const GraphSchema = graphSchema(OWN_MEDIA);
+
+const pagesSchema = (graph: typeof GraphSchema) =>
+  z
+    .array(z.object({ id: z.string().min(1).max(40), name: clamped(60), graph }))
+    .min(1)
+    .max(BOARD_LIMITS.pages);
+
+export const PagesSchema = pagesSchema(GraphSchema);
+/** An account's own board (account-canvas.ts): the same limits, and Fuobe's published example files may stay in it. */
+const VisitorPagesSchema = pagesSchema(graphSchema(VISITOR_MEDIA));
 
 /** Why a graph from the browser was refused, naming the node (the editor shows it in a toast). */
 export function graphProblem(input: unknown): string {
@@ -343,8 +370,8 @@ export function parseGraph(input: unknown): CanvasGraph | null {
  * Parsed pages: page ids made unique, and a node id used on an earlier page dropped from later ones
  * (results are kept by node id, so two pages can't share one).
  */
-export function parsePages(input: unknown): CanvasPage[] | null {
-  const parsed = PagesSchema.safeParse(input);
+export function parsePages(input: unknown, schema: typeof PagesSchema = PagesSchema): CanvasPage[] | null {
+  const parsed = schema.safeParse(input);
   if (!parsed.success) return null;
   const ids = new Set<string>();
   const nodeIds = new Set<string>();
@@ -356,6 +383,11 @@ export function parsePages(input: unknown): CanvasPage[] | null {
     const nodes = g.nodes.filter((n) => !nodeIds.has(n.id) && nodeIds.add(n.id));
     return { id, name: p.name.trim() || pageName(i), graph: cleanGraph({ ...g, nodes }) };
   });
+}
+
+/** An account's own pages (parsePages, where Fuobe's published example files may stay in an input). */
+export function parseVisitorPages(input: unknown): CanvasPage[] | null {
+  return parsePages(input, VisitorPagesSchema);
 }
 
 // ---------------------------------------------------------------------------

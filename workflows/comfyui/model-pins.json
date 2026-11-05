@@ -970,6 +970,11 @@
   "sizeBytes": 779849816,
   "sha256": "5f3a626cd72c93a8b9318d6760c510bc5092d2ab13aaba1f932c5bab07a416d3"
  },
+ "https://huggingface.co/lightx2v/Minimax-h3-Turbo/resolve/3ec17a324ced54151364f24f8b5fb6bf7e26414f/minimax_h3_fl2v_turbo_4step_v1.2_768p_comfyui_bf16.safetensors": {
+  "revision": "3ec17a324ced54151364f24f8b5fb6bf7e26414f",
+  "sizeBytes": 1956193000,
+  "sha256": "c8168ebc17bbacc4296103dda2fec1ba85b24392fa08cf2bfbcef0cff0dc3cc8"
+ },
  "https://huggingface.co/lightx2v/Minimax-h3-Turbo/resolve/3ec17a324ced54151364f24f8b5fb6bf7e26414f/minimax_h3_fl2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors": {
   "revision": "3ec17a324ced54151364f24f8b5fb6bf7e26414f",
   "sizeBytes": 1956193000,
@@ -1075,6 +1080,76 @@
   "sizeBytes": 675509688,
   "sha256": "36f56608b02077a50a08ea3dbcdb88351298ceba49948f41f9f87186378e6908"
  },
+ "https://huggingface.co/Pika-Labs/Pika-H3-Flex/resolve/3ff166447d5edb1406107ab8370c42000ce173e4/comfy/loras/pika_h3_flex_fl2va_comfy_bf16.safetensors": {
+  "revision": "3ff166447d5edb1406107ab8370c42000ce173e4",
+  "sizeBytes": 1956172176,
+  "sha256": "68783e6447696ec365d13c0554941e070bee4cfea13c37da52498ec4f9a53f89"
+ },
+ "https://huggingface.co/Pika-Labs/Pika-H3-Flex/resolve/3ff166447d5edb1406107ab8370c42000ce173e4/comfy/loras/pika_h3_flex_ref2va_comfy_bf16.safetensors": {
+  "revision": "3ff166447d5edb1406107ab8370c42000ce173e4",
+  "sizeBytes": 1956172176,
+  "sha256": "e4d058fbd027377b925a0ee607b514ddd9037873fee3afa05d73b302e6f7f8e1"
+ },
+ "https://huggingface.co/facebook/dinov2-large/resolve/47b73eefe95e8d44ec3623f8890bd894b6ea2d6c/config.json": {
+  "revision": "47b73eefe95e8d44ec3623f8890bd894b6ea2d6c",
+  "sizeBytes": 549,
+  "sha256": "12df51c069a2dc1305e34ba71ef58bc2407ea553b75f4722a1715c1bce3bbed0"
+ },
+ "https://huggingface.co/facebook/dinov2-large/resolve/47b73eefe95e8d44ec3623f8890bd894b6ea2d6c/model.safetensors": {
+  "revision": "47b73eefe95e8d44ec3623f8890bd894b6ea2d6c",
+  "sizeBytes": 1217522888,
+  "sha256": "399fba97a95f22c36834418bc69373364a99af3a1153da1c0fb31db567c92e23"
+ },
+ "https://huggingface.co/hi3d-official/Hi3Dv1.0/resolve/d502e938cbedc6e87aba8884614c5ca6d177a4b6/model_index.json": {
+  "revision": "d502e938cbedc6e87aba8884614c5ca6d177a4b6",
+  "sizeBytes": 224,
+  "sha256": "e24988612733dad44b7354fbfa0b2ef50073ba6ef8d7a677e41023dc2d651386"
+ },
+ "https://huggingface.co/hi3d-official/Hi3Dv1.0/resolve/d502e938cbedc6e87aba8884614c5ca6d177a4b6/scheduler/scheduler_config.json": {
+  "revision": "d502e938cbedc6e87aba8884614c5ca6d177a4b6",
+  "sizeBytes": 127,
+  "sha256": "40cdcdaaa6149dea32b86a5ff730e581b069ae619d7f580444ef503737fb0bf3"
+ },
+ "https://huggingface.co/hi3d-official/Hi3Dv1.0/resolve/d502e938cbedc6e87aba8884614c5ca6d177a4b6/transformer_1024/config.json": {
+  "revision": "d502e938cbedc6e87aba8884614c5ca6d177a4b6",
+  "sizeBytes": 1337,
+  "sha256": "2f96d851844e159523cb6cf5e5b29ddbc1354e222a333232612c19e1eaf278c2"
+ },
+ "https://huggingface.co/hi3d-official/Hi3Dv1.0/resolve/d502e938cbedc6e87aba8884614c5ca6d177a4b6/transformer_1024/model.safetensors": {
+  "revision": "d502e938cbedc6e87aba8884614c5ca6d177a4b6",
+  "sizeBytes": 3675679280,
+  "sha256": "a2ca5e44dde51cacecd59b42fceeb5f14e75d55e6dd047337752c4e6f281008c"
+ },
+ "https://huggingface.co/hi3d-official/Hi3Dv1.0/resolve/d502e938cbedc6e87aba8884614c5ca6d177a4b6/transformer_512/config.json": {
+  "revision": "d502e938cbedc6e87aba8884614c5ca6d177a4b6",
+  "sizeBytes": 1336,
+  "sha256": "809189b8183c3f44118751322f2cb6fe6fa4ca1922ea16c88cd032970d4bc937"
+ },
+ "https://huggingface.co/hi3d-official/Hi3Dv1.0/resolve/d502e938cbedc6e87aba8884614c5ca6d177a4b6/transformer_512/model.safetensors": {
+  "revision": "d502e938cbedc6e87aba8884614c5ca6d177a4b6",
+  "sizeBytes": 3675679280,
+  "sha256": "8ba88311dccf23463c6e10dd0d3bd5e0c5c35d1608c6f466413b6428b5ad8e56"
+ },
+ "https://huggingface.co/hi3d-official/Hi3Dv1.0/resolve/d502e938cbedc6e87aba8884614c5ca6d177a4b6/vae/config.json": {
+  "revision": "d502e938cbedc6e87aba8884614c5ca6d177a4b6",
+  "sizeBytes": 131,
+  "sha256": "71c629eb188485786227277c7bb5b0fa0a1bfcf07a3d21316174da6b4d04f92f"
+ },
+ "https://huggingface.co/hi3d-official/Hi3Dv1.0/resolve/d502e938cbedc6e87aba8884614c5ca6d177a4b6/vae/model.safetensors": {
+  "revision": "d502e938cbedc6e87aba8884614c5ca6d177a4b6",
+  "sizeBytes": 376629712,
+  "sha256": "605d207c77f8db0b33c567a5861252f0090cf3c3604dfda1cfee09e8f0b53f3e"
+ },
+ "https://huggingface.co/openai/clip-vit-large-patch14/resolve/32bd64288804d66eefd0ccbe215aa642df71cc41/config.json": {
+  "revision": "32bd64288804d66eefd0ccbe215aa642df71cc41",
+  "sizeBytes": 4519,
+  "sha256": "8a09b467700c58138c29d53c605b34ebc69beaadd13274a8a2af8ad2c2f4032a"
+ },
+ "https://huggingface.co/openai/clip-vit-large-patch14/resolve/32bd64288804d66eefd0ccbe215aa642df71cc41/model.safetensors": {
+  "revision": "32bd64288804d66eefd0ccbe215aa642df71cc41",
+  "sizeBytes": 1710540580,
+  "sha256": "a2bf730a0c7debf160f7a6b50b3aaf3703e7e88ac73de7a314903141db026dcb"
+ },
  "https://huggingface.co/gribbliest/qwen-image-2.1-qma-camera-angles/resolve/13007eec2648c09529e930164c2ccc9c8c12428c/qwen-image-2.1-qma-camera-angles.safetensors": {
   "revision": "13007eec2648c09529e930164c2ccc9c8c12428c",
   "sizeBytes": 318820224,
@@ -1168,5 +1243,99 @@
   "revision": "2f76ca75e6ee094169de899cc7fc99d6887e2196",
   "sizeBytes": 1386868122,
   "sha256": "5fd960ce3df281e3f3a889d174584d88f96247711480cf96377b12d7e8b6adc5"
+ },
+ "https://huggingface.co/Comfy-Org/Hunyuan-Video/resolve/533a43813f01517d9e624f9e824a85bb94094120/split_files/vae/hunyuan_video_vae_bf16.safetensors": {
+  "revision": "533a43813f01517d9e624f9e824a85bb94094120",
+  "sizeBytes": 492984198,
+  "sha256": "e8f8553275406d84ccf22e7a47601650d8f98bdb8aa9ccfdd6506b57a9701aed"
+ },
+ "https://huggingface.co/Comfy-Org/Qwen-Image/resolve/1f12b17be14c89b026c51a91d67c32f84bb047bc/split_files/text_encoders/qwen_2.5_vl_7b.safetensors": {
+  "revision": "1f12b17be14c89b026c51a91d67c32f84bb047bc",
+  "sizeBytes": 16584415576,
+  "sha256": "cfafd739459bc86257397259f612a9aee88e5b98e85b5c0d0d1717e898b3463a"
+ },
+ "https://huggingface.co/Comfy-Org/Qwen3.5/resolve/5d50a2252bf1bcd49e5fee9b5f296986d442682b/text_encoders/qwen3.5_9b_bf16.safetensors": {
+  "revision": "5d50a2252bf1bcd49e5fee9b5f296986d442682b",
+  "sizeBytes": 19306312328,
+  "sha256": "7e6e9f08d598f829cb940e60ac0c698e1f1c27a47daffd7e598cd78c78b4cc53"
+ },
+ "https://huggingface.co/hkchengrex/MMAudio/resolve/eb13a1a98fdbec91753775c57b074ccdfc60587c/ext_weights/v1-44.pth": {
+  "revision": "eb13a1a98fdbec91753775c57b074ccdfc60587c",
+  "sizeBytes": 1221942998,
+  "sha256": "ab6cc15dc31947675f75c950c41f4dcfd0d6d1817555ac871f809ec388e4651a"
+ },
+ "https://huggingface.co/kandinskylab/Kandinsky-6.0-Lite-distill-5s-Diffusers/resolve/4c487e8b4aeeb9059e5a77905aa2ddb59ec28f81/transformer/diffusion_pytorch_model.safetensors": {
+  "revision": "4c487e8b4aeeb9059e5a77905aa2ddb59ec28f81",
+  "sizeBytes": 6381599096,
+  "sha256": "b1b52668561d9138d93bb4da13c9999e615bf569be9f8cf65732d54652447f53"
+ },
+ "https://huggingface.co/kandinskylab/Kandinsky-6.0-Pro-distill-5s-Diffusers/resolve/80d5e6c7f646c5f512b684e2da0765618d805894/transformer/diffusion_pytorch_model.safetensors": {
+  "revision": "80d5e6c7f646c5f512b684e2da0765618d805894",
+  "sizeBytes": 60344993576,
+  "sha256": "f84ea3266560bbd1f203a874b8cee43e080073820facaf3306cab8fae2798a97"
+ },
+ "https://huggingface.co/kandinskylab/Kandinsky-6.0-VSR-distilled2steps-5s-Diffusers/resolve/3d6672923a4dfcd387961864654e123dd53b8ee4/latent_upscaler/config.json": {
+  "revision": "3d6672923a4dfcd387961864654e123dd53b8ee4",
+  "sizeBytes": 2258
+ },
+ "https://huggingface.co/kandinskylab/Kandinsky-6.0-VSR-distilled2steps-5s-Diffusers/resolve/3d6672923a4dfcd387961864654e123dd53b8ee4/latent_upscaler/diffusion_pytorch_model.safetensors": {
+  "revision": "3d6672923a4dfcd387961864654e123dd53b8ee4",
+  "sizeBytes": 7308101968,
+  "sha256": "ee43faf02cda418cf368a9c391e27f90045b440d16088ad0c3d1a04b763dcd91"
+ },
+ "https://huggingface.co/kandinskylab/Kandinsky-6.0-VSR-distilled2steps-5s-Diffusers/resolve/3d6672923a4dfcd387961864654e123dd53b8ee4/model_index.json": {
+  "revision": "3d6672923a4dfcd387961864654e123dd53b8ee4",
+  "sizeBytes": 359
+ },
+ "https://huggingface.co/kandinskylab/Kandinsky-6.0-VSR-distilled2steps-5s-Diffusers/resolve/3d6672923a4dfcd387961864654e123dd53b8ee4/scheduler/scheduler_config.json": {
+  "revision": "3d6672923a4dfcd387961864654e123dd53b8ee4",
+  "sizeBytes": 231
+ },
+ "https://huggingface.co/kandinskylab/Kandinsky-6.0-VSR-distilled2steps-5s-Diffusers/resolve/3d6672923a4dfcd387961864654e123dd53b8ee4/transformer/config.json": {
+  "revision": "3d6672923a4dfcd387961864654e123dd53b8ee4",
+  "sizeBytes": 1214
+ },
+ "https://huggingface.co/kandinskylab/Kandinsky-6.0-VSR-distilled2steps-5s-Diffusers/resolve/3d6672923a4dfcd387961864654e123dd53b8ee4/transformer/diffusion_pytorch_model.safetensors": {
+  "revision": "3d6672923a4dfcd387961864654e123dd53b8ee4",
+  "sizeBytes": 3187645192,
+  "sha256": "02462583bbc99ae8be8a4bb2aab1b62babfdda1302806f938fca94ed3fabf1fe"
+ },
+ "https://huggingface.co/kandinskylab/Kandinsky-6.0-VSR-distilled2steps-5s-Diffusers/resolve/3d6672923a4dfcd387961864654e123dd53b8ee4/vae/config.json": {
+  "revision": "3d6672923a4dfcd387961864654e123dd53b8ee4",
+  "sizeBytes": 569
+ },
+ "https://huggingface.co/kandinskylab/Kandinsky-6.0-VSR-distilled2steps-5s-Diffusers/resolve/3d6672923a4dfcd387961864654e123dd53b8ee4/vae/diffusion_pytorch_model.safetensors": {
+  "revision": "3d6672923a4dfcd387961864654e123dd53b8ee4",
+  "sizeBytes": 6955556660,
+  "sha256": "079413ec24542e5c20bd98e6a49a82c0a1f3e64add1c2fc12eff3fdfe6498bf8"
+ },
+ "https://huggingface.co/nvidia/bigvgan_v2_44khz_128band_512x/resolve/95a9d1dcb12906c03edd938d77b9333d6ded7dfb/bigvgan_generator.pt": {
+  "revision": "95a9d1dcb12906c03edd938d77b9333d6ded7dfb",
+  "sizeBytes": 489041291,
+  "sha256": "d9fe7ec6bd0b44ed9d66973d5012d8181c1570b01e5c72df51973e241dccd357"
+ },
+ "https://huggingface.co/nvidia/bigvgan_v2_44khz_128band_512x/resolve/95a9d1dcb12906c03edd938d77b9333d6ded7dfb/config.json": {
+  "revision": "95a9d1dcb12906c03edd938d77b9333d6ded7dfb",
+  "sizeBytes": 1403
+ },
+ "https://huggingface.co/briaai/VRMBG-3.0/resolve/59716e19a6cc97f91311edea190938219c097b76/model.safetensors": {
+  "revision": "59716e19a6cc97f91311edea190938219c097b76",
+  "sizeBytes": 884915688,
+  "sha256": "3100fd296d2991f4859db9d83c43ece45f432659b06db3d79810dad033c62253"
+ },
+ "https://huggingface.co/nynxz/Hy-Nomas/resolve/e8ddc4bfa664d69213930552493c220c3af56f41/nomas_dit_distilled_int8_convrot.safetensors": {
+  "revision": "e8ddc4bfa664d69213930552493c220c3af56f41",
+  "sizeBytes": 8966889488,
+  "sha256": "0cf9c169c22149c83c647485e5e30319f137cd153a62bdf5813bc0657520b835"
+ },
+ "https://huggingface.co/nynxz/Hy-Nomas/resolve/e8ddc4bfa664d69213930552493c220c3af56f41/nomas_dit_distilled_bf16.safetensors": {
+  "revision": "e8ddc4bfa664d69213930552493c220c3af56f41",
+  "sizeBytes": 17107123184,
+  "sha256": "fecc7c94de4c4d7a9513e4d9c15c430fad24927554e5a2531b2d36313bafdbb7"
+ },
+ "https://huggingface.co/nynxz/Hy-Nomas/resolve/e8ddc4bfa664d69213930552493c220c3af56f41/nomas_pixelumm_vae_bf16.safetensors": {
+  "revision": "e8ddc4bfa664d69213930552493c220c3af56f41",
+  "sizeBytes": 15776972360,
+  "sha256": "2003b63f87917f80061d0196c3114c70374c4d60a44ce72e03cf52305eeaa5e3"
  }
 }

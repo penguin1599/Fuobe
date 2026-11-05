@@ -401,7 +401,8 @@ describe("Idol 3D (image-to-splat-idol on the open engine, speridlabs/idol on fa
       getWorkflow("image-to-splat-idol").manifest,
     );
     expect(outs.map((o) => [o.kind, o.contentType, o.meta])).toEqual([
-      ["model3d", "model/x-spz", { role: "splat", format: "spz" }],
+      // idol-2: the core graph's splat says it wasn't pruned (the clean graph needs the ComfyUI-Idol pack).
+      ["model3d", "model/x-spz", { role: "splat", format: "spz", pruned: false }],
       ["video", undefined, { role: "turntable" }],
     ]);
     expect(gens.pickOutput(outs as never, { slot: "video" } as never)?.kind).toBe("video");

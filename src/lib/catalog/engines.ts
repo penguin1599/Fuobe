@@ -16,8 +16,8 @@ export const runsOn = (m: Pick<ModelDef, "engine" | "engines">, engine: Engine):
 /** A model that runs on both engines. */
 export const dualEngine = (m: Pick<ModelDef, "engines"> | undefined): boolean => (m?.engines?.length ?? 0) > 1;
 
-/** The engine a provider runs on: ComfyUI and the browser are the open engine, the rest the cloud. */
-export const providerEngine = (p: ProviderId): Engine => (p === "comfyui" || p === "local" ? "open" : "cloud");
+/** The engine a provider runs on: ComfyUI, the WorldCast worker and the browser are the open engine, the rest the cloud. */
+export const providerEngine = (p: ProviderId): Engine => (p === "comfyui" || p === "local" || p === "worldcast" ? "open" : "cloud");
 
 const views = new WeakMap<ModelDef, Partial<Record<Engine, ModelDef>>>();
 

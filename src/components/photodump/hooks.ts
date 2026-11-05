@@ -1,8 +1,16 @@
 "use client";
 
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { COMPUTER_KICK_EVENT, useElements, useSaveElement, useViewer } from "@/lib/api";
+import type { StudioElement } from "@/lib/catalog/elements";
 import type { Generation } from "@/lib/catalog/types";
 import { responseError } from "@/lib/refusals";
+
+/**
+ * A run started: the tab that runs this person's jobs on the ComfyUI on this computer (an account's "Your GPU") asks for
+ * them at once, as after a studio run.
+ */
+const kick = () => window.dispatchEvent(new Event(COMPUTER_KICK_EVENT));
 
 async function json<T>(res: Response): Promise<T> {
   const body = (await res.json().catch(() => ({}))) as T & { error?: string };
@@ -48,6 +56,7 @@ export function useRun<B>(url: string) {
   return useMutation({
     mutationFn: (body: B) => post<{ batchId?: string; items: Generation[]; notes?: string[] }>(url, body),
     onSuccess: () => {
+      kick();
       void qc.invalidateQueries({ queryKey: ["generations"] });
       void qc.invalidateQueries({ queryKey: ["library"] });
     },
@@ -60,6 +69,7 @@ export function useRetryPhoto() {
   return useMutation({
     mutationFn: (id: string) => post<{ items: Generation[] }>("/api/photodump/retry", { id }),
     onSuccess: () => {
+      kick();
       void qc.invalidateQueries({ queryKey: ["generations"] });
       void qc.invalidateQueries({ queryKey: ["library"] });
     },
@@ -82,4 +92,50 @@ export function usePackActions() {
     onSuccess: done,
   });
   return { create, remove };
+}
+
+/** An account's own character (src/server/photodump.ts PhotoCharacter). */
+interface PhotoCharacter {
+  id: string;
+  name: string;
+  references: string[];
+  createdAt: number;
+}
+
+/** An account's character in the shape the pickers read: no handle to @mention (that's the owner's elements), no Soul ID. */
+const asElement = (c: PhotoCharacter): StudioElement => ({ id: c.id, name: c.name, handle: c.name, kind: "character", description: null, references: c.references, loras: [], status: "ready", createdAt: c.createdAt });
+
+/** Whether characters here are the owner's elements (@mentions, Soul IDs) or the visitor's own photo characters. */
+export function useOwnsElements(): boolean {
+  return useViewer().data?.owner === true;
+}
+
+/**
+ * The characters Photodump and Fashion Factory pick from: the owner's saved elements, or an account's own characters
+ * (none for a guest).
+ */
+export function usePhotoCharacters(): { data?: StudioElement[]; isLoading: boolean } {
+  const owner = useOwnsElements();
+  const elements = useElements();
+  const own = useQuery({
+    queryKey: ["photo-characters"],
+    queryFn: async () => (await json<{ items: PhotoCharacter[] }>(await fetch("/api/photodump/characters"))).items.map(asElement),
+    enabled: !owner,
+    staleTime: 10_000,
+  });
+  return owner ? { data: elements.data, isLoading: elements.isLoading } : { data: own.data, isLoading: own.isLoading };
+}
+
+/** Save a character: an element for the owner, the account's own character otherwise. */
+export function useSaveCharacter() {
+  const owner = useOwnsElements();
+  const element = useSaveElement();
+  const qc = useQueryClient();
+  const own = useMutation({
+    mutationFn: async (b: { name: string; references: string[] }) => asElement(await post<PhotoCharacter>("/api/photodump/characters", b)),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["photo-characters"] }),
+  });
+  const save = (b: { name: string; references: string[] }, opts?: { onSuccess?: (el: StudioElement) => void; onError?: (e: Error) => void }) =>
+    owner ? element.mutate({ ...b, kind: "character" }, opts) : own.mutate(b, opts);
+  return { save, owner, isPending: element.isPending || own.isPending, data: owner ? element.data : own.data };
 }

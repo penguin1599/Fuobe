@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useGenerationEvents } from "@/lib/api";
+import { COMPUTER_KICK_EVENT, useGenerationEvents } from "@/lib/api";
 import type { KatanaJobView, Segment } from "@/lib/av/katana";
 import type { Engine } from "@/lib/catalog/types";
 import { responseError } from "@/lib/refusals";
@@ -59,11 +59,18 @@ export function useKatanaPreview(body: KatanaBody | null) {
   });
 }
 
+/**
+ * A run started: the tab that runs this person's jobs on the ComfyUI on this computer (an account's "Your GPU") asks for
+ * them at once, as after a studio run.
+ */
+const kick = () => window.dispatchEvent(new Event(COMPUTER_KICK_EVENT));
+
 export function useKatanaActions() {
   const qc = useQueryClient();
   const start = useMutation({
     mutationFn: (body: KatanaBody) => post<KatanaJobView>("/api/katana", body),
     onSuccess: (job) => {
+      kick();
       qc.setQueryData<KatanaJobView[]>(["katana"], (xs) => [job, ...(xs ?? [])]);
       void qc.invalidateQueries({ queryKey: ["generations"] });
     },
@@ -80,6 +87,7 @@ export function useKatanaActions() {
   const retry = useMutation({
     mutationFn: async ({ id, all }: { id: string; all?: boolean }) => json<KatanaJobView>(await fetch(`/api/katana/${id}/retry${all ? "?all=1" : ""}`, { method: "POST" })),
     onSuccess: (job, { all }) => {
+      kick();
       qc.setQueryData<KatanaJobView[]>(["katana"], (xs) => (all ? [job, ...(xs ?? [])] : (xs ?? []).map((j) => (j.id === job.id ? job : j))));
       void qc.invalidateQueries({ queryKey: ["generations"] });
     },

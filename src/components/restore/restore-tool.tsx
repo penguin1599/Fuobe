@@ -16,9 +16,11 @@ import { ClipBar, ClipDrop, costText, Field, Segmented } from "@/components/shor
 import { clipDuration, clipSize, useSourceClip } from "@/components/shorts/use-source-clip";
 import { Feed } from "@/components/studio/feed";
 import { MediaSlot, type SlotValue } from "@/components/studio/media-slot";
-import { SelfHostNote } from "@/components/self-host-note";
+import { OwnSetupChip, useOwnSetupPress } from "@/components/own-setup";
+import type { OwnSetup } from "@/lib/own-setup";
 import { useEngine, useGenerations, useLikelyVisitor } from "@/lib/api";
-import { CLOUD_NOTE, GPU_NOTE, RESTORE, RESTORE_UPSCALE, restoreNegative } from "@/lib/catalog/restore";
+import { CLOUD_NOTE, GPU_NOTE, offlineRestorePrompt, RESTORE, RESTORE_UPSCALE, restoreNegative } from "@/lib/catalog/restore";
+import type { Engine } from "@/lib/catalog/types";
 import { THEN_UPSCALE } from "@/lib/catalog/upscale-first";
 import { chainState } from "@/lib/catalog/shorts";
 import { downloadHref, downloadName } from "@/lib/library";
@@ -44,10 +46,17 @@ interface Run {
  * to 4K, deinterlacing and a reference picture; priced before it runs ("Free" on your GPU); the result with a before /
  * after wipe. A clip handed over from the Library or a result arrives as ?video=.
  */
-export function RestoreTool() {
-  const [engine] = useEngine();
-  // Guests and free accounts: it plans with the studio's own AI helpers and joins on the server (own-gpu-tool).
+export function RestoreTool({ setup }: { setup?: OwnSetup | null } = {}) {
+  // What the page read for "video-tools:restore" (ownSetupsNow): null once its graph is validated, when the label leaves.
+  const item = setup === undefined ? "video-tools:restore" : setup;
+  // Guests and accounts: it runs on the visitor's own GPU (own-setup.ts "video-tools:restore"), so their page is the
+  // GPU's whatever the engine switch says: the cloud engine carries the gated Restore IC-LoRA, which never goes with a
+  // visitor's own key. A guest signs up first, an account without a GPU connects one; the words come from Fuobe's
+  // template (the studio's AI helper is the owner's).
   const visitor = useLikelyVisitor();
+  const [chosen] = useEngine();
+  const engine: Engine = visitor ? "open" : chosen;
+  const press = useOwnSetupPress();
   const source = useSourceClip(RESTORE.maxBytes);
   const clip = source.clip;
   const [prompt, setPrompt] = useState("");
@@ -94,9 +103,7 @@ export function RestoreTool() {
   const estimate = useRestoreEstimate(body);
   const est = estimate.data && !estimate.isError ? estimate.data : undefined;
 
-  const blocker = visitor
-    ? "Restore & colourise isn't available here"
-    : !clip
+  const blocker = !clip
     ? "Add a clip"
     : clip.error
       ? clip.error
@@ -114,6 +121,14 @@ export function RestoreTool() {
 
   const write = async () => {
     if (!clip) return;
+    if (visitor) {
+      // Fuobe's template, filled with the words given: edit it to fit the footage.
+      const t = offlineRestorePrompt(prompt.trim() || undefined);
+      setPrompt(t.prompt);
+      setNegative(t.negative);
+      setBy("offline");
+      return;
+    }
     setWriting(true);
     try {
       const frames = await grabFrames(clip.preview, duration).catch(() => []);
@@ -131,6 +146,8 @@ export function RestoreTool() {
 
   const start = () => {
     if (blocker || !body) return void toast(blocker ?? "Not ready yet", { id: "restore-blocker" });
+    // A visitor without its own GPU or key gets the card that sets one up.
+    if (!press(item)) return;
     void runGuard(JSON.stringify(body), (requestId) => actions.run.mutateAsync({ ...body, requestId }))
       .then((r) => {
         if (!r) return;
@@ -146,13 +163,13 @@ export function RestoreTool() {
   };
 
   return (
-    <ToolShell title="Video tools" wide selfHostedOnly>
+    <ToolShell title="Video tools" wide>
       {!clip && (
         <ToolHero
           title="Restore & colourise"
-          subtitle={`Old scans, tape and black-and-white film back in colour, clean and sharp${visitor ? "." : ", free on your own ComfyUI."}`}
+          subtitle="Old scans, tape and black-and-white film back in colour, clean and sharp, free on your own ComfyUI."
         >
-          {visitor && <SelfHostNote className="mt-3 max-w-xl">Restore &amp; colourise isn&apos;t available here.</SelfHostNote>}
+          {visitor && <OwnSetupChip setup={item} short={false} className="mt-3" />}
         </ToolHero>
       )}
       <div className={cn("mx-auto", clip ? "pt-4" : "mt-8 max-w-[640px]")}>
@@ -160,8 +177,10 @@ export function RestoreTool() {
           <ClipDrop
             accept={RESTORE.accept}
             limits={LIMITS}
-            disabled={visitor}
+            gpuOnly
             onFile={(f) => {
+              // A visitor without its own GPU or key sets one up first (its files are kept for runs there).
+              if (!press(item)) return;
               const err = source.pick(f);
               if (err) toast.error(err);
             }}
@@ -241,10 +260,10 @@ export function RestoreTool() {
                   className="max-h-56 resize-y"
                 />
                 <div className="flex flex-wrap items-center gap-2">
-                  <Button size="sm" variant="outline" className="rounded-full" onClick={() => void write()} disabled={writing || !clip || visitor}>
+                  <Button size="sm" variant="outline" className="rounded-full" onClick={() => void write()} disabled={writing || !clip}>
                     {writing ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />} Write it from the frames
                   </Button>
-                  <span className="text-[12px] text-muted-foreground">{open ? "A local model that sees pictures" : "Claude"}, else Fuobe&apos;s template · never starts a run</span>
+                  <span className="text-[12px] text-muted-foreground">{visitor ? "Fuobe's template" : <>{open ? "A local model that sees pictures" : "Claude"}, else Fuobe&apos;s template</>} · never starts a run</span>
                 </div>
               </Field>
 
@@ -297,7 +316,7 @@ export function RestoreTool() {
                     ) : (
                       <>
                         <p className="flex items-center gap-1.5 text-[15px] font-semibold tabular-nums">
-                          {costText(est, engine, visitor)}
+                          {costText(est, engine)}
                           {estimate.isFetching && <Loader2 className="size-3 animate-spin text-muted-foreground" aria-label="Updating the price" />}
                         </p>
                         {est && (
@@ -308,7 +327,7 @@ export function RestoreTool() {
                       </>
                     )}
                   </div>
-                  <Button className="rounded-full" onClick={start} disabled={!!blocker || actions.run.isPending || visitor}>
+                  <Button className="rounded-full" onClick={start} disabled={!!blocker || actions.run.isPending}>
                     {actions.run.isPending ? <Loader2 className="size-4 animate-spin" /> : <Wand2 className="size-4" />} Restore
                   </Button>
                 </div>

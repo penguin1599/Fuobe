@@ -1,0 +1,75 @@
+{
+  "$schema": "./case.schema.json",
+  "suite": "idol-views",
+  "title": "Idol 3D's other sides · front, left, back and right from one picture",
+  "description": "Package idol-8 (docs/research/idol-9.md §8, §9 idol-8): \"Make the other sides from the front (Idol 3D)\" in Image to 3D → From several images and \"Add side and back views\" in Elements. Idol 3D builds a splat of the object on your GPU and image-to-views-idol renders it four times from the camera Idol predicted, a quarter turn apart (index 0 front, 1 the object's left, 2 its back, 3 its right; needs the ComfyUI-Idol pack). Faces and characters are the risky case: 20 of Idol's 94 demo presets are figurines and realistic people are untested, so look at every case's four views side by side before the buttons are promoted, and keep the cases of people in. Your own pictures go in local/idol-views/: figurine.png (a toy figure), character.png (a generated full-body character on a plain background), person.png (a photo of a consenting person, full body), product.png (a product photo), mug.png (a mug with its handle on its own left: facing the mug, the handle is on your right, so view 1 must show the handle toward the camera; the side check) and glass.png (a glass or a thin, shiny object). identity scores the views against the picture (faces only, so the back is expected to miss); clip and aesthetic say whether the views read as the object. This suite belongs with idol-3's splat A/B when that lands.",
+  "original": "oss-idol",
+  "kind": "image",
+  "decides": "Whether the views are good enough to offer on characters and people, or only on objects and figurines; and whether Quick look's settings are enough for references.",
+  "targets": {
+    "open": { "models": ["oss-idol"], "op": "splat" },
+    "demo": { "models": ["oss-idol"], "op": "splat" }
+  },
+  "defaults": { "seeds": [1001, 2002], "metrics": ["identity", "clip", "aesthetic"], "timeoutSeconds": 1800, "candidate": "best" },
+  "variants": {
+    "best": {
+      "description": "What the buttons run: Idol's Best settings (50 Euler steps, 262,144 Gaussians), the photo crop for photos",
+      "extra": { "idolViews": true, "steps": 50, "sampler": "euler", "cfg": 4, "numGaussians": 262144 }
+    },
+    "quick": {
+      "description": "Quick look's settings (20 dpmpp_2m steps, 65,536 Gaussians): is a cheaper run enough for references?",
+      "extra": { "idolViews": true, "steps": 20, "sampler": "dpmpp_2m", "cfg": 4, "numGaussians": 65536 }
+    }
+  },
+  "cases": [
+    {
+      "id": "idol-views/figurine",
+      "title": "A toy figure (the kind Idol's own demos show)",
+      "inputs": { "images": ["local/idol-views/figurine.png"] },
+      "demoInputs": { "images": ["fixtures/character/drawn-face-1.png"] },
+      "references": "local/idol-views/figurine.png",
+      "prompts": [{ "id": "views", "text": "the same toy figure seen from the front, its left side, its back and its right side" }]
+    },
+    {
+      "id": "idol-views/character",
+      "title": "A generated full-body character on a plain background",
+      "inputs": { "images": ["local/idol-views/character.png"] },
+      "demoInputs": { "images": ["fixtures/character/drawn-face-2.png"] },
+      "references": "local/idol-views/character.png",
+      "prompts": [{ "id": "views", "text": "the same character, full body, seen from the front, the left, the back and the right" }]
+    },
+    {
+      "id": "idol-views/person",
+      "title": "A photo of a real, consenting person (untested territory for Idol)",
+      "inputs": { "images": ["local/idol-views/person.png"] },
+      "demoInputs": { "images": ["fixtures/character/drawn-face-3.png"] },
+      "references": "local/idol-views/person.png",
+      "extra": { "photoCrop": true },
+      "prompts": [{ "id": "views", "text": "the same person, full body, seen from the front, the left, the back and the right" }]
+    },
+    {
+      "id": "idol-views/product",
+      "title": "A product photo",
+      "inputs": { "images": ["local/idol-views/product.png"] },
+      "demoInputs": { "images": ["fixtures/start-frame.png"] },
+      "extra": { "photoCrop": true },
+      "prompts": [{ "id": "views", "text": "the same product seen from the front, its left side, its back and its right side" }]
+    },
+    {
+      "id": "idol-views/mug-side-check",
+      "title": "A mug with its handle on its own left: view 1 shows the handle toward the camera",
+      "inputs": { "images": ["local/idol-views/mug.png"] },
+      "demoInputs": { "images": ["fixtures/start-frame.png"] },
+      "extra": { "photoCrop": true },
+      "prompts": [{ "id": "views", "text": "a mug seen from the front, then from its left with the handle toward the camera, from the back and from its right" }]
+    },
+    {
+      "id": "idol-views/glass",
+      "title": "A glass or a thin, shiny object (the hard case for a splat)",
+      "inputs": { "images": ["local/idol-views/glass.png"] },
+      "demoInputs": { "images": ["fixtures/end-frame.png"] },
+      "extra": { "photoCrop": true },
+      "prompts": [{ "id": "views", "text": "the same glass object seen from the front, the left, the back and the right" }]
+    }
+  ]
+}

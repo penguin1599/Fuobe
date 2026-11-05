@@ -11,8 +11,8 @@ import { getTemplate } from "@/lib/catalog/canvas";
 import { runsOn } from "@/lib/catalog/engines";
 import type { ModelDef } from "@/lib/catalog/types";
 import { EXAMPLE_MEDIA } from "@/lib/examples/media.generated";
-import { HOME_BENTO_MEDIA, HOME_BENTO_REEL, HOME_BENTO_TINT, HOME_BENTO_WAVE } from "@/lib/home-bento.generated";
-import type { ReelClip } from "@/lib/home-reel";
+import { HOME_BENTO_GENJUTSU, HOME_BENTO_MEDIA, HOME_BENTO_REEL, HOME_BENTO_TINT } from "@/lib/home-bento.generated";
+import type { ReelClip, ReelWipe } from "@/lib/home-reel";
 import type { Demo } from "@/lib/live/demo";
 import { presetCover } from "@/lib/preset-covers";
 import { templateCover } from "@/lib/template-covers";
@@ -34,19 +34,25 @@ export const BENTO_CLIP_FALLBACK = 1024;
 /** The Image studio's example the image tile shows and opens with (src/lib/examples/plan.json). */
 export const BENTO_IMAGE_EXAMPLE = { id: "image.4", out: "/examples/image/4/out.jpg" };
 /**
- * The Genjutsu tile: Genjutsu's own Group swap example (a couple, both people swapped in one take; the studio's cover
- * "genjutsu-group-swap"), cut by scripts/gen-home-bento.mjs into `name`'s copies, with the original clip's first frame in
- * a small window. Its id in the playback store is its own, so a card lower down can play the same clip.
+ * The Genjutsu tile: a reel of swaps shown as they happen (HOME_BENTO_GENJUTSU, made by scripts/gen-home-bento.mjs):
+ * Genjutsu's own Group swap example first (a couple, both people swapped in one take; the studio's cover
+ * "genjutsu-group-swap"), then a character swap by the lake. Each opens on the original clip, and a divider sweeps the
+ * swapped take in across it. Its id in the playback store is its own, so a card lower down can play the same cover.
+ * Each clip ends faded to dark: after `hold` ms on that dark frame the next fades in over it, in `fade` ms (two faces
+ * are never laid over each other).
  */
-export const BENTO_GENJUTSU = { id: "home-genjutsu", cover: "genjutsu-group-swap", name: "genjutsu", original: "genjutsu-original" } as const;
-/** The widths the Genjutsu clip comes in: its render is 1024 px wide, and nothing is made up past that. */
-export const BENTO_GENJUTSU_WIDTHS = [640, 1024] as const;
-/** The widths of the original's window (it shows at up to about 130 px wide: 480 covers a 3x screen). */
-export const BENTO_ORIGINAL_WIDTHS = [240, 480] as const;
-/** The example whose original clip's first frame the window shows (Genjutsu's Character swap example, src/lib/examples). */
-export const GENJUTSU_ORIGINAL = "/examples/genjutsu-character/1/in-clip.jpg";
+export const BENTO_GENJUTSU = { id: "home-genjutsu", cover: "genjutsu-group-swap", hold: 100, fade: 400 } as const;
+/** The widths the Genjutsu clips come in: their renders are about 1024 px wide, and nothing is made up past that. */
+export const BENTO_GENJUTSU_WIDTHS = [640, 768, 1024] as const;
 /** The Canvas board the canvas tile draws: the same film as /canvas's "What's a canvas?". */
 export const BENTO_BOARD = "effect-chain-pearl-earring";
+/**
+ * The Audio tile: Clean up voice's own demo, played in the tile (src/components/home/bento-voice.tsx, with the studio's
+ * sound: src/components/audio-tools/use-clean-voice-demo.ts). Its photos are copies of the demo's, made by
+ * scripts/gen-home-bento.mjs in these widths: `room` as it is, and `quiet`, the room softened around her, which shows
+ * once the noise is off.
+ */
+export const BENTO_VOICE = { room: "voice-room", quiet: "voice-quiet", widths: [480, 768, 1024] } as const;
 /** The steps the live tile plays: the portrait session's first three changes (Home's Live edit section plays the room). */
 export const BENTO_LIVE_STEPS = ["s0", "s1", "s2", "s3"];
 
@@ -54,7 +60,7 @@ export const BENTO_LIVE_STEPS = ["s0", "s1", "s2", "s3"];
 export const BENTO_HREFS = {
   video: "/cinema",
   image: `/image?example=${BENTO_IMAGE_EXAMPLE.id}`,
-  audio: "/audio",
+  audio: "/audio/clean",
   threeD: "/image-to-3d",
   genjutsu: "/genjutsu",
   numbers: "#home-studios",
@@ -86,6 +92,15 @@ export interface BentoReelTile {
   id: string;
   poster: BentoPicture;
   reel: ReelClip[];
+}
+
+/**
+ * The Genjutsu tile: a reel whose clips each show a swap under a divider (`wipes`, one per clip), and `still`, the first
+ * clip with its divider at rest half way across, which the tile shows instead of the poster under reduced motion.
+ */
+export interface BentoWipeTile extends BentoReelTile {
+  still: BentoPicture;
+  wipes: ReelWipe[];
 }
 
 export interface BentoTile {
@@ -211,6 +226,24 @@ export async function homeBento(f: BentoFacts) {
       }),
     };
   };
+  // The Genjutsu tile's reel: each clip in its three widths; the first one's first frame as the poster, and the same
+  // clip at rest half way across as the reduced-motion still (a JPEG of the poster for a browser without AVIF).
+  const genjutsu = (): BentoWipeTile => {
+    const first = HOME_BENTO_GENJUTSU[0].name;
+    const fallback = made(`/previews/home/${first}-${BENTO_CLIP_FALLBACK}.jpg`);
+    return {
+      id: BENTO_GENJUTSU.id,
+      poster: { avif: BENTO_GENJUTSU_WIDTHS.map((w) => ({ src: made(`/previews/home/${first}-${w}.avif`), w })), fallback, tint: HOME_BENTO_TINT[first] },
+      still: { avif: BENTO_GENJUTSU_WIDTHS.map((w) => ({ src: made(`/previews/home/${first}-split-${w}.avif`), w })), fallback, tint: HOME_BENTO_TINT[first] },
+      reel: HOME_BENTO_GENJUTSU.map((c) => ({
+        id: c.name,
+        hold: BENTO_GENJUTSU.hold,
+        fade: BENTO_GENJUTSU.fade,
+        clips: BENTO_GENJUTSU_WIDTHS.map((w) => ({ src: made(`/previews/home/${c.name}-${w}.mp4`), w })),
+      })),
+      wipes: HOME_BENTO_GENJUTSU.map(({ labels, fps, fadeFrom, line }) => ({ labels, fps, fadeFrom, line })),
+    };
+  };
   // A moving tile: its poster (the clip's first frame) and its clip, each in every width it comes in; for a browser
   // without AVIF, the 1024 px clip's first frame as a JPEG.
   const moving = (id: string, name: string, widths: readonly number[] = BENTO_CLIP_WIDTHS): BentoMovingTile => ({
@@ -221,6 +254,11 @@ export async function homeBento(f: BentoFacts) {
       tint: HOME_BENTO_TINT[name],
     },
     clips: widths.map((w) => ({ src: made(`/previews/home/${name}-${w}.mp4`), w })),
+  });
+  // The Audio tile's photos, each in its widths, and a JPEG at 1024 px for a browser without AVIF.
+  const voicePic = (name: string): BentoPicture => ({
+    avif: BENTO_VOICE.widths.map((w) => ({ src: made(`/previews/home/${name}-${w}.avif`), w })),
+    fallback: made(`/previews/home/${name}-${BENTO_CLIP_FALLBACK}.jpg`),
   });
   const tile = (key: BentoKey, kind: string, meta: string, title: string, cta: string): BentoTile => ({
     key,
@@ -235,7 +273,7 @@ export async function homeBento(f: BentoFacts) {
     tiles: {
       video: tile("video", "Video", `${f.videoModels} video models · ${f.motions} camera moves`, "Films, ads and shorts", "Open Cinema Studio"),
       image: tile("image", "Image", `Image · ${f.imageModels} models`, "Portraits and campaigns", "Open Image"),
-      audio: tile("audio", "Audio", `Audio · ${f.soundTools} sound tools`, "Voice, music, sound effects", "Open Audio"),
+      audio: tile("audio", "Audio", `Audio · ${f.soundTools} sound tools`, "Studio-clean voice", "Open Clean up voice"),
       threeD: tile("threeD", "3D", `3D · ${f.models3d} models`, "Spin it in 3D", "Open Image to 3D"),
       genjutsu: tile("genjutsu", "Genjutsu", "Genjutsu", "Swap anyone in a clip", "Open Genjutsu"),
       numbers: {
@@ -252,14 +290,8 @@ export async function homeBento(f: BentoFacts) {
       fallback: example(BENTO_IMAGE_EXAMPLE.out),
     } satisfies BentoPicture,
     threeD: moving(BENTO_CLIPS.threeD, BENTO_CLIP_FILES.threeD),
-    genjutsu: {
-      ...moving(BENTO_GENJUTSU.id, BENTO_GENJUTSU.name, BENTO_GENJUTSU_WIDTHS),
-      original: {
-        avif: BENTO_ORIGINAL_WIDTHS.map((w) => ({ src: made(`/previews/home/${BENTO_GENJUTSU.original}-${w}.avif`), w })),
-        fallback: example(GENJUTSU_ORIGINAL),
-      } satisfies BentoPicture,
-    },
-    wave: { bars: HOME_BENTO_WAVE.bars, seconds: HOME_BENTO_WAVE.seconds },
+    genjutsu: genjutsu(),
+    voice: { room: voicePic(BENTO_VOICE.room), quiet: voicePic(BENTO_VOICE.quiet) },
     live: { frames: BENTO_LIVE_STEPS.map(frame), phrases: livePhrases(demo) },
     canvas: board(),
     numbers: [

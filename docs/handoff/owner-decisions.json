@@ -21,5 +21,40 @@
   "evolutionCloud": "Move Evolution's cloud route from LTX-2.3 (a substitute model) onto fal's hosted Wan 2.2 Fun VACE, the same model as the GPU recipe, with what that endpoint supports; the GPU keeps its full recipe (references in the direction frames).",
   "speakName": "Keep 'Fuobe Speak'. The GPU keeps the FusioniX LoRA; the cloud runs fal's InfiniteTalk without it; the UI says so.",
   "dopMixedMediaDefault": "Keep Fuobe DoP as the default for DoP's 32 Mixed Media effects; the first evaluation run with paid keys does a blind comparison with Kling 2.5 Turbo, and the default goes back if Fuobe DoP clearly loses."
+ },
+ "owner_11_04": {
+  "answeredAt": "2026-11-04",
+  "kandinsky6AudioVae": "Add both audio VAEs (the CC BY-NC 4.0 v1-44.pth and Kandinsky's MIT one), each with its licence shown in Settings -> Models & licences; the person running it chooses which to use.",
+  "followUps": [
+   "Make it 3D on cloud-only installs through fal's hosted Idol",
+   "fal's world models under their own names (H3 Max Director, Lingbot World 2, Abot World 0, Eden Live)",
+   "Price H3 reference tokens past 4,096 so a shown price never undercounts",
+   "A Settings field for WorldCast's access token"
+  ],
+  "accepted": [
+   "Renaming a skill keeps its scheduled runs going under the new name (deleting still pauses them)",
+   "WorldCast's field in the owner Settings form",
+   "ComfyUI upgrade to v0.43.1 for MOSS one-sheet colour and depth control (GPU test before release)"
+  ],
+  "bestLabels": "Don't show a Best or recommended label for now. Later, test all the models across scenarios and image types, then decide whether to offer a best label for each task.",
+  "housekeeping": [
+   "Archive the finished build sessions (done 11-04)",
+   "Delete o/acc-3 (this session's GitHub access refuses branch deletion: the owner deletes it)",
+   "The integrator may remove merged worktrees (--remove-worktrees)"
+  ],
+  "followUpPackages": [
+   "f1-kandinsky6-audio-vae",
+   "f1-idol-cloud",
+   "f1-fal-worlds",
+   "f1-h3-token-overage",
+   "f1-worldcast-token",
+   "f1-comfyui-0431-moss",
+   "f1-no-best-label"
+  ],
+  "openQuestions": [
+   "Does 'no Best or recommended label for now' also cover the Video studio's Best list and other top or recommended badges? (Read so far as the Image studio's Best list.)",
+   "Rebuild on main's Skills and sound tools the pieces dropped when main's builds won on 11-04? (a skill's History and suggestion cards, a run's step-by-step card, the Library's filter by run batch, the CLI's --wait over a skill's runs, Clean the voice first's extra steps in the price, the Faceless rule that no skill step takes an episode's output)",
+   "Still open from earlier: RTX Video Quick as the default upscaler on RTX machines; Clean up dialogue's -18 dB preset measures about -12.6 dB (relabel or lower after listening); accounts running Remove dialogue and Split soundtrack on their own GPU (with the accounts plan); a Hugging Face org and write token for the training kit; a texturing node for Hi3D's refined meshes."
+  ]
  }
 }

@@ -28,8 +28,8 @@ export function hubModePaths(root) {
   const out = [];
   for (const m of block.matchAll(/["']?([\w-]+)["']?:\s*\[([\s\S]*?)\]/g)) {
     const ids = [...m[2].matchAll(/id:\s*"([\w-]+)"/g)].map((x) => x[1]);
-    // The first mode is the hub's own page; the others have their own path.
-    for (const id of ids.slice(1)) out.push(`/${m[1]}/${id}`);
+    // Every mode has a path of its own (the first one is also the hub's own page).
+    for (const id of ids) out.push(`/${m[1]}/${id}`);
   }
   return out;
 }

@@ -208,7 +208,7 @@ describe("no code path names the Higgsfield provider", () => {
 // The catalog, the providers and the settings
 
 describe("the catalog and the providers run without it", () => {
-  const KNOWN = new Set(["fal", "replicate", "comfyui", "mock", "local", "llm", "openai", "google"]);
+  const KNOWN = new Set(["fal", "replicate", "comfyui", "mock", "local", "llm", "openai", "google", "worldcast"]);
 
   it("routes every model to a provider Fuobe has", () => {
     const odd = MODELS.flatMap((m) => m.routes.filter((r) => !KNOWN.has(r.provider) || /higgsfield/i.test(r.endpoint)).map((r) => `${m.id}: ${r.provider} ${r.endpoint}`));

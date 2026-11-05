@@ -10,8 +10,12 @@ import { adoptFile, scratchDir, type Asset } from "./storage";
  * 16-bit WAV and sends it here in parts of MIX_PART_BYTES, which skip the sign-in proxy (it holds at most 4 MB of a
  * body; the route runs its checks and reads no more than PART_MAX) and the server appends to a scratch file without
  * holding the mix in memory. The first part starts with the WAV header, which says how big the file will be (at most
- * MIX_MAX_BYTES); the last one turns the file into an upload in the Library. A 5.1 film clip's mix outgrows the 200 MB
- * upload cap after about six minutes; this doesn't.
+ * MIX_MAX_BYTES); the last one turns the file into an upload in the Library (keepMix). A 5.1 film clip's mix outgrows the
+ * 200 MB upload cap after about six minutes; this doesn't.
+ *
+ * An account (public sign-up) exports into its own files, never the owner's: its export is its own (a part with its id
+ * from anyone else is refused), one at a time (starting another drops the unfinished one), and no bigger than the room
+ * its files have left. The route records the finished mix as one of its runs.
  */
 
 export class MixExportError extends Error {
@@ -26,7 +30,7 @@ export class MixExportError extends Error {
 /** A part may be a little over MIX_PART_BYTES (the first one carries the header). */
 export const PART_MAX = MIX_PART_BYTES + 1024 * 1024;
 const ID = /^[A-Za-z0-9_-]{16}$/;
-const PART_FILE = /^mix-[A-Za-z0-9_-]{16}\.wav\.part$/;
+const PART_FILE = /^mix-([A-Za-z0-9_-]{16})\.wav\.part$/;
 /** Exports nobody finished are removed when the next one starts. */
 const STALE_MS = 6 * 60 * 60 * 1000;
 
@@ -54,22 +58,47 @@ function headOf(file: string): Buffer {
 function sweep() {
   const dir = scratchDir();
   for (const f of fs.readdirSync(dir)) {
-    if (!PART_FILE.test(f)) continue;
+    const id = PART_FILE.exec(f)?.[1];
+    if (!id) continue;
     const abs = path.join(dir, f);
     try {
-      if (Date.now() - fs.statSync(abs).mtimeMs > STALE_MS) fs.rmSync(abs, { force: true });
+      if (Date.now() - fs.statSync(abs).mtimeMs > STALE_MS) dropMix(id);
     } catch {}
   }
 }
 
 const mb = (bytes: number) => `${Math.round(bytes / 1024 ** 2)} MB`;
 
+declare global {
+  /** Who started each export here: an account's id, or null for the owner. */
+  var __fuobeMixBy: Map<string, string | null> | undefined;
+  /** An account's unfinished export, by account. */
+  var __fuobeMixOpen: Map<string, string> | undefined;
+}
+const startedBy = (): Map<string, string | null> => (globalThis.__fuobeMixBy ??= new Map());
+const openFor = (): Map<string, string> => (globalThis.__fuobeMixOpen ??= new Map());
+
+/** Who an export is for: an account, with the room its files have left (the owner's has none to check). */
+export interface MixAccount {
+  id: string;
+  room: { bytes: number; message: string };
+}
+
+/** A finished export, still in the scratch folder: keepMix stores it, dropMix throws it away. */
+export interface FinishedMix {
+  id: string;
+  received: number;
+  file: string;
+  name: string;
+}
+
 /**
  * One part of an export: the first (no `id`, offset 0) starts it; the others carry its `id` and the offset they start
- * at (the bytes received so far). Gives the export's id and the bytes received, or, for the `last` part, the Library
- * asset of the finished WAV.
+ * at (the bytes received so far). Gives the export's id and the bytes received, and, for the `last` part, the finished
+ * WAV (FinishedMix). `account`: the account sending it (none: the owner).
  */
-export function receiveMixPart(o: { id?: string | null; offset: number; data: Buffer; last: boolean; name?: string | null }): { id: string; received: number } | Asset {
+export function receiveMixPart(o: { id?: string | null; offset: number; data: Buffer; last: boolean; name?: string | null; account?: MixAccount | null }): { id: string; received: number } | FinishedMix {
+  const by = o.account?.id ?? null;
   if (o.data.length > PART_MAX) throw new MixExportError(`A part can be at most ${mb(PART_MAX)}`, 413);
   let id = o.id ?? "";
   let file: string;
@@ -79,13 +108,23 @@ export function receiveMixPart(o: { id?: string | null; offset: number; data: Bu
     const declared = declaredWavBytes(o.data);
     if (declared === null) throw new MixExportError("An export is a 16-bit PCM WAV file", 415);
     if (declared > MIX_MAX_BYTES) throw new MixExportError(`That mix is over the ${mb(MIX_MAX_BYTES)} an export can be`, 413);
+    if (o.account && declared > o.account.room.bytes) throw new MixExportError(o.account.room.message, 413);
     total = declared;
     sweep();
     id = nanoid(16);
     file = partPath(id);
+    if (by) {
+      // One unfinished export per account: a new one drops the last.
+      const before = openFor().get(by);
+      if (before) dropMix(before);
+      openFor().set(by, id);
+    }
     fs.writeFileSync(file, o.data, { flag: "wx" });
+    startedBy().set(id, by);
   } else {
     if (!ID.test(id)) throw new MixExportError("That export doesn't exist", 404);
+    // Only the one who started it sends its parts (an export from before a restart is the owner's).
+    if ((startedBy().get(id) ?? null) !== by) throw new MixExportError("That export doesn't exist", 404);
     file = partPath(id);
     let size: number;
     try {
@@ -100,11 +139,30 @@ export function receiveMixPart(o: { id?: string | null; offset: number; data: Bu
   }
   const received = fs.statSync(/*turbopackIgnore: true*/ file).size;
   if (received > total) {
-    fs.rmSync(file, { force: true });
+    dropMix(id);
     throw new MixExportError("That's more audio than the WAV header says", 413);
   }
   if (!o.last) return { id, received };
   if (received !== total) throw new MixExportError(`The export stopped short (${received} of ${total} bytes) — export the mix again`, 409);
   const name = (o.name?.trim() || "Mix").slice(0, 196);
-  return adoptFile({ from: file, contentType: "audio/wav", name: /\.wav$/i.test(name) ? name : `${name}.wav`, source: "upload" });
+  return { id, received, file, name: /\.wav$/i.test(name) ? name : `${name}.wav` };
+}
+
+/** Stores a finished export: an upload in the owner's Library, or in the account's own files. */
+export function keepMix(done: FinishedMix, accountId?: string): Asset {
+  const asset = adoptFile({ from: done.file, contentType: "audio/wav", name: done.name, source: "upload", ...(accountId && { accountId }) });
+  forget(done.id);
+  return asset;
+}
+
+/** Throws an export away (unfinished, or refused once finished). */
+export function dropMix(id: string): void {
+  if (ID.test(id)) fs.rmSync(partPath(id), { force: true });
+  forget(id);
+}
+
+function forget(id: string): void {
+  const by = startedBy().get(id);
+  startedBy().delete(id);
+  if (by && openFor().get(by) === id) openFor().delete(by);
 }

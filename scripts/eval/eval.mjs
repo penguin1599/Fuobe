@@ -18,7 +18,7 @@ import { writeReport } from "./lib/report.mjs";
 import { serveReview, writeReview } from "./lib/review.mjs";
 import { DEFAULT_CLOUD_CAP, money, runEval } from "./lib/run.mjs";
 import { connect } from "./lib/server.mjs";
-import { listRuns, readJsonl, resolveRun } from "./lib/store.mjs";
+import { listRuns, readJson, readJsonl, resolveRun } from "./lib/store.mjs";
 
 const list = (v) => (v ? String(v).split(",").map((s) => s.trim()).filter(Boolean) : undefined);
 const num = (v, name) => {
@@ -101,7 +101,7 @@ pnpm eval:covers --versions [--dry-run] [--public-dir public] [--manifest …]
   history: "pnpm eval:history [--suite soul] [--case soul/v1-general] [--limit 20]",
   validate: "pnpm eval:validate [suite files…]   checks every case file and that the generated suites match the research",
   trash: "pnpm eval:trash <runId> [--dry-run]   moves the run's generations to that Fuobe's Trash (its results here stay)",
-  setup: "pnpm eval:setup [--identity] [--download [--dinov2] [--scrfd]] [--torch-backend cpu|auto|cu128…]   the metrics venv (needs uv)",
+  setup: "pnpm eval:setup [--identity] [--asr] [--download [--dinov2] [--scrfd]] [--torch-backend cpu|auto|cu128…]   the metrics venv (needs uv); --asr adds Whisper for the separation suite's word error rate",
 };
 
 function usage() {
@@ -161,7 +161,9 @@ const root = (values, env) => resultsDir(env, values.out);
 async function score(dir, v, ctx) {
   if (v["no-metrics"]) return null;
   ctx.note("Scoring the outputs…");
-  const r = await scoreRun(dir, { metrics: v.metrics, device: v.device, clipModel: v["clip-model"], styleModel: v["style-model"], identityModel: v["identity-model"], faceDetector: v["face-detector"], commercialOnly: v["commercial-only"], force: v.force, log: ctx.note, env: ctx.env });
+  // The suite's own style embedder (defaults.styleModel, kept in run.json) unless --style-model names one.
+  const styleModel = v["style-model"] ?? readJson(path.join(dir, "run.json"))?.styleModel;
+  const r = await scoreRun(dir, { metrics: v.metrics, device: v.device, clipModel: v["clip-model"], styleModel, identityModel: v["identity-model"], faceDetector: v["face-detector"], commercialOnly: v["commercial-only"], force: v.force, log: ctx.note, env: ctx.env });
   if (!r.ok) ctx.note(`Not scored: ${r.reason}. Timing and cost are in the report; pnpm eval:report ${path.basename(dir)} scores it later.`);
   return r;
 }
@@ -558,7 +560,7 @@ function coversFromMastersCmd(v, ctx) {
 }
 
 async function setup(args, ctx) {
-  const { values: v } = parse(args, { identity: { type: "boolean" }, dinov2: { type: "boolean" }, scrfd: { type: "boolean" }, download: { type: "boolean" }, "torch-backend": { type: "string" } });
+  const { values: v } = parse(args, { identity: { type: "boolean" }, asr: { type: "boolean" }, dinov2: { type: "boolean" }, scrfd: { type: "boolean" }, download: { type: "boolean" }, "torch-backend": { type: "string" } });
   if (v.help) return ctx.print(HELP.setup), 0;
   const step = (cmd, a, opts = {}) => {
     ctx.note(`$ ${cmd} ${a.join(" ")}`);
@@ -570,7 +572,8 @@ async function setup(args, ctx) {
   if (!fs.existsSync(path.join(METRICS_DIR, py))) step("uv", ["venv", ".venv", "--python", ">=3.11"]);
   step("uv", ["pip", "install", "--python", py, "-r", "requirements.txt", "--torch-backend", v["torch-backend"] ?? "cpu"]);
   if (v.identity) step("uv", ["pip", "install", "--python", py, "-r", "requirements-identity.txt"]);
-  if (v.download) step(py, ["-m", "fuobe_metrics.download", ...(v.identity ? ["--identity"] : []), ...(v.dinov2 ? ["--dinov2"] : []), ...(v.scrfd ? ["--scrfd"] : [])]);
+  if (v.asr) step("uv", ["pip", "install", "--python", py, "-r", "requirements-asr.txt", "--torch-backend", v["torch-backend"] ?? "cpu"]);
+  if (v.download) step(py, ["-m", "fuobe_metrics.download", ...(v.identity ? ["--identity"] : []), ...(v.asr ? ["--asr"] : []), ...(v.dinov2 ? ["--dinov2"] : []), ...(v.scrfd ? ["--scrfd"] : [])]);
   ctx.print(`Metrics ready in ${path.join(METRICS_DIR, ".venv")}${v.download ? "" : " (weights download on first use, or run pnpm eval:setup --download)"}.`);
   return 0;
 }

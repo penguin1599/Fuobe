@@ -10,7 +10,6 @@
  * Pure module: limits, prompts, the H3 window plan, who to swap, the anchor's prompt and models, licences as data.
  * The prompts follow Openjutsu's (MIT, Comfy Org 2026) and Akatz Labs' anchor brief (MIT, Akatz Labs 2026).
  */
-import { REGEN_OFFERED } from "./regenerate";
 import { isSharpenTier, type SharpenTier } from "./sharpen";
 import type { Engine, LoraRef, PixelPoint } from "./types";
 
@@ -199,11 +198,11 @@ export function characterFinish(q: string | undefined): SharpenTier | null {
 }
 
 /**
- * The qualities each engine offers: your GPU regenerates 1080p, 2K and 4K with Open-H3 Regenerate (only while it is
- * offered: REGEN_OFFERED); fal's H3 makes 2K and 4K (no 1080P).
+ * The qualities each engine offers: your GPU regenerates 1080p, 2K and 4K with Open-H3 Regenerate (a 48 GB card: the
+ * choice says so, own-setup.ts "regenerate:swap-sharpen"); fal's H3 makes 2K and 4K (no 1080P).
  */
 export const CHARACTER_QUALITIES: Record<Engine, CharacterChoice[]> = {
-  open: ["480p", "768p", ...(REGEN_OFFERED ? (["1080p", "2K", "4K"] as const) : [])],
+  open: ["480p", "768p", "1080p", "2K", "4K"],
   cloud: ["480p", "768p", "2K", "4K"],
 };
 

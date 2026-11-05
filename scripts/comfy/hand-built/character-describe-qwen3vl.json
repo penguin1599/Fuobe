@@ -1,0 +1,72 @@
+{
+  "1": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "example.png"
+    },
+    "_meta": {
+      "title": "Character picture"
+    }
+  },
+  "2": {
+    "class_type": "ImageScaleToMaxDimension",
+    "inputs": {
+      "image": [
+        "1",
+        0
+      ],
+      "largest_size": 1024,
+      "upscale_method": "area"
+    },
+    "_meta": {
+      "title": "Shrink for the describer"
+    }
+  },
+  "3": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "qwen3vl_8b_int8_convrot.safetensors",
+      "type": "stable_diffusion",
+      "device": "default"
+    },
+    "_meta": {
+      "title": "Describer: Qwen3-VL 8B"
+    }
+  },
+  "4": {
+    "class_type": "TextGenerate",
+    "inputs": {
+      "clip": [
+        "3",
+        0
+      ],
+      "image": [
+        "2",
+        0
+      ],
+      "prompt": "Describe the person in this picture so that a video model can draw the same person in another scene. Write one sentence of 35 to 60 words. Start with \"a\" or \"an\" and who they are, with their apparent age, for example \"a woman in her late twenties\" or \"a man in his forties\". Then give their build; their face: its shape, eye colour, and any beard, freckles or makeup; their hair: colour, length, texture and style; their skin tone; each garment they wear, with its colour, fabric and cut; their shoes; and their jewellery and accessories, with their colours. Name only things you can clearly see in the picture. Never write the words \"no\", \"not\" or \"visible\": when something is hidden or they do not have it, leave it out. Leave out their pose, hands, expression, the background, the light and the camera. No names, no lists, no quotes, no preamble. An example of the form: \"a man in his early thirties with a broad, muscular build, a square face with grey eyes and a short dark stubble beard, short curly black hair faded at the sides, deep brown skin, an olive bomber jacket in matte nylon over a white cotton crew-neck T-shirt, slim black jeans, white leather sneakers and a silver chain necklace\".",
+      "max_length": 160,
+      "sampling_mode": "off",
+      "thinking": false,
+      "use_default_template": true,
+      "mtp": "off"
+    },
+    "_meta": {
+      "title": "Describe the character"
+    }
+  },
+  "5": {
+    "class_type": "SaveText",
+    "inputs": {
+      "text": [
+        "4",
+        0
+      ],
+      "filename_prefix": "fuobe/character-describe-qwen3vl",
+      "format": "txt"
+    },
+    "_meta": {
+      "title": "Save the description"
+    }
+  }
+}

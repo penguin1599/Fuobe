@@ -13,7 +13,8 @@ import { Panel } from "@/components/av/tool-shell";
 import { Segmented } from "@/components/faceless/controls";
 import { Segmented as SizePicker } from "@/components/shorts/ui";
 import { h3Canvas } from "@/lib/catalog/character-swap";
-import { defaultSharpenTier, filmSize, gpuMinutes, joinNote, SHARPEN_COPY, sharpenOffered, sharpenOptions, type SharpenTier } from "@/lib/catalog/sharpen";
+import { defaultSharpenTier, filmSize, gpuMinutes, joinNote, SHARPEN_COPY, sharpenOptions, type SharpenTier } from "@/lib/catalog/sharpen";
+import { OwnSetupChip, useOwnSetupPress } from "@/components/own-setup";
 import {
   assemblyPieces,
   assemblyTakes,
@@ -149,8 +150,11 @@ function FinishVersion({ take, gens, onUse }: { take: SwapTake; gens: Record<str
 /** Assemble → Finish: "Sharpen to 1080p / 2K / 4K" (runnable: the size, its price or GPU time, Run). */
 function FinishPanel({ id, project, clip, gens, estimate }: Pick<StageProps, "id" | "project" | "clip" | "gens" | "estimate">) {
   const sharpen = useSharpen(id);
+  // Your GPU's sharpen regenerates with Open-H3 Regenerate: a 48 GB card (own-setup.ts), said beside the title.
+  const press = useOwnSetupPress();
   const stop = useStopJob(id);
   const engine = project.engine;
+  const ownSetup = engine === "open" ? "regenerate:swap-sharpen" : undefined;
   const film = filmSize(clip.source.width, clip.source.height, engine);
   // Your GPU redraws the character inside the part of H3's canvas the regenerate keeps.
   const canvas = film ? h3Canvas(film.width, film.height, "768p") : undefined;
@@ -181,7 +185,7 @@ function FinishPanel({ id, project, clip, gens, estimate }: Pick<StageProps, "id
       <section aria-labelledby="sharpen-title" className="min-w-0 space-y-3 rounded-xl border p-3">
         <div className="flex min-w-0 flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
           <h3 id="sharpen-title" className="text-[13px] font-semibold">
-            {SHARPEN_COPY.title}
+            {SHARPEN_COPY.title} <OwnSetupChip setup={ownSetup} className="ml-1 align-middle" />
           </h3>
           <span className="font-mono text-[11px] text-muted-foreground">{priceLine}</span>
         </div>
@@ -213,7 +217,7 @@ function FinishPanel({ id, project, clip, gens, estimate }: Pick<StageProps, "id
           <Button
             className="h-9 rounded-full"
             disabled={!!problem || !tier || sharpen.isPending || busy || allMade}
-            onClick={() => tier && sharpen.mutate({ clipId: clip.id, tier }, { onSuccess: () => toast(`Sharpening the chosen takes to ${tier}`), onError: (e) => toastError(e) })}
+            onClick={() => tier && press(ownSetup, () => sharpen.mutate({ clipId: clip.id, tier }, { onSuccess: () => toast(`Sharpening the chosen takes to ${tier}`), onError: (e) => toastError(e) }))}
           >
             {sharpen.isPending ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />} Sharpen{tier ? ` to ${tier}` : ""}
           </Button>
@@ -393,7 +397,7 @@ export function AssembleStage({ id, project, clip, gens, estimate }: StageProps)
         </div>
       </Panel>
 
-      {sharpenOffered(project.engine) && <FinishPanel id={id} project={project} clip={clip} gens={gens} estimate={estimate} />}
+      <FinishPanel id={id} project={project} clip={clip} gens={gens} estimate={estimate} />
 
       <Panel title="Where it runs">
         <ul className="space-y-1.5 text-[12px] leading-snug text-pretty text-muted-foreground">

@@ -7,6 +7,7 @@ import { CAMERA_MOVES } from "@/lib/catalog/cinema";
 import { TEMPLATES } from "@/lib/catalog/marketing";
 import { ASSIST_PROMPT_MAX, ASSIST_SUGGESTIONS, assistDraft } from "@/lib/assist";
 import { HUB_MODES } from "@/lib/hubs";
+import { NAV_ENTRIES } from "@/lib/nav-model";
 import {
   HOME_BEFORE_AFTER,
   HOME_CAPTION_MAX,
@@ -74,7 +75,7 @@ const clipSeconds = (url: string) => mp4Seconds(path.join(root, "public", url.sp
 describe("Home's showcase", () => {
   it("names real presets (or a studio's own cover), each with its cover and, where the slot plays one, its clip", () => {
     for (const id of [...homeIds, ...BENTO_REEL]) {
-      // A studio card may show one of its studio's own examples instead (studio-covers.ts): Genjutsu's group swap.
+      // A studio card may show a cover of its studio's own instead (studio-covers.ts): Genjutsu's lake swap.
       expect(getPreset(id) ?? (studioIds.includes(id) && isStudioCover(id) ? STUDIO_COVERS[id] : undefined), id).toBeDefined();
       const cover = PRESET_PREVIEWS[id];
       expect(cover, `${id} has a real cover`).toBeDefined();
@@ -183,6 +184,8 @@ describe("Home's showcase", () => {
     const shown = [...home.studios.map((s) => s.href), ...home.pills.map((p) => p.href), ...HOME_OWN_SECTIONS];
     expect(new Set(shown).size).toBe(shown.length);
     expect(new Set(shown)).toEqual(new Set([...create, ...studios].map((i) => i.href)));
+    // Every studio of the navigation model is one of them, so each has a card or a pill and is counted (Kinetic Motion).
+    for (const e of NAV_ENTRIES.filter((x) => x.kind === "studio" && x.group)) expect(shown, e.id).toContain(e.href);
     // The pills keep the sidebar's order and labels.
     const order = [...create, ...studios].map((i) => i.href);
     expect(home.pills.map((p) => order.indexOf(p.href))).toEqual(home.pills.map((p) => order.indexOf(p.href)).sort((a, b) => a - b));

@@ -542,7 +542,10 @@
               "lipsync",
               "continuity",
               "palette",
-              "background"
+              "background",
+              "separation",
+              "wer",
+              "splat"
             ]
           }
         },
@@ -553,6 +556,13 @@
         "candidate": {
           "type": "string",
           "pattern": "^[a-z0-9][a-z0-9-]*$"
+        },
+        "styleModel": {
+          "type": "string",
+          "enum": [
+            "clip",
+            "dinov2"
+          ]
         },
         "timeoutSeconds": {
           "default": 1800,
@@ -720,6 +730,17 @@
                 "open",
                 "cloud"
               ]
+            }
+          },
+          "op": {
+            "type": "string"
+          },
+          "tags": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9-]*$"
             }
           },
           "params": {
@@ -1287,7 +1308,10 @@
                 "lipsync",
                 "continuity",
                 "palette",
-                "background"
+                "background",
+                "separation",
+                "wer",
+                "splat"
               ]
             }
           },

@@ -40,14 +40,36 @@ import {
   type SeriesView,
   type StyleBrief,
 } from "@/lib/catalog/content-factory";
-import { genreInfo, pickerData, type ChannelSettings, type EpisodeSettings, type NarratorVoice, type TimedText } from "@/lib/catalog/faceless";
+import { genreInfo, pickerData, type ChannelSettings, type EpisodeScript, type EpisodeSettings, type FacelessGenre, type GraphStep, type NarratorVoice, type TimedText } from "@/lib/catalog/faceless";
 import type { Engine, Generation, GenerationRequest } from "@/lib/catalog/types";
 import { probeMedia } from "@/lib/media-probe";
+import { AccountProjectError, accountProjectIds, accountProjectOwner, deleteAccountProject } from "./account-projects";
 import { authEnabled } from "./auth";
 import { db } from "./db";
 import { llmText, llmTextBackend, type LlmImage } from "./enhance";
-import { askLlm, createChannel, createEpisode, deleteChannel, estimateEpisode, FacelessError, getChannel, handle as facelessHandle, listEpisodes, VoiceSchema } from "./faceless";
-import { cancelGeneration, createGenerations, getGeneration, previewGeneration } from "./generations";
+import {
+  ACCOUNT_CLOUD_ENGINE,
+  askLlm,
+  composeScript,
+  createChannel,
+  createEpisode,
+  deleteChannel,
+  draftGraph,
+  dropRowId,
+  estimateEpisode,
+  FacelessError,
+  forViewer,
+  getChannel,
+  graphFiles,
+  graphToolSteps,
+  handle as facelessHandle,
+  listEpisodes,
+  newRowId,
+  viewerScope,
+  VoiceSchema,
+} from "./faceless";
+import { accountRun, AccountRunError, asAccount, cancelGeneration, createGenerations, getGeneration, previewGeneration } from "./generations";
+import { tenant, tenantAccount } from "./tenant";
 import type { JsonSpec } from "./llm";
 import { fetchRemote, RemoteFetchError } from "./remote-fetch";
 import { engineMode } from "./settings";
@@ -90,6 +112,12 @@ const BRIEF_SCHEMA: JsonSpec = {
  * Whatever can't be read (demo mode, no LLM, an answer that isn't a brief) gives way to the offline brief
  * from the clip's shape, length and narration pace, with a note that says so.
  *
+ * Whose series (public sign-up): the owner's, or a signed-in account's own project (account-projects.ts kind
+ * "content-factory") under the row's id, read and changed only inside its own work (tenant.ts asAccount). An account's
+ * reading runs on its own GPU (Gemma 4) or its own key (the transcript; the brief is then written from the clip's
+ * shape and pace, never by the install's AI helper), and its series' plans and scripts are the offline writer's.
+ * Everything a run of an account's would make is planned first and checked (src/server/account-tool-run.ts).
+ *
  * The step generations live in the generations table (they survive restarts); the brief is written by
  * whoever reads the series first once they're done (seriesView), in this process.
  */
@@ -123,7 +151,14 @@ interface SeriesRow {
   updated_at: number;
 }
 
-const seriesRow = (id: string) => db().prepare("SELECT * FROM content_series WHERE id = ?").get(id) as SeriesRow | undefined;
+/** An account's series, as its own project kind (account-projects.ts). */
+export const SERIES_KIND = "content-factory";
+
+/** A series of whoever the work is for: the owner's, or an account's own (another's reads as none). */
+const seriesRow = (id: string) => {
+  const r = db().prepare("SELECT * FROM content_series WHERE id = ?").get(id) as SeriesRow | undefined;
+  return r && forViewer(accountProjectOwner(SERIES_KIND, id)) ? r : undefined;
+};
 const dataOf = (r: SeriesRow) => JSON.parse(r.data_json) as SeriesData;
 
 function mustRow(id: string): SeriesRow {
@@ -175,9 +210,25 @@ function pruneSeries(): void {
     .all() as SeriesRow[];
   for (const r of [...drafts, ...orphans]) {
     if (running().has(r.id)) continue;
-    for (const g of Object.values(dataOf(r).analysis?.steps ?? {})) void cancelGeneration(g).catch(() => {});
+    // An account's series: its reading steps are stopped as its own work, and its project goes with the row.
+    const owner = accountProjectOwner(SERIES_KIND, r.id);
+    const stop = () => {
+      for (const g of Object.values(dataOf(r).analysis?.steps ?? {})) void cancelGeneration(g).catch(() => {});
+    };
+    if (owner) asAccount(owner, stop);
+    else stop();
     db().prepare("DELETE FROM content_series WHERE id = ?").run(r.id);
+    if (owner) deleteAccountProject(owner, SERIES_KIND, r.id);
   }
+}
+
+/**
+ * When an account is deleted (account-sweep.ts purgeAccount, before its projects go, with its channels): its series.
+ * Its runs are deleted with the account.
+ */
+export function deleteAccountSeries(accountId: string): void {
+  const ids = accountProjectIds(SERIES_KIND, accountId);
+  db().prepare(`DELETE FROM content_series WHERE id IN (${ids.sql})`).run(...ids.args);
 }
 
 // ---------------------------------------------------------------------------
@@ -240,6 +291,8 @@ async function readLink(raw: string): Promise<SeriesReference> {
   const checked = referenceLink(raw);
   if ("error" in checked) throw new FacelessError(checked.error);
   const { url, platform } = checked;
+  // The server never fetches a link for an account (docs/public-signup.md): it uploads the clip.
+  if (tenant()) throw new NeedsUpload(noMediaMessage(platform));
   // YouTube never hands its files out; a page from the platforms may (an og:video), so they're tried.
   if (platform === "youtube") throw new NeedsUpload(noMediaMessage(platform));
   const ref: SeriesReference = { kind: "link", link: url, platform };
@@ -310,7 +363,10 @@ const STEP_LABEL = { frames: "Reference frames", transcript: "Reference transcri
 
 const engineAllowed = (engine: Engine) => engineMode() === "both" || engineMode() === engine;
 function checkEngine(engine: Engine): void {
-  if (!engineAllowed(engine)) throw new FacelessError(engine === "open" ? "This install is set to paid cloud APIs only (Settings → Engine mode)" : "This install is set to open source only (Settings → Engine mode)");
+  if (engineAllowed(engine)) return;
+  // An account's engine mode is open source only until it adds a key of its own.
+  if (tenant()) throw new FacelessError(ACCOUNT_CLOUD_ENGINE, 422);
+  throw new FacelessError(engine === "open" ? "This install is set to paid cloud APIs only (Settings → Engine mode)" : "This install is set to open source only (Settings → Engine mode)");
 }
 
 function request(ref: SeriesReference, key: keyof typeof STEP_LABEL, r: Omit<GenerationRequest, "feature">): GenerationRequest {
@@ -325,13 +381,44 @@ export function frameInterval(seconds: number | undefined, fps: number | undefin
   return Math.max(1, Math.min(300, Math.round((secs * rate) / frames)));
 }
 
+/**
+ * The step generations one read of the clip makes. An account's on the cloud engine is the transcript only: its brief is
+ * written from the clip's shape and narration pace (the frames are for the install's AI helper, which an account's work
+ * never uses).
+ */
+function readRequests(ref: Pick<SeriesReference, "url" | "title" | "seconds" | "fps">, engine: Engine): Partial<Record<keyof typeof STEP_LABEL, GenerationRequest>> {
+  const r = ref as SeriesReference;
+  if (engine === "open") {
+    return { brief: request(r, "brief", { modelId: "oss-reference-brief", op: "write", inputs: { video: ref.url }, params: { duration: Math.min(OPEN_REFERENCE_SECONDS, ref.seconds ?? OPEN_REFERENCE_SECONDS) } }) };
+  }
+  return {
+    // JPEG, not fal's default PNG: a full-HD PNG frame can weigh 3 MB, and Claude takes 32 MB a request.
+    ...(!tenant() && { frames: request(r, "frames", { modelId: "extract-frames", op: "extract-frames", inputs: { video: ref.url }, params: { frameInterval: frameInterval(ref.seconds, ref.fps), extra: { output_format: "jpg", quality: 80 } } }) }),
+    transcript: request(r, "transcript", { modelId: "scribe-v2", op: "transcribe", inputs: { video: ref.url }, params: { ...(ref.seconds && { duration: ref.seconds, sourceDuration: ref.seconds }) } }),
+  };
+}
+
+/**
+ * Before an account's clip is fetched or read: every step a read on this engine makes must run on its own GPU or key
+ * (a stand-in clip stands for the one not fetched yet). Refused with the account's answer (Connect your GPU, Add your key).
+ */
+function assertAccountReads(engine: Engine): void {
+  const account = tenantAccount();
+  if (!account) return;
+  checkEngine(engine);
+  for (const r of Object.values(readRequests({ url: "/api/files/estimate.mp4", seconds: 30 }, engine))) {
+    const own = accountRun(account, previewGeneration(r).route.provider, "submit");
+    if ("error" in own) throw new AccountRunError(own);
+  }
+}
+
 /** The step generations for one read of the clip (none can start: the offline brief, with why). */
 function startSteps(ref: SeriesReference, engine: Engine): { steps: SeriesAnalysis["steps"]; costUsd: number | null; demo: boolean; error?: string } {
   const steps: SeriesAnalysis["steps"] = {};
   let cost = 0;
   let demo = false;
   const errors: string[] = [];
-  const run = (key: keyof typeof STEP_LABEL, r: GenerationRequest) => {
+  for (const [key, r] of Object.entries(readRequests(ref, engine)) as [keyof typeof STEP_LABEL, GenerationRequest][]) {
     try {
       const p = previewGeneration(r);
       const g = createGenerations(r)[0];
@@ -339,15 +426,10 @@ function startSteps(ref: SeriesReference, engine: Engine): { steps: SeriesAnalys
       cost += p.costUsd ?? 0;
       demo ||= p.demo;
     } catch (e) {
+      // An account's run was checked step by step: one that can't start now stops it (the route says why).
+      if (tenantAccount()) throw e;
       errors.push((e as Error).message);
     }
-  };
-  if (engine === "open") {
-    run("brief", request(ref, "brief", { modelId: "oss-reference-brief", op: "write", inputs: { video: ref.url }, params: { duration: Math.min(OPEN_REFERENCE_SECONDS, ref.seconds ?? OPEN_REFERENCE_SECONDS) } }));
-  } else {
-    // JPEG, not fal's default PNG: a full-HD PNG frame can weigh 3 MB, and Claude takes 32 MB a request.
-    run("frames", request(ref, "frames", { modelId: "extract-frames", op: "extract-frames", inputs: { video: ref.url }, params: { frameInterval: frameInterval(ref.seconds, ref.fps), extra: { output_format: "jpg", quality: 80 } } }));
-    run("transcript", request(ref, "transcript", { modelId: "scribe-v2", op: "transcribe", inputs: { video: ref.url }, params: { ...(ref.seconds && { duration: ref.seconds, sourceDuration: ref.seconds }) } }));
   }
   return { steps, costUsd: engine === "open" ? 0 : Math.round(cost * 1000) / 1000, demo, ...(errors.length && !Object.keys(steps).length && { error: errors[0] }) };
 }
@@ -457,6 +539,8 @@ async function writeBrief(id: string): Promise<void> {
       note = demo
         ? "Demo brief — connect fal and Claude in Settings to read the clip for real. This one comes from the clip's shape and length."
         : `The clip couldn't be read (${framesGen?.error ?? wordsGen?.error ?? "no frames or words came back"}). This brief comes from its shape and length — read it again to retry.`;
+    } else if (tenant()) {
+      // An account's brief: from the clip's shape, length and narration pace (the install's AI helper isn't its own).
     } else if (!llmTextBackend()) {
       offline = true;
       note = "No LLM is connected (Settings → AI helper), so this brief comes from the clip's shape, length and narration pace.";
@@ -501,7 +585,9 @@ function advance(id: string, d: SeriesData): SeriesData {
       .finally(() => writing().delete(id));
     writing().set(id, job);
   }
-  return { ...d, analysis: { ...a, stage: a.engine === "open" ? "Writing the brief…" : "Claude is writing the brief…" } };
+  // An account's brief is written here from the clip's shape and words: no AI helper reads it.
+  const helper = a.engine !== "open" && !accountProjectOwner(SERIES_KIND, id);
+  return { ...d, analysis: { ...a, stage: helper ? "Claude is writing the brief…" : "Writing the brief…" } };
 }
 
 // ---------------------------------------------------------------------------
@@ -539,23 +625,72 @@ export function seriesView(id: string): SeriesView {
 }
 
 /** A new series around a reference (reading starts straight away), a preset (its brief is ready), or nothing yet. */
-export async function createSeries(input: { reference: ReferenceInput | null; engine: Engine; prompt?: string }): Promise<SeriesView> {
+export async function createSeries(input: SeriesCreate): Promise<SeriesView> {
+  return makeSeries(await prepareSeries(input));
+}
+
+export interface SeriesCreate {
+  reference: ReferenceInput | null;
+  engine: Engine;
+  prompt?: string;
+}
+
+/** A new series' reference, resolved (a link fetched and kept, an upload read): nothing of the series is made yet. */
+export interface PreparedSeries extends SeriesCreate {
+  resolved: SeriesReference | null;
+}
+
+/** Whether making this series reads a clip (an upload or a link): an account's is then a run of its own. */
+export const seriesReads = (input: SeriesCreate) => !!input.reference && input.reference.kind !== "preset";
+
+/**
+ * The reference resolved, before the series is made. An account's link is fetched only once every step that reads it
+ * can run on its own GPU or key.
+ */
+export async function prepareSeries(input: SeriesCreate): Promise<PreparedSeries> {
   checkEngine(input.engine);
+  if (seriesReads(input)) assertAccountReads(input.engine);
+  return { ...input, resolved: input.reference ? await resolveReference(input.reference) : null };
+}
+
+/** The reading steps making this series starts (an account's run is checked with them first). */
+export function seriesReadSteps(p: PreparedSeries): { request: GenerationRequest; deps: number }[] {
+  return p.resolved?.url ? Object.values(readRequests(p.resolved, p.engine)).map((request) => ({ request, deps: 0 })) : [];
+}
+
+/** Make the series, and start reading its clip. */
+export function makeSeries(p: PreparedSeries): SeriesView {
   pruneSeries();
-  const reference = input.reference ? await resolveReference(input.reference) : null;
-  const id = nanoid(10);
+  const reference = p.resolved;
+  const id = newRowId(SERIES_KIND, reference?.title ?? "Series");
   const now = Date.now();
   const preset = reference?.kind === "preset" ? getPreset(reference.presetId) : undefined;
-  const data: SeriesData = { name: null, prompt: input.prompt?.trim().slice(0, MAX_PROMPT) ?? "", reference, analysis: null, brief: preset ? preset.brief : null, settings: null, plan: [] };
-  if (preset) data.analysis = { engine: input.engine, status: "ready", steps: {}, costUsd: 0 };
-  db().prepare("INSERT INTO content_series (id, channel_id, data_json, created_at, updated_at) VALUES (?, NULL, ?, ?, ?)").run(id, JSON.stringify(data), now, now);
+  const data: SeriesData = { name: null, prompt: p.prompt?.trim().slice(0, MAX_PROMPT) ?? "", reference, analysis: null, brief: preset ? preset.brief : null, settings: null, plan: [] };
+  if (preset) data.analysis = { engine: p.engine, status: "ready", steps: {}, costUsd: 0 };
+  try {
+    db().prepare("INSERT INTO content_series (id, channel_id, data_json, created_at, updated_at) VALUES (?, NULL, ?, ?, ?)").run(id, JSON.stringify(data), now, now);
+  } catch (e) {
+    dropRowId(SERIES_KIND, id);
+    throw e;
+  }
   if (reference?.url) {
-    data.analysis = beginAnalysis(id, reference, input.engine);
+    data.analysis = beginAnalysis(id, reference, p.engine);
     if (data.analysis.status === "ready") data.brief = offlineBrief({ seconds: reference.seconds, width: reference.width, height: reference.height, title: reference.title });
     save(id, data);
   }
   return seriesView(id);
 }
+
+/** What "Read again" would start (an account's run is checked with it first). */
+export function rereadSteps(id: string, engine: Engine): { request: GenerationRequest; deps: number }[] {
+  checkEngine(engine);
+  const d = dataOf(mustRow(id));
+  if (!d.reference?.url) throw new FacelessError("This series has no clip to read — add one first");
+  return Object.values(readRequests(d.reference, engine)).map((request) => ({ request, deps: 0 }));
+}
+
+/** The clip a series reads: an account's must be its own file. */
+export const seriesClip = (id: string): string | null => dataOf(mustRow(id)).reference?.url ?? null;
 
 /** Read the reference again (after an offline brief, a failure, or on the other engine). */
 export async function rereadSeries(id: string, engine: Engine): Promise<SeriesView> {
@@ -608,11 +743,13 @@ export async function deleteSeries(id: string, o: { draftOnly?: boolean } = {}):
   for (const g of Object.values(d.analysis?.steps ?? {})) void cancelGeneration(g).catch(() => {});
   if (r.channel_id && getChannel(r.channel_id)) await deleteChannel(r.channel_id);
   db().prepare("DELETE FROM content_series WHERE id = ?").run(id);
+  dropRowId(SERIES_KIND, id);
 }
 
-/** Series that have been made (drafts that never ran stay out of the list). */
+/** Series that have been made (drafts that never ran stay out of the list): whoever the work is for's own. */
 export function listSeries(): SeriesCard[] {
-  const rows = db().prepare("SELECT * FROM content_series WHERE channel_id IS NOT NULL ORDER BY updated_at DESC LIMIT 100").all() as SeriesRow[];
+  const scope = viewerScope("id", SERIES_KIND);
+  const rows = db().prepare(`SELECT * FROM content_series WHERE channel_id IS NOT NULL AND ${scope.sql} ORDER BY updated_at DESC LIMIT 100`).all(...scope.args) as SeriesRow[];
   return rows.flatMap((r) => {
     const channel = getChannel(r.channel_id!);
     if (!channel) return [];
@@ -688,7 +825,7 @@ function analysisPerMinute(engine: Engine): number {
     const frames = previewGeneration({ feature: "content-factory", modelId: "extract-frames", op: "extract-frames", inputs: { video: "/api/files/estimate.mp4" }, params: { frameInterval: 90 } });
     const words = previewGeneration({ feature: "content-factory", modelId: "scribe-v2", op: "transcribe", inputs: { video: "/api/files/estimate.mp4" }, params: { duration: 60, sourceDuration: 60 } });
     if (frames.demo && words.demo) return 0;
-    return briefCostUsd({ seconds: 60, framesUsd: frames.costUsd ?? 0, transcribePerMinute: words.costUsd ?? 0, claude: llmTextBackend() === "claude" });
+    return briefCostUsd({ seconds: 60, framesUsd: tenant() ? 0 : (frames.costUsd ?? 0), transcribePerMinute: words.costUsd ?? 0, claude: llmTextBackend() === "claude" });
   } catch {
     return 0;
   }
@@ -741,31 +878,100 @@ async function planEpisodes(o: { prompt: string; settings: SeriesSettings; brief
 
 const COULDNT_PLAN = "Couldn't plan your episodes. You weren't charged, so it's safe to try again.";
 
-function startEpisodes(o: { channelId: string; prompt: string; plan: SeriesEpisodePlan[]; earlier: string[]; settings: EpisodeSettings; review: boolean; series: boolean }): string[] {
-  const titles = [...o.earlier];
-  const ids: string[] = [];
-  o.plan.forEach((ep) => {
-    const topic = episodeTopic(o.prompt, ep, { number: titles.length + 1, earlier: titles, series: o.series });
-    const made = createEpisode({ kind: "faceless", channelId: o.channelId, topic, settings: o.settings, autoRender: !o.review, saveLook: false, ...(o.series && { title: ep.title }) });
-    ids.push(made.id);
-    titles.push(ep.title);
-  });
-  return ids;
+/** One episode of a series run, planned: its topic, its title, and (an account's) its script composed already. */
+interface PlannedEpisode {
+  topic: string;
+  title?: string;
+  composed?: EpisodeScript;
 }
+
+/**
+ * One "Generate here" or "Next episode", planned before anything is made: the episodes' titles and topics, and for an
+ * account its episodes' scripts (the offline writer's) and every step their renders run, so its run is checked first.
+ */
+export interface SeriesRun {
+  id: string;
+  /** "generate" makes the series' channel; "add" adds to it. */
+  kind: "generate" | "add";
+  prompt: string;
+  settings: EpisodeSettings;
+  genre: FacelessGenre;
+  review: boolean;
+  /** The series' episode plans (and, for "generate", its name) to save. */
+  plan: { name: string | null; episodes: SeriesEpisodePlan[] };
+  /** "generate": the series' settings and the channel it makes. */
+  seriesSettings?: SeriesSettings;
+  channel?: { settings: ChannelSettings };
+  /** "add": the series' channel. */
+  channelId?: string;
+  episodes: PlannedEpisode[];
+  /** An account's: every step its episodes render (none with `review`: nothing renders yet). */
+  graphs: GraphStep[][];
+}
+
+/** The planned episodes: their topics (each one knows the titles before it) and, for an account, their scripts. */
+async function planned(o: { prompt: string; plan: SeriesEpisodePlan[]; earlier: string[]; settings: EpisodeSettings; genre: FacelessGenre; series: boolean }): Promise<PlannedEpisode[]> {
+  const titles = [...o.earlier];
+  const out: PlannedEpisode[] = [];
+  for (const ep of o.plan) {
+    const topic = episodeTopic(o.prompt, ep, { number: titles.length + 1, earlier: titles, series: o.series });
+    // An account's script is written now (offline: no AI helper), so the run that renders it is checked as it will run.
+    const composed = tenantAccount() ? await composeScript({ kind: "faceless", channelId: null, topic, settings: o.settings, sources: [], genre: o.genre }, "") : undefined;
+    out.push({ topic, ...(o.series && { title: ep.title }), ...(composed && { composed }) });
+    titles.push(ep.title);
+  }
+  return out;
+}
+
+/** An account's episodes' graphs, for its run's checks (none with `review`). */
+function plannedGraphs(run: Pick<SeriesRun, "episodes" | "settings" | "genre" | "review">): GraphStep[][] {
+  if (!tenantAccount() || run.review) return [];
+  return run.episodes.map((e) => draftGraph({ kind: "faceless", title: e.title ?? e.topic, settings: run.settings, script: e.composed!, genre: run.genre }));
+}
+
+/** Every step an account's series run renders, as one run (its episodes share a batch). */
+export const seriesRunSteps = (run: SeriesRun) => run.graphs.flatMap(graphToolSteps);
+
+/** The files an account's series run reads (its narrator's sample, its style pictures): all must be its own. */
+export const seriesRunFiles = (run: SeriesRun) => [...new Set(run.graphs.flatMap(graphFiles))];
+
+/** Create the planned episodes in the channel; an account's render at once with their composed scripts, as one batch. */
+function startEpisodes(o: { channelId: string; settings: EpisodeSettings; review: boolean; episodes: PlannedEpisode[] }): string[] {
+  const batchId = tenantAccount() && !o.review ? nanoid(10) : undefined;
+  return o.episodes.map(
+    (e) =>
+      createEpisode({
+        kind: "faceless",
+        channelId: o.channelId,
+        topic: e.topic,
+        settings: o.settings,
+        autoRender: !o.review,
+        saveLook: false,
+        ...(e.title && { title: e.title }),
+        ...(e.composed && { composed: e.composed }),
+        ...(batchId && { batchId }),
+      }).id,
+  );
+}
+
+/** One "Generate here" or "Next episode" at a time per series (see claim). */
+export const claimSeries = (id: string, kind: SeriesRun["kind"]) => claim(id, kind === "generate" ? "This series is being made — a moment" : "Episodes are being added to this series — a moment");
 
 /** "Generate here": plan the episodes, make the series' channel, and start every episode (rendered straight after its script unless `review`). */
 export async function generateSeries(id: string, input: SeriesInput & { review?: boolean }): Promise<SeriesView> {
   const r = mustRow(id);
   if (r.channel_id) throw new FacelessError("This series is made — add episodes from its page", 409);
-  const release = claim(id, "This series is being made — a moment");
+  const release = claimSeries(id, "generate");
   try {
-    return await generateClaimed(id, input);
+    return await startSeriesRun(await planGenerate(id, input));
   } finally {
     release();
   }
 }
 
-async function generateClaimed(id: string, input: SeriesInput & { review?: boolean }): Promise<SeriesView> {
+/** "Generate here", planned (nothing is made). */
+export async function planGenerate(id: string, input: SeriesInput & { review?: boolean }): Promise<SeriesRun> {
+  if (mustRow(id).channel_id) throw new FacelessError("This series is made — add episodes from its page", 409);
   checkEngine(input.settings.engine);
   const prompt = input.prompt.trim();
   if (!prompt) throw new FacelessError("Say what the video is about");
@@ -774,47 +980,34 @@ async function generateClaimed(id: string, input: SeriesInput & { review?: boole
   const est = estimateEpisode({ kind: "faceless", settings, genre: input.settings.genre });
   if (est.error) throw new FacelessError(est.error);
   const count = Math.max(1, Math.min(MAX_EPISODES, Math.round(input.settings.episodes)));
-  let plan: { name: string | null; episodes: SeriesEpisodePlan[] };
-  let channelId: string;
+  let plan: SeriesRun["plan"];
   try {
     plan = await planEpisodes({ prompt, settings: input.settings, brief, count, previous: [] });
-    const channelSettings: ChannelSettings = {
-      engine: settings.engine,
-      styleId: settings.styleId,
-      styleRefs: [],
-      voice: settings.voice,
-      aspect: settings.aspect,
-      subtitles: settings.subtitles,
-      music: settings.music,
-      animation: settings.animation,
-      length: settings.length,
-      ...(settings.brief && { brief: settings.brief }),
-    };
-    const channel = await createChannel({ idea: prompt, genre: input.settings.genre, engine: settings.engine, ...(plan.name && { name: plan.name }), avatar: false, settings: channelSettings });
-    channelId = channel.id;
   } catch (e) {
     if (e instanceof FacelessError) throw e;
     throw new FacelessError(COULDNT_PLAN, 500);
   }
-  // Seen as made from here on (a second click gets "This series is made"); a brief edited meanwhile is kept.
-  patch(id, (cur) => ({ ...cur, name: plan.name, prompt, settings: { ...input.settings, episodes: count }, plan: plan.episodes }), channelId);
-  const ids = startEpisodes({ channelId, prompt, plan: plan.episodes, earlier: [], settings, review: !!input.review, series: count > 1 });
-  patch(id, (cur) => ({ ...cur, episodeIds: ids }));
-  return seriesView(id);
+  const channelSettings: ChannelSettings = {
+    engine: settings.engine,
+    styleId: settings.styleId,
+    styleRefs: [],
+    voice: settings.voice,
+    aspect: settings.aspect,
+    subtitles: settings.subtitles,
+    music: settings.music,
+    animation: settings.animation,
+    length: settings.length,
+    ...(settings.brief && { brief: settings.brief }),
+  };
+  const genre = input.settings.genre;
+  const review = !!input.review;
+  const episodes = await planned({ prompt, plan: plan.episodes, earlier: [], settings, genre, series: count > 1 });
+  const run = { id, kind: "generate" as const, prompt, settings, genre, review, plan, seriesSettings: { ...input.settings, episodes: count }, channel: { settings: channelSettings }, episodes };
+  return { ...run, graphs: plannedGraphs(run) };
 }
 
-/** "Next episode": plan more after the ones already made, the first one following what the user says happens in it. */
-export async function addEpisodes(id: string, input: { count: number; next?: string; review?: boolean }): Promise<SeriesView> {
-  mustRow(id);
-  const release = claim(id, "Episodes are being added to this series — a moment");
-  try {
-    return await addClaimed(id, input);
-  } finally {
-    release();
-  }
-}
-
-async function addClaimed(id: string, input: { count: number; next?: string; review?: boolean }): Promise<SeriesView> {
+/** "Next episode", planned (nothing is made). */
+export async function planAdd(id: string, input: { count: number; next?: string; review?: boolean }): Promise<SeriesRun> {
   const r = mustRow(id);
   const d = dataOf(r);
   const channel = r.channel_id ? getChannel(r.channel_id) : null;
@@ -828,13 +1021,52 @@ async function addClaimed(id: string, input: { count: number; next?: string; rev
   const more = await planEpisodes({ prompt: d.prompt, settings: d.settings, brief: d.brief, count, previous, next: input.next }).catch(() => {
     throw new FacelessError(COULDNT_PLAN, 500);
   });
-  const ids = startEpisodes({ channelId: channel.id, prompt: d.prompt, plan: more.episodes, earlier: previous, settings, review: !!input.review, series: true });
+  const genre = d.settings.genre;
+  const review = !!input.review;
+  const episodes = await planned({ prompt: d.prompt, plan: more.episodes, earlier: previous, settings, genre, series: true });
+  const run = { id, kind: "add" as const, prompt: d.prompt, settings, genre, review, plan: more, channelId: channel.id, episodes };
+  return { ...run, graphs: plannedGraphs(run) };
+}
+
+/** Make what a series run planned: the channel ("generate"), the episodes, and the series' record of them. */
+export async function startSeriesRun(run: SeriesRun): Promise<SeriesView> {
+  const r = mustRow(run.id);
+  if (run.kind === "generate") {
+    if (r.channel_id) throw new FacelessError("This series is made — add episodes from its page", 409);
+    let channelId: string;
+    try {
+      const made = await createChannel({ idea: run.prompt, genre: run.genre, engine: run.settings.engine, ...(run.plan.name && { name: run.plan.name }), avatar: false, settings: run.channel!.settings });
+      channelId = made.id;
+    } catch (e) {
+      if (e instanceof FacelessError || e instanceof AccountProjectError) throw e;
+      throw new FacelessError(COULDNT_PLAN, 500);
+    }
+    // Seen as made from here on (a second click gets "This series is made"); a brief edited meanwhile is kept.
+    patch(run.id, (cur) => ({ ...cur, name: run.plan.name, prompt: run.prompt, settings: run.seriesSettings!, plan: run.plan.episodes }), channelId);
+    const ids = startEpisodes({ channelId, settings: run.settings, review: run.review, episodes: run.episodes });
+    patch(run.id, (cur) => ({ ...cur, episodeIds: ids }));
+    return seriesView(run.id);
+  }
+  const channelId = run.channelId!;
+  if (r.channel_id !== channelId || !getChannel(channelId)) throw new FacelessError("Make the series first", 409);
+  const ids = startEpisodes({ channelId, settings: run.settings, review: run.review, episodes: run.episodes });
   // Read again before writing: a brief edited while the episodes were planned is kept.
-  patch(id, (cur) => {
-    const plan = [...cur.plan, ...more.episodes];
-    return { ...cur, plan, settings: { ...(cur.settings ?? d.settings!), episodes: plan.length }, episodeIds: [...(cur.episodeIds ?? []), ...ids] };
+  patch(run.id, (cur) => {
+    const plan = [...cur.plan, ...run.plan.episodes];
+    return { ...cur, plan, settings: { ...(cur.settings ?? dataOf(r).settings!), episodes: plan.length }, episodeIds: [...(cur.episodeIds ?? []), ...ids] };
   });
-  return seriesView(id);
+  return seriesView(run.id);
+}
+
+/** "Next episode": plan more after the ones already made, the first one following what the user says happens in it. */
+export async function addEpisodes(id: string, input: { count: number; next?: string; review?: boolean }): Promise<SeriesView> {
+  mustRow(id);
+  const release = claimSeries(id, "add");
+  try {
+    return await startSeriesRun(await planAdd(id, input));
+  } finally {
+    release();
+  }
 }
 
 // ---------------------------------------------------------------------------

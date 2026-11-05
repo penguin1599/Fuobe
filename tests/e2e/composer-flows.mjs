@@ -169,7 +169,7 @@ async function ready(page, url) {
   for (const route of [
     "/image", "/edit", "/inpaint", "/video", "/lipsync", "/motion-control", "/reframe", "/extend", "/video-edit",
     // /audio/translate is the Translate & dub studio (its own steps, no composer); no-horizontal-scroll.mjs covers it.
-    "/upscale", "/upscale/video", "/audio", "/audio/dialogue", "/audio/voice-change", "/audio/transcribe", "/audio/sfx", "/audio/music", "/audio/video",
+    "/upscale", "/upscale/video", "/audio/speech", "/audio/dialogue", "/audio/voice-change", "/audio/transcribe", "/audio/sfx", "/audio/music", "/audio/video",
     "/video-tools", "/video-tools/relight", "/video-tools/depth", "/video-tools/join", "/video-tools/colors", "/apps/app-face-swap",
   ]) {
     await ready(page, route);

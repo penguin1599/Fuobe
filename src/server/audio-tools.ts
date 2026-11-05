@@ -6,7 +6,9 @@ import { CLOUD_ONLY_REMOVE_PROBLEM, LOWER_MAX_DB, LOWER_MIN_DB, NO_SOUND_PROBLEM
 import { planCleanDialogue, planRemix, REMIX_MAX_DB, REMIX_MIN_DB } from "@/lib/av/clean-dialogue";
 import { CLOUD_ONLY_CLEAN_PROBLEM, missingReuse, NO_REUSE_PACK, planClean, planTime, tooLongProblem } from "@/lib/av/clean-voice";
 import type { Engine, Generation } from "@/lib/catalog/types";
+import { CLOUD_ONLY_SPEECH_EDIT_PROBLEM, EMOTIONS, PACES, PITCH_STEPS, planSpeechEdit, SPEECH_EDIT_MAX_SECONDS, VOLUME_STEPS } from "@/lib/speech-edit";
 import { lastGpuDevice } from "./account-gpu";
+import type { ToolStep } from "./account-tool-run";
 import { createPipeline } from "./chains";
 import { ConnectComfyError, previewChained } from "./generations";
 import { comfyDbsModels, comfyDevice, comfyReuseModels, ownGpu } from "./providers/comfyui";
@@ -131,6 +133,31 @@ export const AudioToolBody = z.discriminatedUnion("tool", [
     sourceDuration: z.number().positive().max(36_000).optional(),
   }),
   z.object({
+    // Edit speech (nm10-speech-edit): a recording's words changed (its transcript's lines, edited), or an effect on a range.
+    tool: z.literal("speech-edit"),
+    engine: Engine,
+    media: FileUrl,
+    kind: z.enum(["audio", "video"]),
+    name: z.string().max(200).optional(),
+    cues: z.array(z.object({ start: z.number().min(0).max(SPEECH_EDIT_MAX_SECONDS), end: z.number().min(0).max(SPEECH_EDIT_MAX_SECONDS), text: z.string().max(2000) })).min(1).max(2000),
+    edited: z.array(z.string().max(2000)).max(2000).optional(),
+    range: z.object({ start: z.number().min(0), end: z.number().min(0) }).optional(),
+    effect: z
+      .discriminatedUnion("kind", [
+        z.object({ kind: z.literal("pitch"), semitones: z.number().refine((n) => (PITCH_STEPS as readonly number[]).includes(n)) }),
+        z.object({ kind: z.literal("pace"), speed: z.number().refine((n) => (PACES as readonly number[]).includes(n)) }),
+        z.object({ kind: z.literal("volume"), db: z.number().refine((n) => (VOLUME_STEPS as readonly number[]).includes(n)) }),
+        z.object({ kind: z.literal("emotion"), emotion: z.enum(EMOTIONS as [string, ...string[]]) }),
+        z.object({ kind: z.literal("whisper") }),
+        z.object({ kind: z.literal("unwhisper") }),
+        z.object({ kind: z.literal("clean") }),
+        z.object({ kind: z.literal("isolate") }),
+      ])
+      .optional(),
+    quality: z.enum(["fast", "best"]).optional(),
+    sourceDuration: z.number().positive().max(36_000).optional(),
+  }),
+  z.object({
     tool: z.literal("remux"),
     engine: Engine,
     video: FileUrl,
@@ -181,7 +208,16 @@ function factsOf(url: string, gone = "That audio file is gone — add it again")
   return { ...(duration && { duration }), ...(info.channels && { channels: info.channels }), hasAudio: info.hasAudio };
 }
 
-type AudioToolPlan = ToolPlan & { engine: Engine; split?: ClipFacts; headerChannels?: number };
+export type AudioToolPlan = ToolPlan & { engine: Engine; split?: ClipFacts; headerChannels?: number };
+
+/** Every file a request names (its clip, its clips, the mix and the video it goes on): an account's own, checked first. */
+export function audioToolFiles(body: AudioToolRequest): string[] {
+  if (body.tool === "join") return body.clips.map((c) => c.url);
+  if (body.tool === "loop") return [body.audio];
+  if (body.tool === "remux") return [body.video, body.audio];
+  if (body.tool === "remove-dialogue") return [body.video];
+  return [body.media];
+}
 
 async function plan(body: AudioToolRequest): Promise<AudioToolPlan> {
   return planAudioTool(body);
@@ -195,6 +231,7 @@ export function planAudioTool(body: AudioToolRequest): AudioToolPlan {
   if ((body.tool === "split" || body.tool === "remix") && mode === "cloud") throw new AudioToolError(CLOUD_ONLY_PROBLEM);
   if (body.tool === "remove-dialogue" && mode === "cloud") throw new AudioToolError(CLOUD_ONLY_REMOVE_PROBLEM);
   if (body.tool === "clean" && mode === "cloud") throw new AudioToolError(CLOUD_ONLY_CLEAN_PROBLEM);
+  if (body.tool === "speech-edit" && mode === "cloud") throw new AudioToolError(CLOUD_ONLY_SPEECH_EDIT_PROBLEM);
   if (mode !== "both" && body.engine !== mode) throw new AudioToolError(mode === "open" ? "This install is set to open source only (Settings → Engine mode)" : "This install is set to paid cloud APIs only (Settings → Engine mode)");
   try {
     if (body.tool === "split") {
@@ -231,6 +268,11 @@ export function planAudioTool(body: AudioToolRequest): AudioToolPlan {
       const seconds = facts?.duration ?? body.sourceDuration;
       const channels = facts?.channels ?? body.channels;
       return { engine: body.engine, ...planCleanDialogue({ ...body, seconds, channels, silent: facts?.hasAudio === false }), split: { duration: seconds, channels }, headerChannels: facts?.channels };
+    }
+    if (body.tool === "speech-edit") {
+      const facts = factsOf(body.media, body.kind === "video" ? "That video is gone — add it again" : "That recording is gone — add it again");
+      const seconds = facts?.duration ?? body.sourceDuration;
+      return { engine: body.engine, ...planSpeechEdit({ ...body, effect: body.effect as Parameters<typeof planSpeechEdit>[0]["effect"], seconds, hasAudio: facts?.hasAudio }) };
     }
     if (body.tool === "remux") {
       present(body.audio, "That mix is gone — export it again");
@@ -319,9 +361,23 @@ export async function previewAudioTool(body: AudioToolRequest): Promise<AudioToo
   return out;
 }
 
+/**
+ * A planned run's steps as an account's run checks them (src/server/account-tool-run.ts): each request with its chain,
+ * and how many earlier steps it waits for.
+ */
+export function audioToolSteps(p: AudioToolPlan): ToolStep[] {
+  return p.steps.map((s) => ({ request: s.chain ? { ...s.request, chain: s.chain } : s.request, deps: s.after?.length ?? 0 }));
+}
+
+export type AudioToolRun = { batchId: string; result: Generation; items: Generation[] };
+
 /** Start a run: one batch; the last step's generation is the result. */
-export async function runAudioTool(body: AudioToolRequest): Promise<{ batchId: string; result: Generation; items: Generation[] }> {
-  const p = await plan(body);
+export async function runAudioTool(body: AudioToolRequest): Promise<AudioToolRun> {
+  return startAudioTool(await plan(body));
+}
+
+/** Start a planned run (an account's, after its checks passed: inside asAccount). */
+export function startAudioTool(p: AudioToolPlan): AudioToolRun {
   try {
     const run = createPipeline(p.steps.map((s) => ({ key: s.key, request: s.request, ...(s.after && { after: s.after }), ...(s.chain && { chain: s.chain }) })));
     return { batchId: run.batchId, result: run.byKey[p.steps[p.steps.length - 1].key], items: run.items };

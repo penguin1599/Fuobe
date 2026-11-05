@@ -49,8 +49,9 @@ export default async function Page() {
     >
       {/* Live edit is the highlight: its own section comes first, right under the first screen and the composer. */}
       <LiveEditSection />
-      <EffectsSection facts={home.facts} effects={home.effects} />
+      {/* Camera motions, then Effects. */}
       <MotionsSection facts={home.facts} motions={home.motions} />
+      <EffectsSection facts={home.facts} effects={home.effects} />
       <AppsSection facts={home.facts} beforeAfter={home.beforeAfter} reveals={home.reveals} />
       <StudiosSection facts={home.facts} studios={home.studios} audioTools={home.audioTools} pills={home.pills} />
       <AssistSection facts={home.facts} skills={home.skills} />

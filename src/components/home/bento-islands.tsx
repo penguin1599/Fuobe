@@ -5,7 +5,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useNavUi } from "@/components/nav/nav-ui";
 import { usePreviewPlayback, usePreviewsPaused } from "@/components/preset-preview";
 import type { BentoPicture } from "@/lib/home-bento";
-import { REEL_STALL_MS, fadeDue, fadeOf, holdOf, nextInReel, reelProgress, reelSources, type ReelClip } from "@/lib/home-reel";
+import { REEL_STALL_MS, fadeDue, fadeOf, holdOf, nextInReel, reelProgress, reelSources, wipeFrame, type ReelClip, type ReelWipe } from "@/lib/home-reel";
 import { coverWidth, pickWidth, type Sized } from "@/lib/media-pick";
 import { releaseVideo } from "@/lib/media-release";
 import { browserPlaybackEnv } from "@/lib/preview-playback";
@@ -338,9 +338,10 @@ const later = (k: number) => (prev: number) => Math.max(prev, k);
  * the clip on screen loops instead. One that is slow lets the clip on screen play again rather than stop on its last
  * frame. Under reduced motion or Save-Data nothing plays by itself; a hover or keyboard focus plays the first clip
  * alone, on a loop (under Save-Data, the copy as wide as the still). `progress`: a line along the bottom follows the
- * whole reel.
+ * whole reel. `wipes` (one per clip, the Genjutsu tile's): each clip shows a swap under a divider, and the words for
+ * either side ride along with it (followWipe).
  */
-export function BentoReel({ id, reel, progress }: { id: string; reel: ReelClip[]; progress?: boolean }) {
+export function BentoReel({ id, reel, progress, wipes }: { id: string; reel: ReelClip[]; progress?: boolean; wipes?: ReelWipe[] }) {
   const [armed, setArmed] = useState(false);
   const [stillW, setStillW] = useState(0);
   const { ref, playing, handlers } = usePreviewPlayback<HTMLSpanElement>(id, armed ? { video: reel[0].clips[0].src } : {});
@@ -485,6 +486,17 @@ export function BentoReel({ id, reel, progress }: { id: string; reel: ReelClip[]
     setRest(-1);
   };
 
+  // The words over a wipe follow the clip on screen: the one coming in, from when it shows.
+  const lk = incomingShown ? seq + 1 : seq;
+  const wipe = wipes?.[lk % n];
+  const wipeEl = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    const v = els.current.get(lk);
+    const el = wipeEl.current;
+    if (!wipe || !v || !el || !playing) return;
+    return followWipe(v, el, wipe);
+  }, [wipe, lk, playing, loaded, started]);
+
   const playingNow = plan ? [{ k: seq, i: seq % n }, ...(nextOn ? [{ k: seq + 1, i: nextInReel(seq % n, n) }] : [])] : [];
   return (
     <span ref={ref} aria-hidden className={s.clip} data-reel={plan ? seq % n : undefined} onPointerEnter={handlers.onPointerEnter} onPointerLeave={handlers.onPointerLeave}>
@@ -511,6 +523,12 @@ export function BentoReel({ id, reel, progress }: { id: string; reel: ReelClip[]
             onFaded={advance}
           />
         ))}
+      {wipe && (
+        <span ref={wipeEl} className={s.wipe}>
+          <span className={s.wipeAfter}>{wipe.labels[1]}</span>
+          <span className={s.wipeBefore}>{wipe.labels[0]}</span>
+        </span>
+      )}
       {progress && (
         <span className={s.progress}>
           <i ref={bar} />
@@ -518,6 +536,45 @@ export function BentoReel({ id, reel, progress }: { id: string; reel: ReelClip[]
       )}
     </span>
   );
+}
+
+type FrameClock = HTMLVideoElement & {
+  requestVideoFrameCallback?: (cb: (now: number, meta: { mediaTime: number }) => void) => number;
+  cancelVideoFrameCallback?: (handle: number) => void;
+};
+
+/**
+ * Keeps the words over a wipe on its divider (`el`'s --x, the divider's place on the frame on screen), and out of
+ * sight while the clip fades to dark (data-out). Each frame the browser presents moves them, read from that frame's
+ * own time where the browser says it (requestVideoFrameCallback), otherwise from the clip's time once per paint, so
+ * they never drift from the line in the picture. Returns its stop.
+ */
+function followWipe(v: HTMLVideoElement, el: HTMLElement, wipe: ReelWipe): () => void {
+  let last = -1;
+  const show = (t: number) => {
+    const f = wipeFrame(wipe, t);
+    if (f === last) return;
+    last = f;
+    el.style.setProperty("--x", String(wipe.line[f]));
+    el.toggleAttribute("data-out", f >= wipe.fadeFrom);
+  };
+  show(v.currentTime);
+  const clock = v as FrameClock;
+  let handle = 0;
+  if (clock.requestVideoFrameCallback) {
+    const onFrame = (_: number, meta: { mediaTime: number }) => {
+      show(meta.mediaTime);
+      handle = clock.requestVideoFrameCallback!(onFrame);
+    };
+    handle = clock.requestVideoFrameCallback(onFrame);
+    return () => clock.cancelVideoFrameCallback?.(handle);
+  }
+  const tick = () => {
+    show(v.currentTime);
+    handle = requestAnimationFrame(tick);
+  };
+  handle = requestAnimationFrame(tick);
+  return () => cancelAnimationFrame(handle);
 }
 
 /** How long each part of the live tile's loop takes, in ms. */

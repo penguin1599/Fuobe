@@ -1,9 +1,51 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import type { GenerationRequest } from "@/lib/catalog/types";
+import { toast } from "sonner";
+import { COMPUTER_KICK_EVENT, useCreateGeneration, useIsOwner } from "@/lib/api";
+import type { Generation, GenerationRequest } from "@/lib/catalog/types";
 import { responseError } from "@/lib/refusals";
+
+/**
+ * An account's Image to 3D run (a model, a splat, a rig, a retexture): POST /api/image-to-3d, which runs it on the
+ * account's own GPU or key and finishes the model under its limits. Its cards show when the lists load again.
+ */
+function useAccountRun3d() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (req: GenerationRequest): Promise<Generation[]> => {
+      const res = await fetch("/api/image-to-3d", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(req) });
+      const body = (await res.json().catch(() => ({}))) as { items?: Generation[]; notes?: string[]; gpuWarning?: string; error?: string; code?: unknown };
+      // Stopped by the GPU pre-flight: the guided fix opens (watchGuestRefusals), so no error toast on top of it.
+      if (res.status === 409 && res.headers.get("x-fuobe-gpu-setup") === "1") throw Object.assign(new Error(body.error ?? "This tool needs setting up on your GPU"), { gpuSetup: true });
+      if (!res.ok) {
+        const code = typeof body.code === "string" ? body.code : undefined;
+        throw responseError(res, Object.assign(new Error(body.error ?? "Something went wrong. Please try again."), { status: res.status }, code && { code }));
+      }
+      if (body.notes?.length) toast.warning(body.notes.length > 1 ? "This run changes a few things" : "This run changes one thing", { description: body.notes.join(". ") });
+      if (body.gpuWarning) toast.warning(body.gpuWarning);
+      return body.items ?? [];
+    },
+    onSuccess: () => {
+      // A run on the ComfyUI on this computer: the tab that runs it asks for it at once.
+      window.dispatchEvent(new Event(COMPUTER_KICK_EVENT));
+      void qc.invalidateQueries({ queryKey: ["generations"] });
+      void qc.invalidateQueries({ queryKey: ["library-facets"] });
+    },
+  });
+}
+
+/**
+ * Start an Image to 3D run: the owner's as a studio run (POST /api/generations); anyone else's through
+ * POST /api/image-to-3d (a guest gets the sign-up card there).
+ */
+export function useCreate3d() {
+  const owner = useIsOwner();
+  const studio = useCreateGeneration();
+  const account = useAccountRun3d();
+  return owner ? studio : account;
+}
 
 /** What /api/generations?preview=1 says a request would run as (the parts the page shows). */
 export interface RunPreview {

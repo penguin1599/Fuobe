@@ -36,7 +36,7 @@ const lookup: Resolve = async (host) => (await dns.lookup(host, { all: true, ver
  *  - A name: looked up; any loopback, link-local, private or this machine's own address refuses it. A name that
  *    doesn't resolve goes on, and the test says it can't reach it. The answer never shows what it resolved to.
  */
-export async function hostedAddressRefusal(field: "comfyUrl" | "comfyIsolatedUrl", typed: string | undefined, o: { resolve?: Resolve } = {}): Promise<AddressRefusal | null> {
+export async function hostedAddressRefusal(field: "comfyUrl" | "comfyIsolatedUrl" | "worldcastUrl", typed: string | undefined, o: { resolve?: Resolve } = {}): Promise<AddressRefusal | null> {
   let url = typed?.trim() ?? "";
   if (!url) {
     const source = settingSource(field);

@@ -1,12 +1,14 @@
+import fs from "node:fs";
+import path from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { NextRequest } from "next/server";
 import { tempDir } from "./helpers/temp-dir";
 
 /**
  * Restore & colourise under the owner's public sign-up rules (docs/public-signup.md): its price
- * check is open to guests and accounts and priced for their own GPU, never a demo; its run and its prompt writer plan
- * with the studio's own AI helpers and chain on the server, so a guest or an account gets own-gpu-tool (with or
- * without a GPU); the owner's are unchanged. The GPU pre-flight board has its row, on graphs the requirement index knows.
+ * check is open to guests and accounts and priced for their own GPU, never a demo; an account's run goes to its own GPU
+ * (a guest signs up first, an account without one connects one), while the prompt writer, which asks the
+ * studio's own AI helpers, stays the owner's (own-gpu-tool); the owner's are unchanged. The GPU pre-flight board has its row, on graphs the requirement index knows.
  */
 
 const dir = tempDir("fuobe-restore-signup-");
@@ -72,15 +74,23 @@ describe("the proxy: Restore & colourise as main treats a tool", () => {
     expect(passed(proxy(req("/video-tools/restore", { cookie })))).toBe(true);
   });
 
-  it("opens the price check to guests and accounts; the run and the writer get own-gpu-tool, with or without a GPU", async () => {
+  it("opens the price check to guests and accounts, the run to an account's own GPU; the writer stays the owner's", async () => {
     process.env.FUOBE_PUBLIC_SIGNUP = "1";
     const bare = auth.createSession(newAccount().id).value;
     const withGpu = newAccount();
     auth.setAccountGpu(withGpu.id, { url: "https://gpu.example" });
     const gpu = auth.createSession(withGpu.id).value;
+    // The run: a guest signs up, an account with neither a GPU nor a key connects one, one with a GPU passes.
+    const guest = proxy(req("/api/restore", { method: "POST" }));
+    expect(guest.status).toBe(401);
+    expect(guest.headers.get(access.GUEST_HEADER)).toBe("1");
+    const none = proxy(req("/api/restore", { method: "POST", cookie: bare }));
+    expect(none.status).toBe(403);
+    expect(none.headers.get(access.CONNECT_GPU_HEADER)).toBe("1");
+    expect(passed(proxy(req("/api/restore", { method: "POST", cookie: gpu })))).toBe(true);
     for (const cookie of [undefined, bare, gpu]) {
       expect(passed(proxy(req("/api/restore/estimate", { method: "POST", cookie }))), String(cookie)).toBe(true);
-      for (const p of RUNS) {
+      for (const p of ["/api/restore/prompt"]) {
         const r = proxy(req(p, { method: "POST", cookie }));
         expect(r.status, p).toBe(403);
         expect(r.headers.get(access.CONNECT_GPU_HEADER), p).toBeNull();
@@ -164,5 +174,18 @@ describe("the GPU pre-flight board", () => {
     // The graph's node pack is pinned, so the board can say what to install.
     expect(Object.keys(idx.workflows["video-restore-ltx25-tiled"].packs)).toContain("ComfyUI-LTXVideo");
     expect(idx.packs["ComfyUI-LTXVideo"]).toMatchObject({ commit: "220e1d45aa0469f518e982102fca4dca92a61862" });
+  });
+});
+
+describe("the page a visitor sees", () => {
+  const page = (f: string) => fs.readFileSync(path.join(__dirname, "..", f), "utf8").replace(/\s+/g, " ");
+
+  it("is the GPU's: the open engine for a visitor, its upload asking for a GPU (no key runs it), and its price never 'Not available here'", () => {
+    const tool = page("src/components/restore/restore-tool.tsx");
+    expect(tool).toContain('const engine: Engine = visitor ? "open" : chosen;');
+    expect(tool).toMatch(/<ClipDrop accept=\{RESTORE\.accept\} limits=\{LIMITS\} gpuOnly /);
+    expect(tool).toContain("{costText(est, engine)}");
+    expect(page("src/components/shorts/ui.tsx")).toContain("useAskBeforeUpload({ gpuOnly })");
+    expect(page("src/components/shorts/ui.tsx")).not.toContain("Not available here");
   });
 });

@@ -97,12 +97,18 @@ function SeeAllTile({ href, label, name }: { href: string; label: string; name: 
   );
 }
 
+/**
+ * A board card's picture width, for its srcset: half the sheet (it is the screen's width below md) less its 16 px sides,
+ * the 8 px between the two cards and each card's own 4 px padding.
+ */
+const BOARD_SIZES = "calc((100vw - 56px) / 2)";
+
 /** A ready board as a phone card: its finished scene (16:9) with its name under it. */
 function BoardCard({ entry, current }: { entry: MegaItem; current: boolean }) {
   return (
     <li className="min-w-0">
       <IntentLink href={entry.href} aria-current={current ? "page" : undefined} className="nav-row nav-mark-under flex min-w-0 flex-col gap-1 rounded-[14px] p-1">
-        <CoverThumb cover={entry.cover} icon={entry.icon} size="tile16" eager />
+        <CoverThumb cover={entry.cover} icon={entry.icon} size="tile16" eager sizes={BOARD_SIZES} />
         <span className="truncate px-0.5 text-[12px] leading-4 font-medium">{entry.label}</span>
       </IntentLink>
     </li>

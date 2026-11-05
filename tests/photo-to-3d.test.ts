@@ -140,7 +140,8 @@ describe("the model and the app", () => {
     const m = getModel("oss-idol-3d")!;
     expect(m).toMatchObject({ engine: "open", kind: "model3d" });
     expect(m.routes).toEqual([expect.objectContaining({ op: "image-to-3d", provider: "comfyui", endpoint: "image-to-3d-idol" })]);
-    expect(m3d.MODELS_3D.image.open.map((c) => c.id)).toEqual(["oss-pixal3d", "oss-trellis2", "oss-idol-3d", "oss-hunyuan3d-21"]);
+    // Idol 3D quick mesh (Idol's splat as a vertex-coloured mesh, no orbit clip) comes last.
+    expect(m3d.MODELS_3D.image.open.map((c) => c.id)).toEqual(["oss-pixal3d", "oss-trellis2", "oss-idol-3d", "oss-hunyuan3d-21", "oss-idol-mesh"]);
     expect(m3d.model3dFor("image", "open")).toBe("oss-pixal3d");
     expect(m3d.modeOf("oss-idol-3d")).toEqual({ mode: "image", engine: "open" });
   });

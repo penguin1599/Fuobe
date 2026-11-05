@@ -550,6 +550,7 @@ describe("tools and prices", () => {
     expand: ["edit", "outpaint"],
     inpaint: ["inpaint", "edit"],
     enhance: ["edit"],
+    rerender: ["t2i"],
   };
 
   it("offers catalog models of the right engine and operation for every tool", () => {

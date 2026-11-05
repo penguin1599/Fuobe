@@ -40,6 +40,12 @@ const subscribeNarrow = (cb: () => void) => {
   return () => m.removeEventListener("change", cb);
 };
 
+/**
+ * Under Safari's words, a quieter last line: what the other browsers allow (never "open Fuobe in…": it is open). Not on
+ * an iPad, whose browsers are all Safari underneath (that is a "phone").
+ */
+export const OTHER_BROWSERS = "Chrome, Edge and Firefox allow this, so switching browser also works.";
+
 /** Can this browser use the ComfyUI on its computer at all ("ok"), or why not. */
 export function useComputerSupport(): "ok" | "safari" | "phone" | "http" {
   const narrow = useSyncExternalStore(subscribeNarrow, () => window.matchMedia(NARROW).matches, () => false);

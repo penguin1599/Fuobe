@@ -240,7 +240,7 @@ describe("canvas graph → plan", () => {
 
     // The engine mode is enforced per node.
     plan = planCanvas(threeNodes(), { engineMode: "open" });
-    expect(plan.errors[0]).toEqual({ nodeId: "img", message: "Nano Banana Pro is a cloud model, which isn't available here. Pick an open-source model" });
+    expect(plan.errors[0]).toEqual({ nodeId: "img", message: "Nano Banana Pro is a cloud model: pick an open-source model" });
   });
 
   it("finds loops", () => {

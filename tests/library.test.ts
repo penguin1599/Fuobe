@@ -26,6 +26,8 @@ const generationRoutes = await import("@/app/api/generations/route");
 const generationIdRoutes = await import("@/app/api/generations/[id]/route");
 const assetIdRoutes = await import("@/app/api/assets/[id]/route");
 const { db } = await import("@/server/db");
+const projects = await import("@/server/account-projects");
+const canvases = await import("@/server/account-canvas");
 const { childFolders, folderTree } = await import("@/lib/library");
 
 beforeAll(() => setSetting("demoMode", "auto"));
@@ -749,7 +751,57 @@ describe("ASSET_REFS", () => {
     expect(gens.assetUses(example.asset.id)).toEqual([]);
   });
 
+  it("keeps files an account's own project or board names when their results are deleted for good", async () => {
+    const short = made("account short final");
+    const character = made("account swap character");
+    const board = made("account board picture");
+    for (const f of [short, character, board]) db().prepare("UPDATE assets SET account_id = 'acct-keep' WHERE id = ?").run(f.asset.id);
+    // A Shorts session names its final video in its data and its list line; a swap project's list line names its character.
+    const session = projects.createAccountProject("acct-keep", "shorts", { name: "Launch short", data: { stitches: [{ final: short.asset.url }] }, summary: { final: short.asset.url } });
+    const swap = projects.createAccountProject("acct-keep", "swap", { name: "Swap", data: { clips: [] }, summary: { character: character.asset.url } });
+    const canvas = canvases.createAccountCanvas("acct-keep", {
+      name: "Board",
+      pages: [{ id: "p1", name: "Page 1", graph: { nodes: [{ id: "n1", type: "image", position: { x: 0, y: 0 }, data: { url: board.asset.url } }], edges: [] } }] as never,
+    });
+    expect(gens.assetUses(short.asset.id, { exceptGeneration: short.g.id })).toEqual([{ what: "account project", key: session.id, name: "Launch short" }]);
+    expect(gens.assetUses(character.asset.id, { exceptGeneration: character.g.id })).toEqual([{ what: "account project", key: swap.id, name: "Swap" }]);
+    expect(gens.assetUses(board.asset.id, { exceptGeneration: board.g.id })).toEqual([{ what: "account canvas", key: canvas.id, name: "Board" }]);
+    lib.trashGenerations([short.g.id, character.g.id, board.g.id]);
+    expect(await lib.emptyTrash()).toBeGreaterThanOrEqual(3);
+    for (const f of [short, character, board]) expect(fs.existsSync(fileOf(f.asset.url))).toBe(true);
+    // Uploads → Delete says where it's used, and keeps it.
+    const r = await assetIdRoutes.DELETE(new Request("http://x", { method: "DELETE" }), { params: Promise.resolve({ id: short.asset.id }) } as never);
+    expect(r.status).toBe(409);
+    expect((await r.json()).usedBy).toBe("the account project “Launch short”");
+    // Without the project or board, nothing keeps them.
+    projects.deleteAccountProjects("acct-keep");
+    canvases.deleteAccountCanvases("acct-keep");
+    for (const f of [short, character, board]) expect(gens.assetUses(f.asset.id)).toEqual([]);
+  });
+
+  it("never lets an account's board or project keep the owner's or another account's file", async () => {
+    // The owner's upload, named by a stranger's board (a board takes any /api/files/ link; the file route checks it on read).
+    const upload = saveFile({ data: Buffer.concat([PNG, Buffer.from("owner upload")]), contentType: "image/png", source: "upload" });
+    // Another account's result, named in a stranger's project free text (a Cinema brief) and on its board.
+    const theirs = made("another account's result");
+    db().prepare("UPDATE assets SET account_id = 'acct-other' WHERE id = ?").run(theirs.asset.id);
+    const page = (url: string) => ({ id: "p1", name: "Page 1", graph: { nodes: [{ id: "n1", type: "image", position: { x: 0, y: 0 }, data: { url } }], edges: [] } });
+    canvases.createAccountCanvas("acct-stranger", { name: "anything I like", pages: [page(upload.url), page(theirs.asset.url)] as never });
+    projects.createAccountProject("acct-stranger", "cinema", { name: "Brief", data: { brief: { body: `see ${upload.id} and ${theirs.asset.id}` } }, summary: { cover: theirs.asset.url } });
+    expect(gens.assetUses(upload.id)).toEqual([]);
+    expect(gens.assetUses(theirs.asset.id, { exceptGeneration: theirs.g.id })).toEqual([]);
+    // Uploads → Delete works for the owner, and Delete forever removes the other account's file.
+    const r = await assetIdRoutes.DELETE(new Request("http://x", { method: "DELETE" }), { params: Promise.resolve({ id: upload.id }) } as never);
+    expect(r.status).toBe(204);
+    await lib.deleteForever([theirs.g.id]);
+    expect(fs.existsSync(fileOf(theirs.asset.url))).toBe(false);
+    projects.deleteAccountProjects("acct-stranger");
+    canvases.deleteAccountCanvases("acct-stranger");
+  });
+
   it("covers every column that can hold a file, and every entry's query runs", () => {
+    // account_projects is made the first time it's used.
+    projects.listAccountProjects("nobody", "shorts");
     const tables = (db().prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").all() as { name: string }[]).map((t) => t.name);
     const columns = new Map(tables.map((t) => [t, (db().prepare(`PRAGMA table_info(${t})`).all() as { name: string }[]).map((c) => c.name)]));
     const covered = new Set(gens.ASSET_REFS.flatMap((r) => r.cols.map((c) => `${r.table}.${c}`)));

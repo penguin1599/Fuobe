@@ -166,7 +166,7 @@ describe("palette index", () => {
   });
 
   it("opens a model nothing else runs in the studio of what it makes", () => {
-    const home: Record<string, string> = { image: "/image", video: "/video", audio: "/audio", text: "/assist", model3d: "/image-to-3d" };
+    const home: Record<string, string> = { image: "/image", video: "/video", audio: "/audio/speech", text: "/assist", model3d: "/image-to-3d" };
     const fallback = index.models.filter((m) => !m.href.includes("?") && Object.values(home).includes(m.href));
     expect(fallback.length).toBeLessThan(40);
     for (const m of fallback) expect(m.href, m.id).toBe(home[getModel(m.id)!.kind]);

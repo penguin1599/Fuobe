@@ -16,6 +16,7 @@ import {
   HINTS,
   isRunning,
   playLabel,
+  stateLabel,
   SWITCH_RAMP,
   switchDue,
   type DemoAudioContext,
@@ -130,6 +131,12 @@ describe("the demo's story", () => {
     expect(switchDue(run(tap, started, at(AUTO_AT)), AUTO_AT + 1)).toBe(false);
     expect(switchDue(run(tap, started, { type: "choose", clean: false }), AUTO_AT + 1)).toBe(false);
   });
+
+  it("says what is heard on the chip, the same on the studio's demo and on Home's Audio tile", () => {
+    expect(stateLabel(DEMO_START.clean)).toBe("Noisy restaurant");
+    expect(stateLabel(run(tap, started, at(AUTO_AT)).clean)).toBe("Voice only");
+    expect(stateLabel(run(tap, started, at(AUTO_AT), { type: "choose", clean: false }).clean)).toBe("Noisy restaurant");
+  });
 });
 
 /** A stand-in for an AudioContext that records what the demo asks of it. */
@@ -236,11 +243,11 @@ describe("the demo's sound", () => {
 describe("the demo page", () => {
   it("renders the stage before anything plays: the room, Tap to listen, Noise on pressed", () => {
     const html = renderToStaticMarkup(createElement(CleanVoiceDemo));
-    expect(html).toContain("Hear her, not the room.");
+    expect(html).toContain("Studio-clean voice from any recording.");
     expect(html).toContain(`src="${DEMO_MEDIA.room}"`);
     expect(html).toContain(`src="${DEMO_MEDIA.quiet}"`);
     expect(html).toContain("Tap to listen");
-    expect(html).toContain("Busy brasserie");
+    expect(html).toContain("Noisy restaurant");
     expect(html).toMatch(/aria-pressed="true"[^>]*>Noise on</);
     expect(html).toMatch(/aria-pressed="false"[^>]*>Noise off</);
     expect(html).toContain(HINTS.ready);

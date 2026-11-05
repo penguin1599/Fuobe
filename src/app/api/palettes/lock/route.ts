@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { createLockedRun, SignatureSchema } from "@/server/palettes";
+import { ClientExtra } from "@/server/request-schema";
 
 const Hex = z.string().regex(/^#?[0-9a-fA-F]{6}$/);
 
@@ -24,7 +25,7 @@ const RequestSchema = z.object({
       enhancePrompt: z.boolean().optional(),
       palette: z.array(Hex).max(16).optional(),
       styleId: z.string().max(200).optional(),
-      extra: z.record(z.string(), z.unknown()).optional(),
+      extra: ClientExtra.optional(),
     })
     .optional(),
   signature: SignatureSchema,

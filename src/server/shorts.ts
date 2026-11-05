@@ -5,6 +5,7 @@ import { getModel } from "@/lib/catalog";
 import { maxRefsFor, reframes, resolutionFor, sourceSeconds } from "@/lib/catalog/shorts-models";
 import {
   clipLengthProblem,
+  ENHANCE_COPY,
   clipShapeProblem,
   customPresetName,
   getShortsPreset,
@@ -13,8 +14,9 @@ import {
   needsFit,
   originalSegmentProblem,
   planSegments,
+  planEnhance,
+  planFinishedStitch,
   planShorts,
-  planStitch,
   planTake,
   rangeProblem,
   sessionPlanInput,
@@ -35,20 +37,41 @@ import {
   type ShortsTake,
   type TakeKeys,
 } from "@/lib/catalog/shorts";
-import type { Engine, Generation } from "@/lib/catalog/types";
+import { REGEN_COPY, REGEN_OFFERED } from "@/lib/catalog/regenerate";
+import type { Engine, Generation, GenerationRequest } from "@/lib/catalog/types";
+import { generationAccount } from "./account-library";
+import {
+  ACCOUNT_PROJECT_LIMITS,
+  AccountProjectError,
+  createAccountProject,
+  deleteAccountProject,
+  getAccountProject,
+  listAccountProjects,
+  projectRefsProblem,
+  updateAccountProject,
+} from "./account-projects";
 import { createPipeline } from "./chains";
 import { db } from "./db";
 import { getGeneration, previewChained } from "./generations";
-import { trashGenerations } from "./library";
+import { deleteForever, trashGenerations } from "./library";
 import { firstOn } from "./model-access";
 import { engineMode } from "./settings";
 import { readRef, RefError } from "./storage";
 import { mediaFacts, type SourceInfo } from "./media-facts";
+import { ownSetupGate } from "./own-setup-run";
+import { tenant } from "./tenant";
 
 /**
  * Shorts Studio sessions: a clip cut into segments, each restyled (one or more takes, one of them
  * primary) and stitched back together under the original sound. Every step is an ordinary
  * generation made through createPipeline; a session only records which generation is which.
+ *
+ * Whose sessions and presets: the owner's are in shorts_sessions and shorts_presets. Inside an account's work
+ * (tenant.ts, asAccount; public sign-up) every read and change here is that account's own instead, kept in its own
+ * projects (account-projects.ts, kinds "shorts" and "shorts-preset"): it never reaches the owner's tables or another
+ * account's. A guest has none. An account's runs are checked and started through src/server/account-tool-run.ts, so
+ * each run is planned first (planSessionRun, planTakeRun, planStitchRun) and started after the checks (startSession,
+ * startTake, startStitch).
  */
 
 export class ShortsError extends Error {
@@ -125,18 +148,114 @@ const toSession = (r: SessionRow): ShortsSession => ({
   updatedAt: r.updated_at,
 });
 
+/** An account's sessions and presets, as its own projects (account-projects.ts). */
+const SESSION_KIND = "shorts";
+const PRESET_KIND = "shorts-preset";
+
+/** Whose work this is: the owner's (undefined), an account's (its id), or a guest's (null: nothing of its own). */
+function whose(): string | null | undefined {
+  const t = tenant();
+  if (!t) return undefined;
+  return t.kind === "account" ? t.id : null;
+}
+
+const GONE = "This short no longer exists";
+
+/** A change the account's project store refused (too big, too many): its words and status. */
+function stored<T>(fn: () => T): T {
+  try {
+    return fn();
+  } catch (e) {
+    if (e instanceof AccountProjectError) throw new ShortsError(e.message, e.status);
+    throw e;
+  }
+}
+
+/** What an account's History shows of a session, kept beside it (the list never reads every session). */
+interface SessionLine {
+  engine: Engine;
+  lookName: string;
+  segments: number;
+  seconds: number;
+  /** The newest stitch's video. */
+  final?: string;
+  /** Each segment's chosen take. */
+  primaries: string[];
+}
+
+const lineOf = (s: Omit<ShortsSession, "id">): SessionLine => ({
+  engine: s.engine,
+  lookName: s.look.name,
+  segments: s.segments.length,
+  seconds: Math.round((s.range.end - s.range.start) * 10) / 10,
+  ...(s.stitches.length && { final: s.stitches[s.stitches.length - 1].final }),
+  primaries: s.segments.map((g) => g.primary),
+});
+
 function readSession(id: string): ShortsSession {
-  const r = db().prepare("SELECT * FROM shorts_sessions WHERE id = ?").get(id) as SessionRow | undefined;
-  if (!r) throw new ShortsError("This short no longer exists", 404);
-  return toSession(r);
+  const who = whose();
+  if (who === undefined) {
+    const r = db().prepare("SELECT * FROM shorts_sessions WHERE id = ?").get(id) as SessionRow | undefined;
+    if (!r) throw new ShortsError(GONE, 404);
+    return toSession(r);
+  }
+  // Another account's session, the owner's, or none: the same answer.
+  const p = who ? getAccountProject<ShortsSession>(who, SESSION_KIND, id) : null;
+  if (!p) throw new ShortsError(GONE, 404);
+  return { ...p.data, id: p.id, title: p.name, createdAt: p.createdAt, updatedAt: p.updatedAt };
 }
 
 function saveSession(s: ShortsSession): ShortsSession {
-  const now = Date.now();
-  db()
-    .prepare("UPDATE shorts_sessions SET segments_json = ?, stitches_json = ?, title = ?, updated_at = ? WHERE id = ?")
-    .run(JSON.stringify(s.segments), JSON.stringify(s.stitches), s.title, now, s.id);
-  return { ...s, updatedAt: now };
+  const who = whose();
+  if (who === undefined) {
+    const now = Date.now();
+    db()
+      .prepare("UPDATE shorts_sessions SET segments_json = ?, stitches_json = ?, title = ?, updated_at = ? WHERE id = ?")
+      .run(JSON.stringify(s.segments), JSON.stringify(s.stitches), s.title, now, s.id);
+    return { ...s, updatedAt: now };
+  }
+  const saved = who ? stored(() => updateAccountProject(who, SESSION_KIND, s.id, { name: s.title, data: s, summary: lineOf(s) })) : null;
+  if (!saved) throw new ShortsError(GONE, 404);
+  return { ...s, title: saved.name, updatedAt: saved.updatedAt };
+}
+
+/** Store a new session: the owner's row, or the account's own project. Its id is the store's. */
+function insertSession(s: Omit<ShortsSession, "id">): ShortsSession {
+  const who = whose();
+  if (who === undefined) {
+    const session: ShortsSession = { id: nanoid(10), ...s };
+    db()
+      .prepare(
+        `INSERT INTO shorts_sessions (id, title, engine, batch_id, look_json, source_json, range_json, settings_json, segments_json, stitches_json, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        session.id,
+        session.title,
+        session.engine,
+        session.batchId,
+        JSON.stringify(session.look),
+        JSON.stringify(session.source),
+        JSON.stringify(session.range),
+        JSON.stringify(session.settings),
+        JSON.stringify(session.segments),
+        JSON.stringify(session.stitches),
+        session.createdAt,
+        session.updatedAt,
+      );
+    return session;
+  }
+  if (!who) throw new ShortsError("Create a free account to make a short.", 401);
+  const p = stored(() => createAccountProject(who, SESSION_KIND, { name: s.title, data: s, summary: lineOf(s) }));
+  return { ...s, id: p.id, title: p.name, createdAt: p.createdAt, updatedAt: p.updatedAt };
+}
+
+/** An account keeps up to ACCOUNT_PROJECT_LIMITS.projects shorts: checked before anything is made. */
+function roomForSession(): void {
+  const who = whose();
+  if (who && listAccountProjects(who, SESSION_KIND).length >= ACCOUNT_PROJECT_LIMITS.projects) {
+    throw new ShortsError(`You can keep up to ${ACCOUNT_PROJECT_LIMITS.projects} shorts. Delete one to make another.`, 409);
+  }
 }
 
 interface PresetRow {
@@ -160,20 +279,55 @@ const toPreset = (r: PresetRow): ShortsCustomPreset => ({
 // ---------------------------------------------------------------------------
 // Custom presets ("Create a preset from references")
 
+/** An account's preset, as its project keeps it (the name is the project's). */
+interface PresetData {
+  description: string;
+  references: string[];
+}
+
+function accountPreset(who: string, id: string): ShortsCustomPreset | null {
+  const p = getAccountProject<PresetData>(who, PRESET_KIND, id);
+  return p ? { id: p.id, name: p.name, description: p.data.description, references: p.data.references, createdAt: p.createdAt, updatedAt: p.updatedAt } : null;
+}
+
+/** An account's references are its own uploads or results only (or Fuobe's example files): another's is refused. */
+function ownReferences(who: string, refs: string[]): void {
+  const problem = projectRefsProblem(who, { files: refs });
+  if (problem) throw new ShortsError(problem.error, problem.status);
+}
+
 export function listCustomPresets(): ShortsCustomPreset[] {
-  return (db().prepare("SELECT * FROM shorts_presets ORDER BY created_at DESC").all() as PresetRow[]).map(toPreset);
+  const who = whose();
+  if (who === undefined) return (db().prepare("SELECT * FROM shorts_presets ORDER BY created_at DESC").all() as PresetRow[]).map(toPreset);
+  if (!who) return [];
+  return listAccountProjects(who, PRESET_KIND)
+    .map((p) => accountPreset(who, p.id))
+    .filter((p): p is ShortsCustomPreset => !!p)
+    .sort((x, y) => y.createdAt - x.createdAt);
 }
 
 export function getCustomPreset(id: string): ShortsCustomPreset | null {
-  const r = db().prepare("SELECT * FROM shorts_presets WHERE id = ?").get(id) as PresetRow | undefined;
-  return r ? toPreset(r) : null;
+  const who = whose();
+  if (who === undefined) {
+    const r = db().prepare("SELECT * FROM shorts_presets WHERE id = ?").get(id) as PresetRow | undefined;
+    return r ? toPreset(r) : null;
+  }
+  return who ? accountPreset(who, id) : null;
 }
 
 export function createCustomPreset(input: { name?: string; description?: string; references: string[] }): ShortsCustomPreset {
   const refs = [...new Set(input.references)].slice(0, SHORTS.maxReferences);
   if (!refs.length) throw new ShortsError("Add at least one reference image");
-  const count = (db().prepare("SELECT COUNT(*) AS n FROM shorts_presets").get() as { n: number }).n;
   const description = (input.description ?? "").trim();
+  const who = whose();
+  if (who !== undefined) {
+    if (!who) throw new ShortsError("Create a free account to make a preset.", 401);
+    ownReferences(who, refs);
+    const name = input.name?.trim() || customPresetName(description, listAccountProjects(who, PRESET_KIND).length);
+    const p = stored(() => createAccountProject<PresetData>(who, PRESET_KIND, { name, data: { description, references: refs } }));
+    return accountPreset(who, p.id)!;
+  }
+  const count = (db().prepare("SELECT COUNT(*) AS n FROM shorts_presets").get() as { n: number }).n;
   const name = input.name?.trim() || customPresetName(description, count);
   const now = Date.now();
   const id = `custom-${nanoid(10)}`;
@@ -188,6 +342,13 @@ export function updateCustomPreset(id: string, patch: { name?: string; descripti
   if (!cur) throw new ShortsError("This preset no longer exists", 404);
   const refs = patch.references ? [...new Set(patch.references)].slice(0, SHORTS.maxReferences) : cur.references;
   if (!refs.length) throw new ShortsError("Keep at least one reference image");
+  const who = whose();
+  if (who) {
+    if (patch.references) ownReferences(who, refs);
+    const data: PresetData = { description: patch.description?.trim() ?? cur.description, references: refs };
+    if (!stored(() => updateAccountProject(who, PRESET_KIND, id, { name: patch.name?.trim() || cur.name, data }))) throw new ShortsError("This preset no longer exists", 404);
+    return accountPreset(who, id)!;
+  }
   db()
     .prepare("UPDATE shorts_presets SET name = ?, description = ?, references_json = ?, updated_at = ? WHERE id = ?")
     .run(patch.name?.trim() || cur.name, patch.description?.trim() ?? cur.description, JSON.stringify(refs), Date.now(), id);
@@ -195,7 +356,9 @@ export function updateCustomPreset(id: string, patch: { name?: string; descripti
 }
 
 export function deleteCustomPreset(id: string): boolean {
-  return db().prepare("DELETE FROM shorts_presets WHERE id = ?").run(id).changes > 0;
+  const who = whose();
+  if (who === undefined) return db().prepare("DELETE FROM shorts_presets WHERE id = ?").run(id).changes > 0;
+  return !!who && deleteAccountProject(who, PRESET_KIND, id);
 }
 
 // ---------------------------------------------------------------------------
@@ -366,17 +529,53 @@ export function estimateWith(body: ShortsBody, info: SourceInfo): ShortsEstimate
 // ---------------------------------------------------------------------------
 // Sessions
 
+/** A plan's steps as the requests they make, with how many earlier steps each waits for (account-tool-run.ts ToolStep). */
+export const shortsSteps = (steps: PlanStep[]): { request: GenerationRequest; deps: number }[] => steps.map((s) => ({ request: withChain(s), deps: s.after?.length ?? 0 }));
+
+/** The steps made, or the planner's words as a 422. */
+function pipelineOf(steps: PlanStep[], opts?: { batchId: string }): ReturnType<typeof createPipeline> {
+  try {
+    return createPipeline(steps, opts);
+  } catch (e) {
+    throw new ShortsError((e as Error).message, 422);
+  }
+}
+
+/** A new session planned (the clip's header read, every step planned), not started yet. */
+export interface SessionRun {
+  body: ShortsBody;
+  input: ShortsPlanInput;
+  info: SourceInfo;
+  plan: ReturnType<typeof planShorts>;
+}
+
+/** Plan a session as it will start; `known` is the clip's header when the caller read it already (else it's read here). */
+export async function planSessionRun(body: ShortsBody, known?: SourceInfo): Promise<SessionRun> {
+  roomForSession();
+  const { input, info } = known ? planWith(body, known) : await planInput(body, { probe: true });
+  // An account's preset is its own (lookFor), and so must its pictures still be.
+  const who = whose();
+  if (who && input.look.references?.length) ownReferences(who, input.look.references);
+  return { body, input, info, plan: planShorts(input) };
+}
+
+/** The files a session's runs take (its clip and its look's pictures): an account's run is checked for them first. */
+export function sessionFiles(id: string): string[] {
+  const s = readSession(id);
+  return [s.source.url, ...(s.look.references ?? [])];
+}
+
 /** Start a session; `known` is the clip's header when the caller read it already (else it's read here). */
 export async function createSession(body: ShortsBody, known?: SourceInfo): Promise<ShortsSession> {
-  const { input, info } = known ? planWith(body, known) : await planInput(body, { probe: true });
-  const plan = planShorts(input);
-  const pipeline = (() => {
-    try {
-      return createPipeline(plan.steps);
-    } catch (e) {
-      throw new ShortsError((e as Error).message, 422);
-    }
-  })();
+  return startSession(await planSessionRun(body, known));
+}
+
+/** Start a planned session: its steps are made, and the session that records them is stored. */
+export function startSession(run: SessionRun): ShortsSession {
+  const { body, input, info, plan } = run;
+  // Checked again with nothing awaited before the session is stored: a full account starts nothing.
+  roomForSession();
+  const pipeline = pipelineOf(plan.steps);
   const id = (k: string) => pipeline.byKey[k].id;
   const now = Date.now();
   const segments: ShortsSessionSegment[] = plan.segments.map((s, i) => {
@@ -390,8 +589,7 @@ export async function createSession(body: ShortsBody, known?: SourceInfo): Promi
     clips: segments.map((s) => s.primary),
     createdAt: now,
   };
-  const session: ShortsSession = {
-    id: nanoid(10),
+  return insertSession({
     title: input.title,
     engine: input.engine,
     batchId: pipeline.batchId,
@@ -411,27 +609,7 @@ export async function createSession(body: ShortsBody, known?: SourceInfo): Promi
     stitches: [stitch],
     createdAt: now,
     updatedAt: now,
-  };
-  db()
-    .prepare(
-      `INSERT INTO shorts_sessions (id, title, engine, batch_id, look_json, source_json, range_json, settings_json, segments_json, stitches_json, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
-      session.id,
-      session.title,
-      session.engine,
-      session.batchId,
-      JSON.stringify(session.look),
-      JSON.stringify(session.source),
-      JSON.stringify(session.range),
-      JSON.stringify(session.settings),
-      JSON.stringify(session.segments),
-      JSON.stringify(session.stitches),
-      now,
-      now,
-    );
-  return session;
+  });
 }
 
 /** A take's generations by role, from its steps' keys. */
@@ -449,7 +627,7 @@ function takeOf(t: TakeKeys, id: (key: string) => string, createdAt: number): Sh
 /** Every generation a session made. */
 export function sessionIds(s: ShortsSession): string[] {
   const ids = [
-    ...s.segments.flatMap((g) => g.takes.flatMap((t) => [t.cut, ...(t.fit ? [t.fit] : []), ...(t.still ? [t.still] : []), ...(t.frame ? [t.frame] : []), t.look])),
+    ...s.segments.flatMap((g) => g.takes.flatMap((t) => [t.cut, ...(t.fit ? [t.fit] : []), ...(t.still ? [t.still] : []), ...(t.frame ? [t.frame] : []), ...(t.enhance?.smooth ? [t.enhance.smooth] : []), t.look])),
     ...s.stitches.flatMap((x) => [...x.ids, x.final]),
   ];
   return [...new Set(ids)];
@@ -484,27 +662,41 @@ export interface ShortsSessionCard {
   status: "rendering" | "ready" | "failed";
 }
 
+/** A session's History card, from its line and its generations as they are now. */
+function cardOf(s: { id: string; title: string; createdAt: number; updatedAt: number }, l: SessionLine): ShortsSessionCard {
+  const final = l.final ? getGeneration(l.final) : null;
+  const looks = l.primaries.map((id) => getGeneration(id));
+  const active = [final, ...looks].some((g) => g && (g.status === "queued" || g.status === "running"));
+  const failed = [final, ...looks].some((g) => !g || g.status === "failed" || g.status === "canceled");
+  return {
+    id: s.id,
+    title: s.title,
+    engine: l.engine,
+    lookName: l.lookName,
+    segments: l.segments,
+    seconds: l.seconds,
+    createdAt: s.createdAt,
+    updatedAt: s.updatedAt,
+    cover: final?.status === "succeeded" ? final : (looks.find((g) => g?.status === "succeeded") ?? final ?? looks[0] ?? null),
+    status: active ? "rendering" : failed ? "failed" : "ready",
+  };
+}
+
 export function listSessions(limit = 60): ShortsSessionCard[] {
-  const rows = db().prepare("SELECT * FROM shorts_sessions ORDER BY created_at DESC LIMIT ?").all(limit) as SessionRow[];
-  return rows.map((r) => {
-    const s = toSession(r);
-    const final = s.stitches.length ? getGeneration(s.stitches[s.stitches.length - 1].final) : null;
-    const looks = s.segments.map((g) => getGeneration(g.primary));
-    const active = [final, ...looks].some((g) => g && (g.status === "queued" || g.status === "running"));
-    const failed = [final, ...looks].some((g) => !g || g.status === "failed" || g.status === "canceled");
-    return {
-      id: s.id,
-      title: s.title,
-      engine: s.engine,
-      lookName: s.look.name,
-      segments: s.segments.length,
-      seconds: Math.round((s.range.end - s.range.start) * 10) / 10,
-      createdAt: s.createdAt,
-      updatedAt: s.updatedAt,
-      cover: final?.status === "succeeded" ? final : (looks.find((g) => g?.status === "succeeded") ?? final ?? looks[0] ?? null),
-      status: active ? "rendering" : failed ? "failed" : "ready",
-    };
-  });
+  const who = whose();
+  if (who === undefined) {
+    const rows = db().prepare("SELECT * FROM shorts_sessions ORDER BY created_at DESC LIMIT ?").all(limit) as SessionRow[];
+    return rows.map((r) => {
+      const s = toSession(r);
+      return cardOf(s, lineOf(s));
+    });
+  }
+  if (!who) return [];
+  return listAccountProjects<SessionLine>(who, SESSION_KIND)
+    .filter((p) => p.summary)
+    .sort((x, y) => y.createdAt - x.createdAt)
+    .slice(0, limit)
+    .map((p) => cardOf({ id: p.id, title: p.name, createdAt: p.createdAt, updatedAt: p.updatedAt }, p.summary!));
 }
 
 export function renameSession(id: string, title: string): ShortsSession {
@@ -512,12 +704,20 @@ export function renameSession(id: string, title: string): ShortsSession {
   return saveSession({ ...s, title: title.trim().slice(0, 120) || s.title });
 }
 
-/** Delete a session; its generations move to the Trash (restorable for 30 days) unless `keep`. */
-export function deleteSession(id: string, opts: { keep?: boolean } = {}): number {
+/**
+ * Delete a session; its generations move to the Trash (restorable for 30 days) unless `keep`. An account has no Trash
+ * (as DELETE /api/generations/<id>): its session's runs are deleted for good, and only ever its own.
+ */
+export async function deleteSession(id: string, opts: { keep?: boolean } = {}): Promise<number> {
   const s = readSession(id);
-  const trashed = opts.keep ? 0 : trashGenerations(sessionIds(s));
-  db().prepare("DELETE FROM shorts_sessions WHERE id = ?").run(id);
-  return trashed;
+  const who = whose();
+  if (who === undefined) {
+    const trashed = opts.keep ? 0 : trashGenerations(sessionIds(s));
+    db().prepare("DELETE FROM shorts_sessions WHERE id = ?").run(id);
+    return trashed;
+  }
+  if (!who || !deleteAccountProject(who, SESSION_KIND, id)) throw new ShortsError(GONE, 404);
+  return opts.keep ? 0 : deleteForever(sessionIds(s).filter((g) => generationAccount(g) === who));
 }
 
 const segmentAt = (s: ShortsSession, index: number) => {
@@ -531,23 +731,102 @@ const usable = (id: string) => {
   return !!g && g.status !== "failed" && g.status !== "canceled";
 };
 
-/** A new take of one segment (a fresh seed). It becomes the chosen take when the current one failed or is gone. */
-export function regenerateSegment(id: string, index: number): ShortsSessionView {
+/** A new take of one segment planned, not started yet. */
+export interface TakeRun {
+  id: string;
+  index: number;
+  steps: PlanStep[];
+  keys: TakeKeys;
+}
+
+/** Plan a new take of one segment (a fresh seed). */
+export function planTakeRun(id: string, index: number): TakeRun {
   const s = readSession(id);
   const seg = segmentAt(s, index);
   checkEngine(s.engine);
   const seed = Math.floor(Math.random() * 2 ** 31);
   const take = planTake(sessionPlanInput(s, seed), seg, s.segments.length, `r${seg.takes.length}`);
-  let pipeline;
+  return { id, index, steps: take.steps, keys: take.keys };
+}
+
+/** Start a planned take. It becomes the chosen take when the current one failed or is gone. */
+export function startTake(run: TakeRun): ShortsSessionView {
+  // Read again before anything is made: the session may have gone meanwhile.
+  const s = readSession(run.id);
+  segmentAt(s, run.index);
+  const pipeline = pipelineOf(run.steps, { batchId: s.batchId });
+  const next = takeOf(run.keys, (k) => pipeline.byKey[k].id, Date.now());
+  const segments = s.segments.map((g, i) => (i === run.index ? { ...g, takes: [...g.takes, next], primary: usable(g.primary) ? g.primary : next.look } : g));
+  saveSession({ ...s, segments });
+  return getSession(run.id);
+}
+
+/** A new take of one segment (a fresh seed). It becomes the chosen take when the current one failed or is gone. */
+export function regenerateSegment(id: string, index: number): ShortsSessionView {
+  return startTake(planTakeRun(id, index));
+}
+
+/**
+ * Enhance (H3 regenerate) one segment's chosen take: RIFE to 24 fps, then Open-H3 Regenerate at 1080p from the segment's
+ * restyle words (planEnhance). On your GPU only, so an open-source short; Engine mode "Paid APIs only" refuses it. The
+ * result is a new take beside the others, to compare and pick.
+ */
+export function enhanceSegment(id: string, index: number): ShortsSessionView {
+  return startEnhance(planEnhanceRun(id, index));
+}
+
+/** An Enhance planned (the chosen take's 1080p redraw), not started yet. */
+export interface EnhanceRun {
+  id: string;
+  index: number;
+  from: string;
+  cut: ShortsTake["cut"];
+  plan: ReturnType<typeof planEnhance>;
+}
+
+/**
+ * Plan an Enhance of one segment's chosen take. An account's runs on its own GPU only, and only when that GPU has the
+ * memory it needs (own-setup-run.ts): its route checks the steps first (src/server/account-tool-run.ts).
+ */
+export function planEnhanceRun(id: string, index: number): EnhanceRun {
+  const s = readSession(id);
+  const seg = segmentAt(s, index);
+  // Open-H3 Regenerate needs a 48 GB card: an account runs it on its own GPU when that GPU fits it (own-setup-run.ts),
+  // never on this studio's. The owner's waits until it has run on a card that fits it (REGEN_OFFERED): nothing is made.
+  if (tenant()) ownSetupGate("regenerate:enhance");
+  else if (!REGEN_OFFERED) throw new ShortsError(REGEN_COPY.heldEnhance, 422);
+  if (s.engine !== "open") throw new ShortsError(ENHANCE_COPY.cloudSession, 422);
+  checkEngine("open");
+  const take = seg.takes.find((t) => t.look === seg.primary);
+  if (!take) throw new ShortsError(ENHANCE_COPY.notReady, 409);
+  if (take.enhance) throw new ShortsError(ENHANCE_COPY.done, 409);
+  const g = getGeneration(take.look);
+  const url = g?.status === "succeeded" ? g.outputs.find((o) => o.kind === "video")?.url : undefined;
+  if (!url) throw new ShortsError(ENHANCE_COPY.notReady, 409);
+  let plan: ReturnType<typeof planEnhance>;
   try {
-    pipeline = createPipeline(take.steps, { batchId: s.batchId });
+    plan = planEnhance(sessionPlanInput(s), seg, { url }, `e${seg.takes.length}`);
   } catch (e) {
     throw new ShortsError((e as Error).message, 422);
   }
-  const next = takeOf(take.keys, (k) => pipeline.byKey[k].id, Date.now());
-  const segments = s.segments.map((g, i) => (i === index ? { ...g, takes: [...g.takes, next], primary: usable(g.primary) ? g.primary : next.look } : g));
-  saveSession({ ...s, segments });
-  return getSession(id);
+  return { id, index, from: take.look, cut: take.cut, plan };
+}
+
+/** Start a planned Enhance: a new take beside the others, to compare and pick. */
+export function startEnhance(run: EnhanceRun): ShortsSessionView {
+  // Read again before anything is made: the session may have gone meanwhile.
+  const s = readSession(run.id);
+  segmentAt(s, run.index);
+  const { plan } = run;
+  const pipeline = pipelineOf(plan.steps, { batchId: s.batchId });
+  const next: ShortsTake = {
+    cut: run.cut,
+    look: pipeline.byKey[plan.keys.look].id,
+    enhance: { from: run.from, ...(plan.keys.smooth ? { smooth: pipeline.byKey[plan.keys.smooth].id } : {}) },
+    createdAt: Date.now(),
+  };
+  saveSession({ ...s, segments: s.segments.map((x, i) => (i === run.index ? { ...x, takes: [...x.takes, next] } : x)) });
+  return getSession(run.id);
 }
 
 /** Use another take of a segment in the stitch. */
@@ -559,8 +838,27 @@ export function makePrimary(id: string, index: number, lookId: string): ShortsSe
   return getSession(id);
 }
 
-/** Join the chosen takes again (after a regenerate or a new choice) and put the sound back. */
-export function stitchSession(id: string): ShortsSessionView {
+/** A second "Stitch again" while the same takes are still being stitched would pay for the same video twice. */
+function stitchingNow(s: ShortsSession): void {
+  const last = s.stitches[s.stitches.length - 1];
+  if (last && stitchCurrent(s) && [...last.ids, last.final].some((gid) => ["queued", "running"].includes(getGeneration(gid)?.status ?? ""))) {
+    throw new ShortsError("These takes are already being stitched", 409);
+  }
+}
+
+/** A stitch of the chosen takes planned, not started yet. No steps: one silent segment, whose take is the short. */
+export interface StitchRun {
+  id: string;
+  steps: PlanStep[];
+  final?: string;
+  /** The takes it joins (each segment's chosen one when it was planned). */
+  clips: string[];
+  /** Their videos (an account's run takes only its own files). */
+  files: string[];
+}
+
+/** Plan joining the chosen takes again (after a regenerate or a new choice), with the sound put back. */
+export function planStitchRun(id: string): StitchRun {
   const s = readSession(id);
   checkEngine(s.engine);
   const clips = s.segments.map((seg, i) => {
@@ -569,30 +867,35 @@ export function stitchSession(id: string): ShortsSessionView {
     if (g.status === "queued" || g.status === "running") throw new ShortsError(`Segment ${i + 1} is still rendering`, 409);
     const url = g.outputs.find((o) => o.kind === "video")?.url;
     if (g.status !== "succeeded" || !url) throw new ShortsError(`Segment ${i + 1} didn't render — regenerate it first`, 409);
-    return { url };
+    return { url, enhanced: !!seg.takes.find((t) => t.look === seg.primary)?.enhance };
   });
-  // A second "Stitch again" while the same takes are still being stitched would pay for the same video twice.
-  const last = s.stitches[s.stitches.length - 1];
-  if (last && stitchCurrent(s) && [...last.ids, last.final].some((gid) => ["queued", "running"].includes(getGeneration(gid)?.status ?? ""))) {
-    throw new ShortsError("These takes are already being stitched", 409);
-  }
-  const plan = planStitch(sessionPlanInput(s), clips, `-s${s.stitches.length}`);
+  stitchingNow(s);
+  // Enhanced takes are 1080p at 24 fps: the others are brought to 24 fps and the join runs at 1080p (planFinishedStitch).
+  const plan = planFinishedStitch(sessionPlanInput(s), clips, `-s${s.stitches.length}`);
+  return { id, steps: plan.final ? plan.steps : [], ...(plan.final && { final: plan.final }), clips: s.segments.map((g) => g.primary), files: clips.map((c) => c.url) };
+}
+
+/** Start a planned stitch and record it on the session. */
+export function startStitch(run: StitchRun): ShortsSessionView {
+  // Read again before anything is made: the session may have gone, or a stitch started meanwhile.
+  const s = readSession(run.id);
+  stitchingNow(s);
   const now = Date.now();
   let stitch: ShortsStitch;
-  if (!plan.steps.length || !plan.final) {
+  if (!run.steps.length || !run.final) {
     // One silent segment: its take is the short.
-    stitch = { ids: [], final: s.segments[0].primary, clips: s.segments.map((g) => g.primary), createdAt: now };
+    stitch = { ids: [], final: run.clips[0], clips: run.clips, createdAt: now };
   } else {
-    let pipeline;
-    try {
-      pipeline = createPipeline(plan.steps, { batchId: s.batchId });
-    } catch (e) {
-      throw new ShortsError((e as Error).message, 422);
-    }
-    stitch = { ids: plan.steps.map((x) => pipeline.byKey[x.key].id), final: pipeline.byKey[plan.final].id, clips: s.segments.map((g) => g.primary), createdAt: now };
+    const pipeline = pipelineOf(run.steps, { batchId: s.batchId });
+    stitch = { ids: run.steps.map((x) => pipeline.byKey[x.key].id), final: pipeline.byKey[run.final].id, clips: run.clips, createdAt: now };
   }
   saveSession({ ...s, stitches: [...s.stitches, stitch] });
-  return getSession(id);
+  return getSession(run.id);
+}
+
+/** Join the chosen takes again (after a regenerate or a new choice) and put the sound back. */
+export function stitchSession(id: string): ShortsSessionView {
+  return startStitch(planStitchRun(id));
 }
 
 /** What one more take of a segment costs. */

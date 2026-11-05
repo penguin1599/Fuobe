@@ -39,11 +39,23 @@ function NewBadge() {
 }
 
 /**
+ * The `sizes` of a picture `span` of the grid's six tracks wide (from lg), less `inset` px (a card's border), so its
+ * srcset gives a 2x or 3x screen a copy at least as wide as the box: the panel's content is at most 1680 px wide less
+ * its 24 px sides (px-6), its tracks 12 px apart (gap-x-3), so a track is (width - 108) / 6. For the Canvas menu,
+ * which shows from 1440 px only (always six tracks); a tile is one track wide (its tiles are as far apart as the tracks).
+ */
+export function trackSizes(span: number, inset = 0): string {
+  const extra = (span - 1) * 12 - inset;
+  return `(min-width: 1680px) ${Math.floor(((1680 - 108) * span) / 6) + extra}px, calc((100vw - 108px) * ${span} / 6 + ${extra}px)`;
+}
+
+/**
  * A column's first card: its cover, name and one line. `row` 1 under the owner's New board (Canvas), its cover shorter by
  * that button. The cover's height is rounded down to the 4 px grid (a 4:3 box of a fractional column width would put
- * every row under the card on a half pixel), and its words start 12 px in, the column its features hang from.
+ * every row under the card on a half pixel), and its words start 12 px in, the column its features hang from. `span`:
+ * the tracks its column takes, when more than one (Canvas' Start here), for its picture's srcset.
  */
-export function LeadCard({ e, col, row = 0, current, inside, now, className }: { e: MegaItem; col: number; row?: number; current: boolean; inside?: boolean; now: number; className?: string }) {
+export function LeadCard({ e, col, row = 0, span = 1, current, inside, now, className }: { e: MegaItem; col: number; row?: number; span?: number; current: boolean; inside?: boolean; now: number; className?: string }) {
   return (
     <IntentLink
       href={e.href}
@@ -59,6 +71,7 @@ export function LeadCard({ e, col, row = 0, current, inside, now, className }: {
         size="lead"
         icon={e.icon}
         eager
+        sizes={span > 1 ? trackSizes(span, 2) : undefined}
         className={cn(
           "h-[round(down,75cqw,4px)] rounded-none md:max-lg:max-h-[round(down,max(56px,calc(100dvh_-_460px)),4px)]",
           row ? "max-h-[round(down,max(64px,calc(100dvh_-_640px)),4px)]" : "max-h-[round(down,max(64px,calc(100dvh_-_592px)),4px)]",
@@ -188,7 +201,7 @@ function Tile({ e, col, row, current, eager }: { e: MegaItem; col: number; row: 
       className="nav-row nav-mark-under -m-1.5 flex min-w-0 flex-col gap-1.5 rounded-[12px] p-1.5 [container-type:inline-size]"
     >
       {/* 16:9, its height rounded down to the 4 px grid, so a second row of tiles sits on a whole pixel. */}
-      <CoverThumb cover={e.cover} size="tile16" icon={e.icon} eager={eager} className="aspect-auto h-[round(down,56.25cqw,4px)]" />
+      <CoverThumb cover={e.cover} size="tile16" icon={e.icon} eager={eager} sizes={trackSizes(1)} className="aspect-auto h-[round(down,56.25cqw,4px)]" />
       <span className="flex min-w-0 flex-col">
         <span className={cn("truncate text-[13px] leading-[18px] font-medium", current && "font-semibold")}>{e.label}</span>
         <span className="truncate text-[12px] leading-4 text-muted-foreground">{e.line}</span>
@@ -266,7 +279,7 @@ export function MegaColumns({ model, current, now, kind }: { model: MegaModel; c
         <div key={c.id} data-group={c.id} className={cn("flex min-w-0 flex-col gap-2", place)}>
           {label}
           <Suspense fallback={<OwnerStartSkeleton />}>
-            <CanvasOwnerStart col={col} labelledBy={labelId} fallback={c.lead && <LeadCard e={c.lead} col={col} row={1} current={false} now={now} />} />
+            <CanvasOwnerStart col={col} labelledBy={labelId} fallback={c.lead && <LeadCard e={c.lead} col={col} row={1} span={c.span} current={false} now={now} />} />
           </Suspense>
         </div>
       );
@@ -313,7 +326,7 @@ export function MegaColumns({ model, current, now, kind }: { model: MegaModel; c
         <ul aria-labelledby={labelId} className="flex flex-col gap-1">
           {c.lead && (
             <li>
-              <LeadCard e={c.lead} col={col} current={current === c.lead.id} inside={holder === c.lead.id} now={now} className="mb-1" />
+              <LeadCard e={c.lead} col={col} span={c.span} current={current === c.lead.id} inside={holder === c.lead.id} now={now} className="mb-1" />
               <SubLinks e={c.lead} col={col} row={1} current={current} />
             </li>
           )}

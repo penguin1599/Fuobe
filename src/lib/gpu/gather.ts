@@ -298,8 +298,9 @@ export async function gatherInventory(t: ComfyTransport, idx: RequirementIndex, 
   const folders = o.folders ?? idx.folders;
   const indexNames = new Map<string, Map<string, string>>();
   for (const f of Object.values(idx.files)) {
-    if (!indexNames.has(f.folder)) indexNames.set(f.folder, new Map());
-    indexNames.get(f.folder)!.set(key(f.file), f.file);
+    const listed = f.listFolder ?? f.folder;
+    if (!indexNames.has(listed)) indexNames.set(listed, new Map());
+    indexNames.get(listed)!.set(key(f.file), f.file);
   }
   const loraWanted = new Map((o.loraNames ?? []).map((n) => [key(n), basename(n)]));
   const listFolders = [...new Set([...folders, ...(loraWanted.size ? ["loras"] : [])])];
@@ -313,17 +314,20 @@ export async function gatherInventory(t: ComfyTransport, idx: RequirementIndex, 
       note("models", e);
       return;
     }
+    // A pack may name the folder in another case from its directory (ComfyUI-RMBG lists models/RMBG as "rmbg").
+    const lower = new Map([...present].map((p) => [p.toLowerCase(), p]));
     await Promise.all(
       listFolders.map(async (folder) => {
-        if (!present.has(folder)) {
+        const listed = present.has(folder) ? folder : lower.get(folder.toLowerCase());
+        if (!listed) {
           inv.models[folder] = { have: {}, total: 0, folderMissing: true };
           return;
         }
         try {
           let items: { name: string; size: number | null }[];
-          const r = await getJson<unknown>(`/experiment/models/${encodeURIComponent(folder)}`, 15_000, 8 * 1024 * 1024);
+          const r = await getJson<unknown>(`/experiment/models/${encodeURIComponent(listed)}`, 15_000, 8 * 1024 * 1024);
           if (r.status === 404) {
-            const plain = await getJson<unknown>(`/models/${encodeURIComponent(folder)}`, 15_000, 8 * 1024 * 1024);
+            const plain = await getJson<unknown>(`/models/${encodeURIComponent(listed)}`, 15_000, 8 * 1024 * 1024);
             items = (Array.isArray(plain.body) ? plain.body : []).filter((x): x is string => typeof x === "string").map((name) => ({ name, size: null }));
           } else {
             items = (Array.isArray(r.body) ? r.body : []).flatMap((x: { name?: unknown; size?: unknown }) =>
@@ -354,7 +358,8 @@ export async function gatherInventory(t: ComfyTransport, idx: RequirementIndex, 
         for (const x of Array.isArray(r.body) ? r.body : []) {
           const name = (x as { name?: unknown })?.name;
           const dirs = (x as { folders?: unknown })?.folders;
-          if (typeof name === "string" && idx.folders.includes(name) && Array.isArray(dirs)) roots[name] = dirs.filter((d): d is string => typeof d === "string").slice(0, 4).map((d) => clip(d, 400));
+          const folder = typeof name === "string" ? (idx.folders.includes(name) ? name : idx.folders.find((f) => f.toLowerCase() === name.toLowerCase())) : undefined;
+          if (folder && Array.isArray(dirs)) roots[folder] = dirs.filter((d): d is string => typeof d === "string").slice(0, 4).map((d) => clip(d, 400));
         }
         if (Object.keys(roots).length) inv.comfy!.modelRoots = roots;
       } catch (e) {

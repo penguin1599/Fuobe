@@ -2,7 +2,7 @@
 
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { useGenerationEvents } from "@/lib/api";
+import { COMPUTER_KICK_EVENT, useGenerationEvents } from "@/lib/api";
 import type {
   ChangePart,
   ChangePreview,
@@ -30,8 +30,16 @@ async function json<T>(res: Response): Promise<T> {
   return body;
 }
 
-const send = async <T,>(url: string, method: string, body?: unknown) =>
-  json<T>(await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) }));
+/** POSTs that only ask (a price, topic ideas, a page read): nothing runs. */
+const ASKS = /\/(estimate|topics|link)$/;
+
+const send = async <T,>(url: string, method: string, body?: unknown) => {
+  const out = await json<T>(await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) }));
+  // A run may have started (a render, a reading, a picture): the tab that runs this person's jobs on the ComfyUI on this
+  // computer (an account's "Your GPU") asks for them at once, as after a studio run.
+  if (method === "POST" && !ASKS.test(url) && !(url.endsWith("/change") && !(body as { apply?: boolean } | undefined)?.apply)) window.dispatchEvent(new Event(COMPUTER_KICK_EVENT));
+  return out;
+};
 
 const inFlight = (s: string) => s === "writing" || s === "rendering";
 
@@ -127,14 +135,15 @@ export function useEpisode(id: string) {
     refetchInterval: (q) => {
       const s = q.state.data?.episode.status;
       const up = q.state.data?.upscaled?.status;
-      if (up === "queued" || up === "running") return connected ? 8000 : 2000;
+      const regen = q.state.data?.regenerated?.status;
+      if (up === "queued" || up === "running" || regen === "queued" || regen === "running") return connected ? 8000 : 2000;
       if (!s || !inFlight(s)) return false;
       return s === "writing" ? 1500 : connected ? 8000 : 2000;
     },
   });
   useEffect(() => {
     const plan = q.data?.episode.plan;
-    ids.current = new Set([...Object.values(plan?.ids ?? {}), ...(plan?.upscaled ? [plan.upscaled] : [])]);
+    ids.current = new Set([...Object.values(plan?.ids ?? {}), ...(plan?.upscaled ? [plan.upscaled] : []), ...Object.values(plan?.regenerated?.ids ?? {})]);
   }, [q.data]);
   return q;
 }
@@ -158,7 +167,7 @@ export function useUpdateEpisode(id: string) {
 }
 
 export function useEpisodeAction(id: string) {
-  return useEpisodeMutation(id, (action: "render" | "retry" | "rewrite" | "undo" | "upscale") => send<EpisodeView>(`/api/faceless/episodes/${id}/${action}`, "POST"));
+  return useEpisodeMutation(id, (action: "render" | "retry" | "rewrite" | "undo" | "upscale" | "regenerate") => send<EpisodeView>(`/api/faceless/episodes/${id}/${action}`, "POST"));
 }
 
 export interface ChangeDraft {

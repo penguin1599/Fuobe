@@ -1,0 +1,7 @@
+# Optional: speech recognition for the separation suite's word error rate (WER of the voice stem against the known
+# words). pnpm eval:setup --asr installs it; without it the separation metrics run and WER says it was skipped.
+# The model is OpenAI Whisper base.en at a pinned revision (registry.py "whisper-base-en"; OpenAI's Whisper code and
+# weights are MIT, the Hugging Face card says Apache-2.0).
+# Compiled against the main set, so torch and huggingface_hub stay the pinned ones:
+#   uv pip compile requirements-asr.in -c requirements.txt --torch-backend cpu --python-version 3.12 -o requirements-asr.txt
+transformers==5.22.1            # Apache-2.0

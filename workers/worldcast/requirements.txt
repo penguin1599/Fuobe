@@ -1,0 +1,5 @@
+# The Fuobe WorldCast worker's own needs, on top of WorldCast's requirements.txt (PixCtrol/WorldCast @ 7ccf2e0d).
+# WorldCast's README verified torch 2.8.0+cu128 with transformers 5.8.1 (2026-10-23): install those first, see README.md.
+fastapi==0.115.12
+uvicorn==0.34.2
+python-multipart==0.0.20

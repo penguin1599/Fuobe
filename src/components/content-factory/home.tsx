@@ -15,11 +15,10 @@ import { EngineSwitch } from "@/components/studio/engine-switch";
 import { Segmented, usd } from "@/components/faceless/controls";
 import { NarratorChip } from "@/components/faceless/narrator";
 import { StyleArt } from "@/components/faceless/style-art";
-import { SelfHostNote } from "@/components/self-host-note";
 import { StarterParam } from "@/components/starters/starter-param";
 import { StarterSection, useStarters } from "@/components/starters/starter-section";
 import { useEdgeFade } from "@/components/studio/use-edge-fade";
-import { uploadFile, useEngine, useHydrated, useIsOwner, useLikelyVisitor } from "@/lib/api";
+import { uploadFile, useAskBeforeUpload, useEngine, useHydrated, useIsOwner } from "@/lib/api";
 import {
   ANIMATION_STYLES,
   CF_LENGTHS,
@@ -95,8 +94,9 @@ export function ContentFactoryHome({ voices, starters: given = [], fills: givenF
   const [example, setExample] = useState(0);
   // The estimate's problem (no narrator voice yet…) is a hint until Generate is pressed.
   const [tried, setTried] = useState(false);
-  // A series doesn't run on an account's own GPU yet (only the studios' generations do): said here, not after Generate.
-  const visitor = useLikelyVisitor();
+  // A clip of your own: a guest is asked to sign up first, and an account with neither its own GPU nor its own key to
+  // connect one (reading it runs there).
+  const askFirst = useAskBeforeUpload();
   const [exampleRow, exampleFade] = useEdgeFade<HTMLDivElement>();
   const file = useRef<HTMLInputElement>(null);
   const promptRef = useRef<HTMLTextAreaElement>(null);
@@ -218,7 +218,7 @@ export function ContentFactoryHome({ voices, starters: given = [], fills: givenF
   // One run at a time: a second Enter (or click) before the first request has re-rendered would plan, make and bill it twice.
   const submitting = useRef(false);
   const submit = async () => {
-    if (submitting.current || visitor) return;
+    if (submitting.current) return;
     setTried(true);
     if (blocker) {
       toast(blocker, { id: "cf-blocker" });
@@ -266,10 +266,10 @@ export function ContentFactoryHome({ voices, starters: given = [], fills: givenF
                 options={[
                   { value: "here", label: "Generate here", hint: "Fuobe makes the episodes now" },
                   // Handing the brief to Claude Code needs Fuobe's own MCP server: the owner's.
-                  ...(visitor ? [] : [{ value: "claude" as const, label: "Generate in Claude", hint: "Copy a prompt for Claude Code with Fuobe's MCP server" }]),
+                  ...(!owner ? [] : [{ value: "claude" as const, label: "Generate in Claude", hint: "Copy a prompt for Claude Code with Fuobe's MCP server" }]),
                 ]}
               />
-              <span className="text-[12px] text-muted-foreground">{mode === "claude" ? "Claude writes them and runs Fuobe over MCP" : visitor ? "Makes the episodes now" : engine === "open" ? "Makes the episodes now, on your ComfyUI" : "Makes the episodes now, with your providers"}</span>
+              <span className="text-[12px] text-muted-foreground">{mode === "claude" ? "Claude writes them and runs Fuobe over MCP" : engine === "open" ? "Makes the episodes now, on your ComfyUI" : "Makes the episodes now, with your providers"}</span>
             </div>
 
             {/* The reference: the brief every episode follows */}
@@ -289,35 +289,36 @@ export function ContentFactoryHome({ voices, starters: given = [], fills: givenF
                 <ReferenceCard reference={{ kind: "preset", presetId: preset.id, title: `Preset: ${preset.name}` }} analysis={null} styleId={preset.brief.styleId} />
               ) : null}
               <div className="flex flex-wrap items-center gap-1.5">
-                {/* A guest's or an account's clip would be uploaded and read for a series that can't start here. */}
                 <button
                   type="button"
-                  onClick={() => file.current?.click()}
-                  disabled={uploading || create.isPending || visitor}
+                  onClick={() => askFirst() || file.current?.click()}
+                  disabled={uploading || create.isPending}
                   className="inline-flex h-8 items-center gap-1.5 rounded-full bg-secondary px-3 text-[13px] font-medium hover:bg-accent disabled:opacity-60"
                 >
                   {uploading ? <Loader2 className="size-3.5 animate-spin" /> : <Upload className="size-3.5" />}
                   {uploading ? "Uploading…" : view?.reference?.url ? "Change video" : "Add a video"}
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setLinkOpen((v) => !v)}
-                  disabled={visitor}
-                  aria-expanded={linkOpen && !visitor}
-                  aria-controls={ids.link}
-                  className={cn("inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-[13px] font-medium disabled:opacity-60", linkOpen && !visitor ? "bg-brand-faint text-brand-text" : "bg-secondary hover:bg-accent")}
-                >
-                  <Link2 className="size-3.5" /> TikTok or Instagram link
-                </button>
+                {/* A link is fetched by the studio's server: the owner's. A visitor adds the clip itself. */}
+                {owner && (
+                  <button
+                    type="button"
+                    onClick={() => setLinkOpen((v) => !v)}
+                    aria-expanded={linkOpen}
+                    aria-controls={ids.link}
+                    className={cn("inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-[13px] font-medium disabled:opacity-60", linkOpen ? "bg-brand-faint text-brand-text" : "bg-secondary hover:bg-accent")}
+                  >
+                    <Link2 className="size-3.5" /> TikTok or Instagram link
+                  </button>
+                )}
                 <a href="#presets" className="inline-flex h-8 items-center gap-1.5 rounded-full bg-secondary px-3 text-[13px] font-medium hover:bg-accent">
                   <Sparkles className="size-3.5" /> Presets
                 </a>
                 <span className="text-[12px] text-muted-foreground">
-                  {engine === "open" ? (visitor ? "We study the clip's pacing and look" : "Reading a clip is free (Gemma 4 on your ComfyUI)") : perMinute > 0 ? `Reading a clip costs about ${usd(perMinute)} a minute` : "Reading a clip makes a free placeholder"}
+                  {engine === "open" ? "Reading a clip is free (Gemma 4 on your ComfyUI)" : perMinute > 0 ? `Reading a clip costs about ${usd(perMinute)} a minute` : "Reading a clip makes a free placeholder"}
                 </span>
                 <input ref={file} type="file" accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.m4v,.webm" hidden onChange={(e) => (void onFile(e.target.files?.[0]), (e.target.value = ""))} />
               </div>
-              {linkOpen && !visitor && (
+              {linkOpen && owner && (
                 <div id={ids.link} className="space-y-1.5 rounded-2xl bg-muted/60 p-2.5">
                   <form
                     className="flex min-w-0 items-center gap-2"
@@ -469,20 +470,15 @@ export function ContentFactoryHome({ voices, starters: given = [], fills: givenF
                   Review scripts first
                 </label>
               )}
-              <Button onClick={() => void submit()} disabled={busy || visitor} className="ml-auto h-9 rounded-full px-4">
+              <Button onClick={() => void submit()} disabled={busy} className="ml-auto h-9 rounded-full px-4">
                 {busy ? <Loader2 className="animate-spin" /> : mode === "here" ? <ArrowRight /> : <Bot />}
                 {busy ? "Planning your episodes…" : mode === "here" ? (episodes > 1 ? `Generate ${episodes} episodes` : "Generate") : "Get the prompt"}
               </Button>
             </div>
-            {visitor ? (
-              <SelfHostNote className="mt-2">Content Factory isn&apos;t available here.</SelfHostNote>
-            ) : (
-              mode === "here" &&
-              est?.error && (
-                <p role={tried ? "alert" : undefined} className={cn("mt-2 text-[12px]", tried ? "text-destructive" : "text-muted-foreground")}>
-                  {est.error}
-                </p>
-              )
+            {mode === "here" && est?.error && (
+              <p role={tried ? "alert" : undefined} className={cn("mt-2 text-[12px]", tried ? "text-destructive" : "text-muted-foreground")}>
+                {est.error}
+              </p>
             )}
             {blocker && prompt.trim() && (
               <p className="mt-2 text-[12px] text-muted-foreground" aria-live="polite">

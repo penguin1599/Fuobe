@@ -11,7 +11,7 @@ import { isGuard } from "./comfy-guard";
 import { fetchWithin } from "./fetch-within";
 import { parseComfyBinary, parseComfyText } from "./comfy-ws";
 import { graphProblem, localBase, mayDownload, readPath, statsFacts, viewPath, writePath, type SystemStats } from "./local-comfy";
-import { DONE_SHOWN_MS, RELAY_LIMITS, RELAY_TIMES, type BeatAnswer, type ClaimedTask, type ComputerFacts, type HistoryEntryLike, type RelayState, type ReportEvent, type TabFailure, type WantedFile } from "./relay";
+import { DONE_SHOWN_MS, META_BATCH_HISTORY, RELAY_LIMITS, RELAY_TIMES, type BeatAnswer, type ClaimedTask, type ComputerFacts, type HistoryEntryLike, type RelayState, type ReportEvent, type TabFailure, type WantedFile } from "./relay";
 
 /** The parts of a WebSocket the runner uses (the browser's, or Node's). */
 export interface SocketLike {
@@ -530,7 +530,7 @@ export class ComputerRunner {
   /** The job's own entries on ComfyUI here, to check a resumed upload against. */
   private async ownEntries(t: ClaimedTask): Promise<HistoryEntryLike[]> {
     const own = (await this.read<Record<string, HistoryEntryLike>>(`/history/${t.promptId}`).catch(() => ({}) as Record<string, HistoryEntryLike>))[t.promptId];
-    const passes = t.prefix ? Object.values(await this.read<Record<string, HistoryEntryLike>>("/history?max_items=64").catch(() => ({}))).filter((e) => hasPrefix(e.prompt?.[2], t.prefix!)) : [];
+    const passes = t.prefix ? Object.values(await this.read<Record<string, HistoryEntryLike>>(`/history?max_items=${META_BATCH_HISTORY}`).catch(() => ({}))).filter((e) => hasPrefix(e.prompt?.[2], t.prefix!)) : [];
     return [...(own ? [own] : []), ...passes];
   }
 
@@ -629,7 +629,8 @@ export class ComputerRunner {
           continue;
         }
         const running = [...(q.queue_running ?? []), ...(q.queue_pending ?? [])].some((r) => hasPrefix(r[2], following!));
-        const passes = Object.values(await this.read<Record<string, HistoryEntryLike>>("/history?max_items=64").catch(() => ({}))).filter((e) => hasPrefix(e.prompt?.[2], following!));
+        // Every pass once the last is done (an EXR export saves frames in each one).
+        const passes = running ? [] : Object.values(await this.read<Record<string, HistoryEntryLike>>(`/history?max_items=${META_BATCH_HISTORY}`).catch(() => ({}))).filter((e) => hasPrefix(e.prompt?.[2], following!));
         const a = await this.report(t, { event: "passes", running, entries: running ? [] : passes.map(slim) });
         if (a.stop) throw new Stopped();
         if (!running) return { entries: passes, answer: a };

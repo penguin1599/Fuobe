@@ -1,0 +1,374 @@
+{
+  "41": {
+    "inputs": {
+      "fps": 25,
+      "bit_depth": "auto",
+      "color_space": "sRGB",
+      "codec": "h264",
+      "images": [
+        "75",
+        0
+      ]
+    },
+    "class_type": "CreateVideo",
+    "_meta": {
+      "title": "Create Video"
+    }
+  },
+  "42": {
+    "inputs": {
+      "filename_prefix": "fuobe/image-to-mesh-idol",
+      "format": "auto",
+      "format.codec": "auto",
+      "codec": "auto",
+      "video": [
+        "41",
+        0
+      ]
+    },
+    "class_type": "SaveVideo",
+    "_meta": {
+      "title": "Save Video"
+    }
+  },
+  "51": {
+    "inputs": {
+      "filename_prefix": "fuobe/image-to-mesh-idol",
+      "mesh": [
+        "93",
+        0
+      ]
+    },
+    "class_type": "SaveGLB",
+    "_meta": {
+      "title": "Save 3D Model"
+    }
+  },
+  "75": {
+    "inputs": {
+      "width": 1024,
+      "height": 1024,
+      "frames": 75,
+      "splat_scale": 1,
+      "sharpen": 2,
+      "headlight_shading": 0,
+      "opacity_threshold": 0.05,
+      "render_style": "color",
+      "background": "#848484",
+      "splat": [
+        "88:55",
+        0
+      ],
+      "camera_info": [
+        "79",
+        0
+      ]
+    },
+    "class_type": "RenderSplat",
+    "_meta": {
+      "title": "Render Splat"
+    }
+  },
+  "79": {
+    "inputs": {
+      "mode": "orbit",
+      "mode.yaw": 35,
+      "mode.pitch": 30,
+      "mode.distance": 2.5,
+      "target_x": 0,
+      "target_y": 0,
+      "target_z": 0,
+      "roll": 0,
+      "fov": 35,
+      "zoom": 1,
+      "camera_type": "perspective"
+    },
+    "class_type": "CreateCameraInfo",
+    "_meta": {
+      "title": "Create Camera Info"
+    }
+  },
+  "93": {
+    "inputs": {
+      "resolution": 384,
+      "kernel": 5,
+      "smooth": 0,
+      "level": 0.4,
+      "min_component": 500,
+      "min_opacity": 0.02,
+      "color_sharpen": 2,
+      "splat": [
+        "88:55",
+        0
+      ]
+    },
+    "class_type": "SplatToMesh",
+    "_meta": {
+      "title": "Extract Mesh from Splat"
+    }
+  },
+  "99": {
+    "inputs": {
+      "image": "subject.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "88:2": {
+    "inputs": {
+      "erode_radius": 1,
+      "size": 1024,
+      "image": [
+        "99",
+        0
+      ],
+      "mask": [
+        "88:35",
+        0
+      ]
+    },
+    "class_type": "TripoSplatPreprocessImage",
+    "_meta": {
+      "title": "TripoSplat Preprocess Image"
+    }
+  },
+  "88:6": {
+    "inputs": {
+      "seed": 46,
+      "steps": 50,
+      "cfg": 4,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1,
+      "model": [
+        "88:96",
+        0
+      ],
+      "positive": [
+        "88:24",
+        0
+      ],
+      "negative": [
+        "88:24",
+        1
+      ],
+      "latent_image": [
+        "88:24",
+        2
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler"
+    }
+  },
+  "88:7": {
+    "inputs": {
+      "clip_name": "dino_v3_vit_h.safetensors"
+    },
+    "class_type": "CLIPVisionLoader",
+    "_meta": {
+      "title": "Load CLIP Vision"
+    }
+  },
+  "88:8": {
+    "inputs": {
+      "vae_name": "flux2-vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "88:11": {
+    "inputs": {
+      "vae_name": "idol_decoder_fp16.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "88:16": {
+    "inputs": {
+      "unet_name": "idol_fp16.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model"
+    }
+  },
+  "88:24": {
+    "inputs": {
+      "clip_vision": [
+        "88:7",
+        0
+      ],
+      "vae": [
+        "88:8",
+        0
+      ],
+      "image": [
+        "88:104",
+        0
+      ]
+    },
+    "class_type": "TripoSplatConditioning",
+    "_meta": {
+      "title": "TripoSplat Conditioning"
+    }
+  },
+  "88:35": {
+    "inputs": {
+      "switch": true,
+      "on_false": [
+        "88:95",
+        0
+      ],
+      "on_true": [
+        "88:85:81",
+        0
+      ]
+    },
+    "class_type": "ComfySwitchNode",
+    "_meta": {
+      "title": "Switch: Mask Source"
+    }
+  },
+  "88:55": {
+    "inputs": {
+      "num_gaussians": 262144,
+      "seed": 790219963981395,
+      "samples": [
+        "88:6",
+        0
+      ],
+      "vae": [
+        "88:11",
+        0
+      ]
+    },
+    "class_type": "VAEDecodeTripoSplat",
+    "_meta": {
+      "title": "TripoSplat Decode"
+    }
+  },
+  "88:85:81": {
+    "inputs": {
+      "bg_removal_model": [
+        "88:85:82",
+        0
+      ],
+      "image": [
+        "99",
+        0
+      ]
+    },
+    "class_type": "RemoveBackground",
+    "_meta": {
+      "title": "Remove Background"
+    }
+  },
+  "88:85:82": {
+    "inputs": {
+      "bg_removal_name": "birefnet.safetensors"
+    },
+    "class_type": "LoadBackgroundRemovalModel",
+    "_meta": {
+      "title": "Load Background Removal Model"
+    }
+  },
+  "88:95": {
+    "inputs": {
+      "mask": [
+        "99",
+        1
+      ]
+    },
+    "class_type": "InvertMask",
+    "_meta": {
+      "title": "Invert Mask"
+    }
+  },
+  "88:96": {
+    "class_type": "ComfySwitchNode",
+    "inputs": {
+      "switch": false,
+      "on_false": [
+        "88:16",
+        0
+      ],
+      "on_true": [
+        "88:16",
+        0
+      ]
+    }
+  },
+  "88:101": {
+    "inputs": {
+      "upscale_method": "lanczos",
+      "width": 720,
+      "height": 720,
+      "crop": "disabled",
+      "image": [
+        "88:2",
+        0
+      ]
+    },
+    "class_type": "ImageScale",
+    "_meta": {
+      "title": "Photo crop: scale to 720"
+    }
+  },
+  "88:102": {
+    "inputs": {
+      "width": 1024,
+      "height": 1024,
+      "batch_size": 1,
+      "color": 0
+    },
+    "class_type": "EmptyImage",
+    "_meta": {
+      "title": "Photo crop: black 1024 canvas"
+    }
+  },
+  "88:103": {
+    "inputs": {
+      "x": 152,
+      "y": 152,
+      "resize_source": false,
+      "destination": [
+        "88:102",
+        0
+      ],
+      "source": [
+        "88:101",
+        0
+      ]
+    },
+    "class_type": "ImageCompositeMasked",
+    "_meta": {
+      "title": "Photo crop: centre on the canvas"
+    }
+  },
+  "88:104": {
+    "inputs": {
+      "switch": false,
+      "on_false": [
+        "88:2",
+        0
+      ],
+      "on_true": [
+        "88:103",
+        0
+      ]
+    },
+    "class_type": "ComfySwitchNode",
+    "_meta": {
+      "title": "Switch: Photo crop"
+    }
+  }
+}

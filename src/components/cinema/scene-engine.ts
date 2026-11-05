@@ -1,6 +1,7 @@
 "use client";
 
 import * as THREE from "three";
+import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { FullScreenQuad } from "three/examples/jsm/postprocessing/Pass.js";
 import { flyPoseOf, type FramePoses } from "@/lib/camera-path";
@@ -25,6 +26,8 @@ import {
   type Pixels,
   type Rect,
 } from "@/lib/scene3d";
+import type { SceneProp } from "@/lib/scene-props";
+import type { SceneSplats } from "../model3d/splat-engine";
 import type { SceneSource } from "./scene-actions";
 import { encodeFrames, encodeVp8, pathVideoType, recordWithMediaRecorder, vp8Supported } from "./video-encode";
 
@@ -33,6 +36,10 @@ import { encodeFrames, encodeVp8, pathVideoType, recordWithMediaRecorder, vp8Sup
  * built from the still and its depth map, a fly camera, the frame-fitted lens, a depth-of-field pass, the capture
  * of exactly what the frame shows, and (Fly path, N7-5) a preview flight and a recording of the scene along a camera
  * path. The maths is in src/lib/scene3d.ts and src/lib/camera-path.ts; this file only draws.
+ *
+ * Props (idol-9): splats placed in the scene (src/lib/scene-props.ts), drawn by idol-4's renderer (Spark, loaded only
+ * when the first prop is added) in the same scene graph, so the capture, the path render and the blockout show them.
+ * A move / turn / size handle (three's TransformControls) is drawn over the finished frame on screen only.
  */
 
 export type { SceneSource };
@@ -182,6 +189,12 @@ async function pixelsOf(url: string, maxSide: number, signal?: AbortSignal): Pro
   return ctx.getImageData(0, 0, width, height);
 }
 
+/** How a prop's handle moves it. */
+export type PropHandle = "translate" | "rotate" | "scale";
+
+/** A prop's place, turn (degrees, Euler "YXZ") and size, as the handle left it. */
+export type PropTransform = Pick<SceneProp, "position" | "rotation" | "size">;
+
 /** Every vertex of the loaded model in world space, at most `max` of them (for the field of view, depth and focus). */
 function sampleVertices(root: THREE.Object3D, max = 80_000): Float32Array {
   const meshes: THREE.Mesh[] = [];
@@ -232,8 +245,24 @@ export class SceneEngine {
   private disposed = false;
   /** A path preview or recording owns the camera. */
   private playing = false;
+  /**
+   * A path is being recorded: the screen isn't drawn meanwhile. Drawing it would make Spark sort the props for the
+   * on-screen camera while a path frame waits for its own sort, and the frame would be drawn in the wrong order.
+   */
+  private recording = false;
+  /** Props: their splats (Spark, once the first is added) and their groups by id. */
+  private splats: SceneSplats | null = null;
+  private splatsLoading: Promise<SceneSplats> | null = null;
+  private props = new Map<string, THREE.Group>();
+  /** The handle on the picked prop, drawn after the frame (never in a capture or a path render). */
+  private gizmo: TransformControls | null = null;
+  private overlay = new THREE.Scene();
+  /** A prop's size when the handle took it (sizes stay uniform). */
+  private sizeAtGrab = 1;
+  /** The handle moved, turned or sized a prop. */
+  onPropChange?: (id: string, t: PropTransform) => void;
 
-  constructor(canvas: HTMLCanvasElement) {
+  constructor(private canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: false, powerPreference: "high-performance" });
     this.renderer.setClearColor(VOID, 1);
     const ext = this.renderer.extensions;
@@ -492,7 +521,7 @@ export class SceneEngine {
         this.refocus();
       }
     }
-    if (this.dirty && this.view && this.info) {
+    if (this.dirty && this.view && this.info && !this.recording) {
       this.dirty = false;
       this.draw(null, Math.round(this.size.w * this.size.dpr), Math.round(this.size.h * this.size.dpr), this.view.frame.width * this.size.dpr, this.view.frame.height * this.size.dpr);
     }
@@ -505,13 +534,7 @@ export class SceneEngine {
   private draw(out: THREE.WebGLRenderTarget | null, w: number, h: number, frameW: number, frameH: number, color = this.target, shot?: { pose: FlyPose; vFov: number }) {
     const v = this.view!;
     const cam = this.camera;
-    const pose = shot?.pose ?? this.pose;
-    cam.fov = shot ? shot.vFov : canvasFov(lensFov(v.lens, v.aspect).v, frameH, h);
-    cam.aspect = w / h;
-    cam.position.set(...pose.position);
-    cam.rotation.set(pose.pitch, pose.yaw, 0, "YXZ");
-    cam.updateProjectionMatrix();
-    cam.updateMatrixWorld();
+    this.poseCamera(shot?.pose ?? this.pose, shot ? shot.vFov : canvasFov(lensFov(v.lens, v.aspect).v, frameH, h), w / h);
     if (this.pointsMat) this.pointsMat.uniforms.scale.value = h / 2 / Math.tan((cam.fov * Math.PI) / 360);
     this.renderer.setRenderTarget(color);
     this.renderer.clear();
@@ -531,6 +554,134 @@ export class SceneEngine {
     u.holeRadius.value = Math.max(2, frameW / 70);
     this.renderer.setRenderTarget(out);
     this.post.render(this.renderer);
+    // The prop's handle, over the finished frame on screen only.
+    if (!out && !shot && this.gizmo?.object) {
+      this.renderer.autoClear = false;
+      this.renderer.clearDepth();
+      this.renderer.render(this.overlay, cam);
+      this.renderer.autoClear = true;
+    }
+  }
+
+  private poseCamera(pose: FlyPose, vFov: number, aspect: number) {
+    const cam = this.camera;
+    cam.fov = vFov;
+    cam.aspect = aspect;
+    cam.position.set(...pose.position);
+    cam.rotation.set(pose.pitch, pose.yaw, 0, "YXZ");
+    cam.updateProjectionMatrix();
+    cam.updateMatrixWorld();
+  }
+
+  // ---- Props
+
+  /** Load a prop's splat into the scene (Spark comes in with the first one); resolves with its Gaussian count. */
+  async addProp(p: SceneProp, o: { signal?: AbortSignal; maxBytes?: number } = {}): Promise<number> {
+    if (!this.splatsLoading) {
+      const loading = import("../model3d/splat-engine").then(({ SceneSplats }) => {
+        // The viewer closed while Spark was loading: make nothing for it.
+        if (this.disposed) throw new DOMException("Closed", "AbortError");
+        const splats = new SceneSplats(this.renderer, () => (this.dirty = true));
+        this.scene.add(splats.root);
+        this.splats = splats;
+        return splats;
+      });
+      // A failed load (offline, a chunk that didn't arrive) is tried again with the next prop.
+      loading.catch(() => (this.splatsLoading = null));
+      this.splatsLoading = loading;
+    }
+    const splats = await this.splatsLoading;
+    if (this.disposed) throw new DOMException("Closed", "AbortError");
+    const { group, splats: count } = await splats.add(p.id, p.url, p.format, { cutoff: p.cutoff, signal: o.signal, maxBytes: o.maxBytes });
+    if (this.disposed) throw new DOMException("Closed", "AbortError");
+    this.props.set(p.id, group);
+    this.updateProp(p);
+    return count;
+  }
+
+  /** Put a prop where the state says (place, turn, size, haze cut-off). */
+  updateProp(p: SceneProp) {
+    const g = this.props.get(p.id);
+    if (!g) return;
+    g.position.set(...p.position);
+    g.rotation.set(THREE.MathUtils.degToRad(p.rotation[0]), THREE.MathUtils.degToRad(p.rotation[1]), THREE.MathUtils.degToRad(p.rotation[2]), "YXZ");
+    g.scale.setScalar(p.size);
+    g.updateMatrixWorld(true);
+    this.splats?.setCutoff(p.id, p.cutoff);
+    this.dirty = true;
+  }
+
+  removeProp(id: string) {
+    const g = this.props.get(id);
+    if (!g) return;
+    if (this.gizmo?.object === g) this.gizmo.detach();
+    this.props.delete(id);
+    this.splats?.remove(id);
+    this.dirty = true;
+  }
+
+  hasProp(id: string) {
+    return this.props.has(id);
+  }
+
+  /** Put the handle on a prop (null: none), in a mode. */
+  pickProp(id: string | null, mode: PropHandle) {
+    const g = id ? this.props.get(id) : undefined;
+    if (!g) {
+      this.gizmo?.detach();
+      this.dirty = true;
+      return;
+    }
+    const gizmo = this.ensureGizmo();
+    gizmo.setMode(mode);
+    if (gizmo.object !== g) gizmo.attach(g);
+    this.dirty = true;
+  }
+
+  /** The pointer is on the handle or dragging it (the view's own drag-to-look waits). */
+  handleActive(): boolean {
+    return !!this.gizmo?.object && (this.gizmo.dragging || this.gizmo.axis !== null);
+  }
+
+  private propIdOf(g: THREE.Object3D | undefined): string | undefined {
+    for (const [id, v] of this.props) if (v === g) return id;
+    return undefined;
+  }
+
+  private ensureGizmo(): TransformControls {
+    if (this.gizmo) return this.gizmo;
+    const gizmo = new TransformControls(this.camera, this.canvas);
+    gizmo.setSpace("world");
+    gizmo.addEventListener("change", () => (this.dirty = true));
+    gizmo.addEventListener("mouseDown", () => (this.sizeAtGrab = gizmo.object?.scale.x ?? 1));
+    gizmo.addEventListener("objectChange", () => {
+      const g = gizmo.object;
+      const id = this.propIdOf(g);
+      if (!g || !id) return;
+      // Sizes stay uniform: whichever axis the handle moved most sets all three.
+      const s = g.scale;
+      const from = this.sizeAtGrab;
+      const size = Math.max(1e-3, Math.abs([s.x, s.y, s.z].reduce((a, b) => (Math.abs(b - from) > Math.abs(a - from) ? b : a), s.x)));
+      g.scale.setScalar(size);
+      const r = new THREE.Euler().setFromQuaternion(g.quaternion, "YXZ");
+      const deg = (x: number) => Math.round(THREE.MathUtils.radToDeg(x) * 10) / 10;
+      const r4 = (x: number) => Math.round(x * 1e4) / 1e4;
+      this.onPropChange?.(id, { position: [r4(g.position.x), r4(g.position.y), r4(g.position.z)], rotation: [deg(r.x), deg(r.y), deg(r.z)], size: r4(size) });
+    });
+    this.overlay.add(gizmo.getHelper());
+    this.gizmo = gizmo;
+    return gizmo;
+  }
+
+  /**
+   * A render target's pixels, read now. Spark reads its sort keys back with three's readRenderTargetPixelsAsync, which
+   * leaves its pixel-pack buffer bound while it waits: a synchronous read then would land in that buffer and leave
+   * `buf` empty (a black frame in the path render). Unbind it first; three binds its own again before collecting.
+   */
+  private readPixels(target: THREE.WebGLRenderTarget, width: number, height: number, buf: Uint8Array) {
+    const gl = this.renderer.getContext();
+    if (typeof WebGL2RenderingContext !== "undefined" && gl instanceof WebGL2RenderingContext) gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+    this.renderer.readRenderTargetPixels(target, 0, 0, width, height, buf);
   }
 
   /** What the frame shows, rendered at width×height (the frame's ratio), as a PNG. */
@@ -541,7 +692,7 @@ export class SceneEngine {
     try {
       this.draw(out, width, height, width, height, color);
       const buf = new Uint8Array(width * height * 4);
-      this.renderer.readRenderTargetPixels(out, 0, 0, width, height, buf);
+      this.readPixels(out, width, height, buf);
       const img = new ImageData(width, height);
       // WebGL reads bottom-up.
       for (let y = 0; y < height; y++) img.data.set(buf.subarray((height - 1 - y) * width * 4, (height - y) * width * 4), y * width * 4);
@@ -585,10 +736,19 @@ export class SceneEngine {
     const render = new ImageData(width, height);
     const mask = o.mask ? new ImageData(width, height) : null;
     const images = mask ? [render, mask] : [render];
-    /** Frame i into `render` (and `mask`): WebGL reads bottom-up, and a pixel nothing covered is transparent black. */
-    const frame = (i: number) => {
-      this.draw(out, width, height, width, height, color, { pose: flyPoseOf(poses[i]), vFov });
-      this.renderer.readRenderTargetPixels(out, 0, 0, width, height, buf);
+    /**
+     * Frame i into `render` (and `mask`): WebGL reads bottom-up, and a pixel nothing covered is transparent black. With
+     * props, their splats are sorted for this frame's camera first.
+     */
+    const frame = async (i: number) => {
+      const pose = flyPoseOf(poses[i]);
+      if (this.splats?.size) {
+        this.poseCamera(pose, vFov, width / height);
+        await this.splats.settle(this.scene, this.camera);
+        stop();
+      }
+      this.draw(out, width, height, width, height, color, { pose, vFov });
+      this.readPixels(out, width, height, buf);
       for (let y = 0; y < height; y++) {
         const src = (height - 1 - y) * width * 4;
         const dst = y * width * 4;
@@ -611,24 +771,37 @@ export class SceneEngine {
       if (o.signal?.aborted || this.disposed) throw new DOMException("Stopped", "AbortError");
     };
     this.playing = true;
+    this.recording = true;
     try {
       // Blockout to film: the render as the cloud models read it (MP4 where the browser encodes H.264).
       if (o.mp4 && !mask) {
-        const out = await encodeFrames(poses.length, width, height, o.fps, (i) => (stop(), frame(i), o.onProgress?.((i + 1) / poses.length), render), true);
+        const out = await encodeFrames(
+          poses.length,
+          width,
+          height,
+          o.fps,
+          async (i) => {
+            stop();
+            await frame(i);
+            o.onProgress?.((i + 1) / poses.length);
+            return render;
+          },
+          true,
+        );
         return { render: out.blob, type: out.type, frames: poses.length };
       }
       if (exact) {
-        const [a, b] = await encodeVp8(poses.length, width, height, o.fps, images.length, (i) => {
+        const [a, b] = await encodeVp8(poses.length, width, height, o.fps, images.length, async (i) => {
           stop();
-          frame(i);
+          await frame(i);
           o.onProgress?.((i + 1) / poses.length);
           return images;
         });
         return { render: new Blob([a as BlobPart], { type }), ...(b ? { mask: new Blob([b as BlobPart], { type }) } : {}), type, frames: poses.length };
       }
-      const [r, m] = await recordWithMediaRecorder(type, poses.length, width, height, o.fps, images.length, (i) => {
+      const [r, m] = await recordWithMediaRecorder(type, poses.length, width, height, o.fps, images.length, async (i) => {
         stop();
-        frame(i);
+        await frame(i);
         o.onProgress?.((i + 1) / poses.length);
         return images;
       });
@@ -639,6 +812,7 @@ export class SceneEngine {
       out.dispose();
       this.renderer.setRenderTarget(null);
       this.playing = false;
+      this.recording = false;
       this.dirty = true;
     }
   }
@@ -647,6 +821,14 @@ export class SceneEngine {
     this.disposed = true;
     cancelAnimationFrame(this.raf);
     clearTimeout(this.focusTimer);
+    if (this.gizmo) {
+      this.gizmo.detach();
+      this.gizmo.getHelper().removeFromParent();
+      this.gizmo.dispose();
+    }
+    // Spark's objects dispose themselves (before the generic sweep below).
+    this.splats?.dispose();
+    this.props.clear();
     this.scene.traverse((o) => {
       const m = o as THREE.Mesh;
       m.geometry?.dispose();

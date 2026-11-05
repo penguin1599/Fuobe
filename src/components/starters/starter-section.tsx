@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { StepFlow } from "@/components/canvas/template-card";
 import { useEngine, useIsOwner } from "@/lib/api";
 import { responseError, toastError } from "@/lib/refusals";
-import { STARTER_SURFACES, starterHref, starterShown, type OwnerStarters, type StarterCardData, type StarterFill, type StarterSurface } from "@/lib/starters/types";
+import { STARTER_SURFACES, VISITOR_MAKES, starterHref, starterShown, type OwnerStarters, type StarterCardData, type StarterFill, type StarterSurface } from "@/lib/starters/types";
 import { cn } from "@/lib/utils";
 import { StarterCard } from "./starter-card";
 import { StarterIcon } from "./starter-icon";
@@ -104,7 +104,7 @@ export function StarterTile({ s, owner, busy, onUse, wide, compact }: { s: Start
           <span className="inline-flex items-center gap-1 text-[13px] font-medium text-foreground">
             Open it <ArrowRight className="size-3.5 transition-transform group-hover/starter:translate-x-0.5" />
           </span>
-        ) : owner ? (
+        ) : owner || VISITOR_MAKES.has(s.surface) ? (
           <Button size="sm" className="w-fit rounded-full" onClick={onUse} disabled={busy}>
             {busy ? <Loader2 className="animate-spin" /> : <Plus />} Use template
           </Button>

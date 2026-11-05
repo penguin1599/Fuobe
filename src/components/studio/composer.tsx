@@ -1,7 +1,7 @@
 "use client";
 
 import { OrbitPad, orbitOptions } from "@/components/studio/orbit-pad";
-import { ArrowUp, AtSign, Cloud, Cpu, GalleryHorizontalEnd, LayoutDashboard, Loader2, Sparkles, X } from "lucide-react";
+import { ArrowUp, AtSign, Cloud, Cpu, GalleryHorizontalEnd, LayoutDashboard, Library, Loader2, Sparkles, X } from "lucide-react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -83,13 +83,17 @@ import {
   startStep,
   viewerDefaults,
   writesCaptions,
+  WRITE_PROMPT,
 } from "@/lib/composer";
 import { qwen21Note } from "@/lib/qwen21-speed";
 import { H3_TIER_PARAM, h3TierNote } from "@/lib/gpu/h3-tier";
 import { formatCost } from "@/lib/format";
 import { toastError } from "@/lib/refusals";
 import { addKeyLabel, billedTo, CLOUD_KEY, needsKey, paidThrough, startingModel } from "@/lib/your-keys";
+import { gpuBeforeRun } from "@/lib/before-run";
+import { TroubleActions, TroubleDetails } from "@/components/gpu/trouble";
 import { cn } from "@/lib/utils";
+import { h3ReferenceProblem, openReferenceMode } from "@/lib/h3-references";
 import { badgeFor, badgeText, dropGpuRetry, openGpuSetup, setGpuRetry, useGpuBadges } from "@/hooks/use-gpu";
 import { AttachMenu } from "./attach-menu";
 import { useAttach, useComposerBridge, useUploadReaper } from "./attachments";
@@ -99,6 +103,7 @@ import { FramesStrip, type FramesNotice } from "./frames-strip";
 import { LayoutStrip } from "./layout-strip";
 import { loadFullCatalog, useCatalog } from "./catalog";
 import { Chip, chipBase, chipIdle } from "./chip";
+import { ReferenceOrder, ReferenceTiles, useMediaSeconds } from "./reference-tray";
 import { MediaSlot, SlotPreview, type SlotValue } from "./media-slot";
 import { InsertRangeChip, LightSphereChip } from "./hosted-chips";
 import { voiceWindowProblem } from "@/lib/catalog/clip-windows";
@@ -288,11 +293,20 @@ export function Composer({ docked }: { docked: boolean }) {
   const draft = useMemo(
     () =>
       config.clipFacts
-        ? { ...typed, params: { ...typed.params, sourceDuration: typed.slots.video?.ref ? facts?.duration : undefined, sourceFps: typed.slots.video?.ref ? facts?.fps : undefined } }
+        ? {
+            ...typed,
+            params: {
+              ...typed.params,
+              sourceDuration: typed.slots.video?.ref ? facts?.duration : undefined,
+              sourceFps: typed.slots.video?.ref ? facts?.fps : undefined,
+              // An upscale billed per output frame (Kandinsky VSR) is priced on the clip's size.
+              sourceSize: typed.slots.video?.ref && facts?.width && facts.height ? { width: facts.width, height: facts.height } : undefined,
+            },
+          }
         : config.voiceFacts
           ? { ...typed, params: { ...typed.params, sourceDuration: voiceRef ? voice?.duration : undefined } }
           : typed,
-    [config.clipFacts, config.voiceFacts, typed, facts?.duration, facts?.fps, voiceRef, voice?.duration],
+    [config.clipFacts, config.voiceFacts, typed, facts?.duration, facts?.fps, facts?.width, facts?.height, voiceRef, voice?.duration],
   );
   const liveElements = useElements().data;
   const elements = (hydrated && liveElements) || EMPTY;
@@ -314,6 +328,12 @@ export function Composer({ docked }: { docked: boolean }) {
   const pickerOps = config.pickerOps ?? config.ops;
   const models = useMemo(() => filterModels(catalog.models, { kind: config.kind, ops: pickerOps }), [catalog.models, config.kind, pickerOps]);
   const model: ModelDef | undefined = catalog.getModel(draft.modelId);
+  // MiniMax H3 on your GPU has a References mode (Pika H3 Flex): reference clips and voice or music clips beside the images.
+  const refMode = config.ops.includes("ref2v") ? openReferenceMode(model) : null;
+  const [refsOpen, setRefsOpen] = useState(false);
+  const refClips = refMode ? (draft.refClips ?? []) : [];
+  const refAudios = refMode ? (draft.refAudios ?? []) : [];
+  const refSeconds = useMediaSeconds([...refClips, ...refAudios]);
   // Fuobe Soul's presetId is a look (its own chip), not an app, motion or effect.
   const takesLook = !!model?.options.looks;
   const preset: Preset | undefined = draft.presetId && !takesLook ? catalog.getPreset(draft.presetId) : config.preset;
@@ -347,7 +367,7 @@ export function Composer({ docked }: { docked: boolean }) {
   /** What the request names for its model: the engine (only a model that runs on both, a Fuobe Original), and whether it takes looks. */
   const targetFor = (id: string) => {
     const m = catalog.getModel(id);
-    return { engine: dualEngine(m) ? engine : undefined, looks: !!m?.options.looks };
+    return { engine: dualEngine(m) ? engine : undefined, looks: !!m?.options.looks, refs: config.ops.includes("ref2v") && !!openReferenceMode(m) };
   };
 
   // A curated moodboard on a model that takes looks is a look: it moves to the Look chip, so the chip shows what
@@ -533,7 +553,9 @@ export function Composer({ docked }: { docked: boolean }) {
     ? 0
     : config.multiRef.kind === "video"
       ? Math.min(config.multiRef.max, model?.engine === "open" ? 4 : config.multiRef.max)
-      : Math.min(config.multiRef.max, Math.max(0, ((model ? imageLimit(model, refOp) : opts.maxImages) ?? 1) - slots.filter((s) => s.accept === "image").length));
+      : refMode
+        ? Math.max(0, refMode.images - 1)
+        : Math.min(config.multiRef.max, Math.max(0, ((model ? imageLimit(model, refOp) : opts.maxImages) ?? 1) - slots.filter((s) => s.accept === "image").length));
   const attach = useAttach(slots, refMax);
 
   // Frames mode (Video studio): up to 10 stills at their times, as the picked model can take them.
@@ -609,7 +631,10 @@ export function Composer({ docked }: { docked: boolean }) {
   // Frames mode has its own strip: the start frame is frame 1 (a camera motion's start frame tile isn't asked for).
   const askedSlots = framesOn ? framesSlots(slots) : slots;
   const missing = firstMissingSlot(askedSlots, draft.slots, anyOf);
-  const uploading = Object.values(draft.slots).some((v) => v?.uploading) || draft.refs.some((r) => r.uploading) || (framesOn && framesUploading(draft.frames));
+  const uploading =
+    Object.values(draft.slots).some((v) => v?.uploading) ||
+    [...draft.refs, ...refClips, ...refAudios].some((r) => r.uploading) ||
+    (framesOn && framesUploading(draft.frames));
   // A voice slot's "Clean up voice" is cleaning the file that just landed: Generate waits for the clean one.
   const cleaningVoice = useVoiceCleaning();
   // Export without a ComfyUI to write it (none connected, or the install runs cloud APIs only): say so and offer the cloud route.
@@ -639,6 +664,8 @@ export function Composer({ docked }: { docked: boolean }) {
         ...draft,
         slots: planSlots,
         refs: draft.refs.map((r) => stand(r, r.kind) as SlotValue),
+        refClips: draft.refClips?.map((r) => stand(r, "video") as SlotValue),
+        refAudios: draft.refAudios?.map((r) => stand(r, "audio") as SlotValue),
         frames: draft.frames?.map((f) => ({ ...f, value: stand(f.value, "image") as SlotValue })),
       });
       const plan = planGeneration({ ...planned, prompt: planned.prompt || (config.promptOptional ? " " : "") }, catalog.getModel, catalog.getPreset);
@@ -668,6 +695,18 @@ export function Composer({ docked }: { docked: boolean }) {
   const songProblem = songRef ? songToolProblem(op!, { format: songFormat(undefined, songRef), seconds: voice?.duration }) : null;
   if (songProblem && !planError) planError = songProblem;
   if (signed.blocker) planError = signed.blocker;
+  // References mode: Pika's limits (12 files, 2-15 s each, 15 s a group), checked on the clips' lengths before anything runs.
+  const refImages = (draft.slots.image?.ref ? 1 : 0) + draft.refs.length;
+  const refProblem =
+    refMode && !framesOn && (refClips.length || refAudios.length)
+      ? h3ReferenceProblem({ images: refImages, videos: refSeconds.slice(0, refClips.length), audios: refSeconds.slice(refClips.length) })
+      : null;
+  if (refProblem && !planError) planError = refProblem;
+  // An end frame runs first and last frames only: References mode's extra images, clips and sound would be left out.
+  // It goes before "Write a prompt first": words won't fix it.
+  if (refMode && !framesOn && draft.slots.endImage?.ref && (draft.refs.length || refClips.length || refAudios.length) && (!planError || planError === WRITE_PROMPT)) {
+    planError = "References can't go with an end frame. Remove the end frame, or the references";
+  }
   // Models that take no prompt (try-on, 3D, transcription, upscalers), or can run without one, never ask for one.
   // A model that reads only words (Open-H3 Regenerate redraws from them) asks for them even in a tool that hides the box.
   const promptMissing =
@@ -718,6 +757,23 @@ export function Composer({ docked }: { docked: boolean }) {
 
   // An account's paid model it has no key for yet: Generate asks for the key (the note below says so too).
   const keyToAdd = model && status?.viewer?.paidAllowed !== false ? needsKey(model, status)?.[0] : undefined;
+
+  // The check before Run: an account's own GPU at a web address that didn't answer its last status check (the status
+  // strip's, every 30 s; nothing here asks the GPU) shows what is wrong and its fixes before Run. A run started anyway
+  // waits for the GPU. One of the account's keys that runs this tool's cloud version is offered too (an explicit click:
+  // it spends the person's own credit).
+  const gpuDown = gpuBeforeRun({ viewer: status?.viewer, model, engine, onPool: hostedHere && runOn === "pool", preset, has, getModel: catalog.getModel });
+  const [cloudRun, setCloudRun] = useState(false);
+  // "Run with your fal.ai key": once the switch to Cloud has moved the tool to its cloud model, it runs (once).
+  useEffect(() => {
+    if (!cloudRun) return;
+    const late = setTimeout(() => setCloudRun(false), 4000);
+    if (engine === "cloud" && model && (model.engine !== "open" || dualEngine(model))) {
+      setCloudRun(false);
+      submitRef.current();
+    }
+    return () => clearTimeout(late);
+  }, [cloudRun, engine, model]);
 
   // `skip` is true only from the guided fix's "Run anyway" (a click handler passes its event here).
   const submit = (skip?: unknown) => {
@@ -890,14 +946,15 @@ export function Composer({ docked }: { docked: boolean }) {
 
   // Attachments: only when something is attached, a required slot is still empty, or none of a "one of these" group is filled (U8).
   const kinds = [...attach.kinds];
-  const hasAttachment = slots.some((s) => draft.slots[s.key]) || draft.refs.length > 0;
+  const hasAttachment = slots.some((s) => draft.slots[s.key]) || draft.refs.length > 0 || refClips.length > 0 || refAudios.length > 0;
   // Tools whose only input is a list of clips (Join clips) keep their "Add clip" tile in view.
   const showAttachments =
     framesOn ||
-    ((slots.length > 0 || !!config.multiRef) && (hasAttachment || !!missing || !!slots.find((s) => s.required && !draft.slots[s.key]) || (!!config.multiRef && !showPrompt)));
+    ((slots.length > 0 || !!config.multiRef) && (hasAttachment || !!missing || !!slots.find((s) => s.required && !draft.slots[s.key]) || (!!config.multiRef && !showPrompt))) ||
+    (!!refMode && refsOpen);
   const collapsed = docked && !focused;
   // Docked and not focused, the tiles fold into one chip on the toolbar (the composer stays one line).
-  const attached = [...slots.map((s) => draft.slots[s.key]), ...draft.refs, ...(draft.frames ?? []).map((f) => f.value)].filter((v): v is SlotValue => !!v);
+  const attached = [...slots.map((s) => draft.slots[s.key]), ...draft.refs, ...refClips, ...refAudios, ...(draft.frames ?? []).map((f) => f.value)].filter((v): v is SlotValue => !!v);
 
   // Phones can't hover Generate for its tooltip, and a folded composer hides the tile it points at:
   // there the blocker is a line under the toolbar (blockerLine), and tapping it opens that tile (the
@@ -1319,7 +1376,21 @@ export function Composer({ docked }: { docked: boolean }) {
               onChange={(v) => v && setDraft((d) => ({ refs: [...d.refs, v] }))}
             />
           )}
+          {refMode && (
+            <ReferenceTiles
+              clips={refClips}
+              audios={refAudios}
+              images={refImages}
+              limits={refMode}
+              onFile={attach.addListFile}
+              onPick={attach.addToList}
+              onRemove={attach.removeFromList}
+            />
+          )}
         </div>
+      )}
+      {showAttachments && !collapsed && !framesOn && refMode && (refsOpen || refClips.length > 0 || refAudios.length > 0) && (
+        <ReferenceOrder images={refImages} clips={refClips.length} audios={refAudios.length} problem={refProblem} />
       )}
       {/* On a phone the slot row scrolls sideways, so the switch gets its own line under it. */}
       {showAttachments && !collapsed && !framesOn && hasCleanVoice && <CleanVoiceSwitch status className="px-3 pb-2 sm:hidden" hint="first, free on your GPU" />}
@@ -1394,7 +1465,7 @@ export function Composer({ docked }: { docked: boolean }) {
         </div>
       )}
 
-      {/* Upscale → Video: Restore · faithful and Regenerate · creative side by side (on your GPU). */}
+      {/* Upscale → Video: Restore · faithful, Quick · RTX and (while it is offered) Regenerate · creative side by side (on your GPU). */}
       {config.finishChoices && !preset && (
         <FinishChoices
           choices={config.finishChoices}
@@ -1445,6 +1516,21 @@ export function Composer({ docked }: { docked: boolean }) {
         {/* Phones (below sm): "+", Settings (icon), the model (it shrinks to fit) and @; the other chips are in the settings sheet. */}
         <div ref={chipRow} style={fade} data-composer-toolbar className="scrollbar-none -my-1 flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto py-1 sm:flex-wrap sm:overflow-x-visible">
           {kinds.length > 0 && <AttachMenu kinds={kinds} onFiles={attach.attachFiles} onPick={attach.attach} />}
+          {refMode && !framesOn && (
+            <button
+              type="button"
+              onClick={() => {
+                setRefsOpen((o) => !o);
+                setFocused(true);
+              }}
+              aria-pressed={refsOpen}
+              title="Images, clips and a voice or music clip the shot follows"
+              className={cn(chipBase, chipIdle, "gap-1.5", refsOpen && "border-foreground/30 text-foreground")}
+            >
+              <Library className="size-3.5" />
+              <span className="max-sm:sr-only">References</span>
+            </button>
+          )}
           {collapsed && showAttachments && attached.length > 0 && (
             <button
               type="button"
@@ -1660,6 +1746,24 @@ export function Composer({ docked }: { docked: boolean }) {
           </p>
         )}
       </div>
+      {gpuDown && (
+        <div role="note" aria-live="polite" className="mx-1 mt-2 space-y-1.5 rounded-xl border border-dashed px-3 py-2 text-[12px] leading-snug text-muted-foreground">
+          <p>
+            <span className="font-medium text-foreground">{gpuDown.words}</span> A run you start now waits for it.
+          </p>
+          <TroubleDetails details={gpuDown.details} />
+          <TroubleActions
+            actions={gpuDown.actions}
+            skip={["retry"]}
+            handlers={{
+              onRunWithKey: () => {
+                setEngine("cloud");
+                setCloudRun(true);
+              },
+            }}
+          />
+        </div>
+      )}
       {outcome && (
         <p className="px-2 pt-1 text-[12px] text-muted-foreground tabular-nums" aria-live="polite">
           {outcome}

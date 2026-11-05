@@ -4,6 +4,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import type { AudioToolPreview } from "@/lib/av/audio-tools";
 import type { Engine, Generation } from "@/lib/catalog/types";
+import type { SpeechEffect } from "@/lib/speech-edit";
+import { COMPUTER_KICK_EVENT } from "@/lib/api";
 import { responseError } from "@/lib/refusals";
 
 export type AudioToolBody =
@@ -35,6 +37,19 @@ export type AudioToolBody =
       strength?: number;
       remux?: boolean;
       channels?: number;
+      sourceDuration?: number;
+    }
+  | {
+      tool: "speech-edit";
+      engine: Engine;
+      media: string;
+      kind: "audio" | "video";
+      name?: string;
+      cues: { start: number; end: number; text: string }[];
+      edited?: string[];
+      range?: { start: number; end: number };
+      effect?: SpeechEffect;
+      quality?: "fast" | "best";
       sourceDuration?: number;
     }
   | {
@@ -86,6 +101,10 @@ export function useAudioToolRun() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: AudioToolBody) => post<{ batchId: string; result: Generation; items: Generation[] }>("/api/audio-tools", body),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ["generations"] }),
+    onSuccess: () => {
+      // The tab that runs this person's jobs on the ComfyUI on this computer (an account's "Your GPU") asks at once.
+      window.dispatchEvent(new Event(COMPUTER_KICK_EVENT));
+      void qc.invalidateQueries({ queryKey: ["generations"] });
+    },
   });
 }

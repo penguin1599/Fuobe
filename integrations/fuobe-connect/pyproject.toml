@@ -1,16 +1,20 @@
 [project]
-name = "comfyui-fuobe-connect"
-description = "Use this ComfyUI from Fuobe with one install: no start flag, no extra file. Trusts only the Fuobe studios you name, keeps ComfyUI's own check for every other website, and can pair with your Fuobe account for Safari, phones and PCs with no screen."
+name = "fuobe-connect"
+description = "Use this ComfyUI from Fuobe with one install: no start flag, no extra file. Trusts only the Fuobe studios you name, checks every workflow they send against the node list it ships, keeps ComfyUI's own check for every other website, and can pair with your Fuobe account for Safari, phones and PCs with no screen."
 version = "1.0.0"
 license = { file = "LICENSE" }
+requires-python = ">=3.9"
+# aiohttp comes with ComfyUI: naming it here could make ComfyUI-Manager change ComfyUI's own copy.
 dependencies = []
+classifiers = ["Operating System :: OS Independent"]
 
 [project.urls]
 Repository = "https://github.com/workingprototype/ComfyUI-Fuobe-Connect"
-Documentation = "https://github.com/workingprototype/Fuobe/blob/main/docs/gpu-workers.md"
+Documentation = "https://github.com/workingprototype/ComfyUI-Fuobe-Connect#readme"
+"Bug Tracker" = "https://github.com/workingprototype/ComfyUI-Fuobe-Connect/issues"
 
 [tool.comfy]
 PublisherId = "workingprototype"
 DisplayName = "Fuobe Connect"
-Icon = ""
+requires-comfyui = ">=0.3.0"
 includes = []

@@ -13,7 +13,25 @@ import type { ScenePlan } from "./scene";
 import { SHOWCASES, showcaseRecipe } from "./showcase";
 import { initialState, templateLengths, templateRecipe, templateSizes, type TemplateBrand } from "./template";
 
-export type KineticSlug = "kinetic-headline" | "line-reveal" | "logo-sting" | "feature-cards" | "stat-dashboard" | "starburst" | "offer-badge" | "big-number" | "quote" | "end-card";
+export type KineticSlug =
+  | "kinetic-headline"
+  | "line-reveal"
+  | "logo-sting"
+  | "feature-cards"
+  | "stat-dashboard"
+  | "starburst"
+  | "offer-badge"
+  | "big-number"
+  | "quote"
+  | "end-card"
+  | "drop-countdown"
+  | "fragrance-reveal"
+  | "editorial-sale"
+  | "glass-spotlight"
+  | "announcement"
+  | "lookbook"
+  | "stat-stack"
+  | "testimonials";
 
 export interface KineticEntry {
   slug: KineticSlug;
@@ -39,6 +57,14 @@ const ORDER: { slug: KineticSlug; template: string; blurb: string }[] = [
   { slug: "logo-sting", template: "ms-logo-sting", blurb: "Your name comes into focus in polished metal, and your mark lands last." },
   { slug: "feature-cards", template: "ms-feature-cards", blurb: "Three cards slide in under a big headline, one benefit each." },
   { slug: "stat-dashboard", template: "ms-dashboard-zoom", blurb: "The camera pushes into a dashboard as a key number counts up." },
+  { slug: "drop-countdown", template: "m2-midnight-drop", blurb: "Your drop's name cuts in huge, then a countdown flips into place tile by tile." },
+  { slug: "fragrance-reveal", template: "m2-nocturne", blurb: "Ribbons of light cross the night as your bottle rises under a fine serif name." },
+  { slug: "editorial-sale", template: "m2-season-finale", blurb: "Your sale in huge type beside a fashion photo, the offer on a highlighter." },
+  { slug: "glass-spotlight", template: "m2-prism-stage", blurb: "Your product stands on a glass plinth in rings of light, its name beside it." },
+  { slug: "announcement", template: "mm-marquee", blurb: "Your event's name lights up over a night photo, with the date and place." },
+  { slug: "lookbook", template: "mm-runway-titles", blurb: "A giant title cuts in letter by letter over a full-bleed fashion photo." },
+  { slug: "stat-stack", template: "ms-stat-stack", blurb: "Three big numbers roll up on an editorial grid, each with its label." },
+  { slug: "testimonials", template: "ms-kind-words", blurb: "Three customers' words slide through on cards, each with its stars and name." },
   { slug: "line-reveal", template: "m2-line-reveal", blurb: "One line draws your product, then the real product fills in." },
   { slug: "starburst", template: "m2-retro-starburst", blurb: "A retro starburst turns behind your product and headline." },
   { slug: "offer-badge", template: "m2-offer-badge", blurb: "An offer badge lands beside your product under a bold headline." },

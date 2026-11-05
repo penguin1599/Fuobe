@@ -308,7 +308,7 @@ function Editor({ view, refetch, models }: { view: LayerProjectView; refetch: ()
         let image = given;
         let jobFrame = givenFrame;
         let aspect: string | undefined;
-        const needsImage = !(input.tool === "generate-layer");
+        const needsImage = input.tool !== "generate-layer" && input.tool !== "rerender";
         if (target.kind === "node") {
           const n = target.node;
           jobFrame ??= [n.x, n.y, n.w, n.h];

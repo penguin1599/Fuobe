@@ -85,46 +85,33 @@ The owner's own words on engines, SAM Audio, accounts and the PR #14 calls are i
 
 ## Waiting on the owner
 
-- **Accounts beyond public sign-up:** nothing queued.
-- **Two workflow files the owner shared.** The owner needs to share them again. They were read in the container of the session that wrote this file (PR #15) and not committed, because their origin and licence are unknown.
-  - `inbetweening/Animation5-In-Betweening.json`, Comfy's "Animation: Keyframes to Full Character Animation", for package `inbetweening`
-  - `blockout/Horror_Scene_SD2.5.json`, Comfy's "Horror scene", for package `blockout-film`
+The owner's answers of 11-04 are in [`handoff/owner-decisions.json`](handoff/owner-decisions.json) under `owner_11_04`; its `openQuestions` list what is still open:
 
-  Put them in the inputs folder (below). Both briefs describe what was learned from them, so the packages can start without them.
-- **`o/acc-3` on origin** is dropped work. Ask the owner whether to delete it (`git push origin --delete o/acc-3`).
-- **May the integrator remove merged worktrees?** If yes, pass `--remove-worktrees` (see "Running the build", Disk). Without it, every package keeps its worktree until the session ends.
+- **Best labels:** whether "no Best or recommended label for now" also covers the Video studio's Best list and other top or recommended badges (read so far as the Image studio's Best list; package `f1-no-best-label` asks first).
+- **Pieces dropped when main's builds won on 11-04:** rebuild them on main's Skills and sound tools? A skill's History and suggestion cards, a run's step-by-step card, the Library's filter by run batch, the CLI's `--wait` over a skill's runs, Clean the voice first's extra steps in the price, and the Faceless rule that no skill step takes an episode's output.
+- **Still open:** RTX Video "Quick" as the default upscaler on RTX machines; Clean up dialogue's −18 dB preset measures about −12.6 dB (relabel or lower after listening); accounts running Remove dialogue and Split soundtrack on their own GPU (with the accounts plan); a Hugging Face org and write token for the training kit; a texturing node for Hi3D's refined meshes.
+- **Accounts beyond public sign-up:** nothing queued. A new plan needs the owner's word on which of the 10-29 answers still stand.
+- **Two workflow files the owner shared** (`inbetweening/Animation5-In-Betweening.json`, `blockout/Horror_Scene_SD2.5.json`): never committed (origin and licence unknown). Both packages were built from their briefs; share them again only to check against the originals.
+- **`o/acc-3` on origin:** the owner said to delete it (11-04). Sessions can't delete branches (GitHub answers 403), so the owner deletes it.
+
+The integrator may remove merged worktrees (owner, 11-04): pass `--remove-worktrees`.
 
 ## What's left: the queue
 
-Lanes run side by side. Inside a lane, packages run in this order, and each package starts from the integration branch with everything before it merged. Each package goes through four steps:
+Every package of lanes R, O and N (51) is merged into `claude/fuobe-parity-4` (11-01 to 11-03; their stage reports are in `docs/handoff/reports`). Main was merged in on 11-04 (`1c1336ea`); where main had built the same feature (Skills across studios, the sound tools, Make it 3D), main's build won.
 
-1. **Implement** in its own worktree, on branch `o/<key>`.
-2. **Adversarial review.** The reviewer verifies each finding but doesn't edit.
-3. **Fix** the confirmed findings, then run typecheck, lint and the full Vitest run.
-4. **Merge.** One integrator at a time merges the package into `claude/fuobe-parity-4`, runs typecheck, lint and Vitest, and pushes.
+Lanes run side by side; inside a lane, packages run in order, each from the integration branch with everything before it merged, through implement, adversarial review, fix and merge (one integrator at a time).
 
-**Lane R:**
-- `n7-2-layout-mode`: Layout mode in the Image studio. Implement and review are done; the fix stage is next, after the branch is moved onto the rebuilt base.
-- DBS packages: `dbs-d2` (remove dialogue), `dbs-d3` (dub keeps the music)
-- New models: `n7-3-regenerate-2k`, `n7-4-character-swap-2k`, `qma-angles`, `inbetweening`, `person-remover-plus`
-- More DBS: `dbs-d5` (clean up dialogue), `dbs-d6` (clean voice before transcribe and lipsync), `dbs-d7` (an "Original sound" choice), `dbs-d8` (a Canvas node), `dbs-d9` (Assist and MCP tools)
-- `n7-8-layouts-everywhere`
-- `dbs-d4`: the separation evaluation
-- `n7-10-regenerate-more`, `n7-11-moss-sheets-control`
+**Lane F (the owner's follow-ups of 11-04):**
+- `f1-kandinsky6-audio-vae`: both of Kandinsky 6.0's audio VAEs, each with its licence, and the person picks (plus the Pro VRAM figure)
+- `f1-idol-cloud`: Make it 3D on installs without a GPU, through fal's hosted Idol
+- `f1-fal-worlds`: fal's world models under their own names
+- `f1-h3-token-overage`: MiniMax H3 reference tokens past 4,096 are priced
+- `f1-worldcast-token`: WorldCast's access token gets a Settings field
+- `f1-comfyui-0431-moss`: ComfyUI v0.43.1, and MOSS one-sheets get colour and depth control
+- `f1-no-best-label`: no Best or recommended label on model pickers for now, and an evaluation plan to decide when one comes back
 
-**Lane O:**
-- `owner-calls-1`
-- `archive-restore`: LTX Restore. Work in progress.
-- `blockout-film`
-- Skills: `w2s-w3`, `w2s-w4`
-- New models: `n7-7-exact-orbits`, `n7-9-worldcast-worker`, `hi3d-refine`
-- Idol: `idol-1`, `idol-2`, `idol-4`, `idol-5`, `idol-3`, `idol-6`, `idol-7`, `idol-8`, `idol-9`
-- `o12-training-kit`
-- More skills: `w2s-w5`, `w2s-w6`, `w2s-w7`
-
-These lists are as of 10-30. The current state is what `make-workflow.mjs` prints: the packages it leaves out as merged, and the first package of each lane.
-
-Each package's full brief is in `queue.json` under `packages.<key>.brief`, with its research sections, the owner's rules and its test plan. Every brief ends with the PUBLIC SIGN-UP rule. Briefs in areas main changed on 10-30 carry a "MAIN CHANGED THIS AREA" line to read main's code first: Image to 3D (including the 3D finish's self-contained GLB and 3D closed to accounts), local LLMs, and the pre-flight board for new studios. `n7-3-regenerate-2k` and `archive-restore` both add a step to Upscale → Video at the same time, and each brief says how to keep them apart.
+The current state is what `make-workflow.mjs` prints: the packages it leaves out as merged, and the first package of each lane. Each package's full brief is in `queue.json` under `packages.<key>.brief` and ends with the PUBLIC SIGN-UP rule.
 
 ## Work in progress
 

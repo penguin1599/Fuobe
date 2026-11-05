@@ -20,7 +20,7 @@ import {
   type Size,
 } from "@/lib/catalog/restore";
 import type { PlanStep } from "@/lib/catalog/shorts";
-import type { Engine, Generation } from "@/lib/catalog/types";
+import type { Engine, Generation, GenerationRequest } from "@/lib/catalog/types";
 import { ACCESS_PLACE } from "@/lib/model-access";
 import { createPipeline } from "./chains";
 import { llmText, llmTextBackend } from "./enhance";
@@ -41,6 +41,9 @@ import { tenant } from "./tenant";
  */
 
 export { ShortsError as RestoreError };
+
+/** An account's answer to a cloud run: it restores on its own GPU (its page runs there already). */
+export const RESTORE_ON_YOUR_GPU = "Restore this clip on your own GPU: switch to open source.";
 
 const fileUrl = z.string().startsWith("/api/files/").max(500);
 
@@ -267,10 +270,27 @@ export function estimateRestore(body: z.infer<typeof RestoreEstimateSchema>): Re
   };
 }
 
-/** Start the run; a run with no prompt gets one written first. Returns the finished video's generation and the words used. */
-export async function createRestore(body: z.infer<typeof RestoreBodySchema>): Promise<{ final: Generation; items: Generation[]; prompt: string; negative: string; by: PromptAnswer["by"] | "you" }> {
+/** A run planned (the clip's header read, the words written when none were given), not started yet. */
+export interface RestoreRun {
+  steps: PlanStep[];
+  final: string;
+  prompt: string;
+  negative: string;
+  by: PromptAnswer["by"] | "you";
+}
+
+/**
+ * Plan the run; a run with no prompt gets one written first. An account's words come from Fuobe's offline template
+ * (the studio's AI helpers are the owner's), and its run is checked step by step before anything starts
+ * (src/server/account-tool-run.ts).
+ */
+export async function planRestoreRun(body: z.infer<typeof RestoreBodySchema>): Promise<RestoreRun> {
   mustMatchMode(body.engine);
   mustBeOffered(body.engine);
+  // An account restores on its own GPU only (own-setup.ts "video-tools:restore"): the cloud carries the gated Restore
+  // IC-LoRA, which never goes with an account's own key (src/server/loras.ts prepareCloudLoras), so its cloud run would
+  // only fail at submit, whatever copy or token the install holds.
+  if (body.engine === "cloud" && tenant()) throw new ShortsError(RESTORE_ON_YOUR_GPU, 422);
   const info = await probeSource(body.source.url);
   let prompt = body.prompt?.trim() ?? "";
   let negative = body.negative?.trim() ?? "";
@@ -278,7 +298,7 @@ export async function createRestore(body: z.infer<typeof RestoreBodySchema>): Pr
   // Refused before the writer is asked (a clip too long, 4K in the cloud).
   if (!prompt) planInput(body, info, "the scene, natural colour", true);
   if (!prompt) {
-    const written = await writeRestorePrompt({ engine: body.engine, hint: body.hint, frames: [], seconds: info.duration ?? body.source.duration });
+    const written = tenant() ? { ...offlineRestorePrompt(body.hint), by: "offline" as const } : await writeRestorePrompt({ engine: body.engine, hint: body.hint, frames: [], seconds: info.duration ?? body.source.duration });
     prompt = written.prompt;
     negative ||= written.negative;
     by = written.by;
@@ -291,11 +311,24 @@ export async function createRestore(body: z.infer<typeof RestoreBodySchema>): Pr
   if (body.engine === "cloud" && !gatedReady("cloud") && !price(plan.steps).demo) {
     throw new ShortsError(`${gatedHint("Lightricks' Restore IC-LoRA", RESTORE.loras.restore.page)}. A cloud run gets Fuobe's copy of the file, never your token`, 422);
   }
+  return { steps: plan.steps, final: plan.final, prompt, negative: input.negative, by };
+}
+
+/** A planned run's steps, for an account's checks. */
+export const restoreSteps = (r: RestoreRun): { request: GenerationRequest; deps: number }[] => r.steps.map((s) => ({ request: withChain(s), deps: s.after?.length ?? 0 }));
+
+/** Start a planned run: the finished video's generation, every step, and the words used. */
+export function startRestore(r: RestoreRun): { final: Generation; items: Generation[]; prompt: string; negative: string; by: PromptAnswer["by"] | "you" } {
   let p: ReturnType<typeof createPipeline>;
   try {
-    p = createPipeline(plan.steps);
+    p = createPipeline(r.steps);
   } catch (e) {
     throw new ShortsError((e as Error).message, 422);
   }
-  return { final: p.byKey[plan.final], items: p.items, prompt, negative: input.negative, by };
+  return { final: p.byKey[r.final], items: p.items, prompt: r.prompt, negative: r.negative, by: r.by };
+}
+
+/** Start the run; a run with no prompt gets one written first. Returns the finished video's generation and the words used. */
+export async function createRestore(body: z.infer<typeof RestoreBodySchema>): Promise<{ final: Generation; items: Generation[]; prompt: string; negative: string; by: PromptAnswer["by"] | "you" }> {
+  return startRestore(await planRestoreRun(body));
 }

@@ -7,7 +7,7 @@
 export function radioKeys(e: React.KeyboardEvent<HTMLElement>) {
   const step = ({ ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 } as Record<string, number>)[e.key];
   if (step === undefined && e.key !== "Home" && e.key !== "End") return;
-  const radios = [...e.currentTarget.querySelectorAll<HTMLElement>('[role="radio"]:not([disabled])')];
+  const radios = [...e.currentTarget.querySelectorAll<HTMLElement>('[role="radio"]:not([disabled]):not([aria-disabled="true"])')];
   if (!radios.length) return;
   e.preventDefault();
   const at = radios.indexOf(document.activeElement as HTMLElement);

@@ -64,7 +64,7 @@ describe("Qwen-Image 2.1 in the catalog", () => {
       expect(m.routes.map((r) => [r.op, r.endpoint])).toEqual(routes);
       for (const [op, wid] of routes) {
         expect(byId.get(wid)?.capability, wid).toBe(op);
-        expect(byId.get(wid)?.validated, `${wid} stays unvalidated until it runs on the GPU`).toBe(false);
+        expect(byId.get(wid)?.validated, `${wid} passed a real run on a GPU`).toBe(true);
       }
       expect(m.options.maxImages).toBe(4);
       expect(m.tagline).toMatch(/20 GB GPU$/);

@@ -15,10 +15,9 @@ import { EngineSwitch } from "@/components/studio/engine-switch";
 import { grabFrames } from "@/components/restore/hooks";
 import { OldFootageOffer } from "@/components/restore/old-footage";
 import { fileToSlot } from "@/components/studio/media-slot";
-import { SelfHostNote } from "@/components/self-host-note";
 import { StarterParam } from "@/components/starters/starter-param";
 import { StarterSection, useStarters } from "@/components/starters/starter-section";
-import { useEngine, useIsOwner, useLikelyVisitor } from "@/lib/api";
+import { useAskBeforeUpload, useEngine, useIsOwner } from "@/lib/api";
 import {
   ANIMATION_MODES,
   AUTO_SECONDS,
@@ -158,8 +157,9 @@ export function ExplainerStudio({ picker, starters: given = [], fills: givenFill
   const { starters, fills } = useStarters("explainer", given, givenFills);
   const router = useRouter();
   const [engine, setEngine] = useEngine();
-  // An explainer doesn't run on an account's own GPU yet (only the studios' generations do): said here, not after Generate.
-  const visitor = useLikelyVisitor();
+  // Files of your own: a guest is asked to sign up first, and an account with neither its own GPU nor its own key to
+  // connect one (an explainer renders there).
+  const askFirst = useAskBeforeUpload();
   // The estimate's problem (no narrator voice yet…) is a hint until Generate is pressed.
   const [tried, setTried] = useState(false);
   const genre = genreInfo("education");
@@ -291,7 +291,9 @@ export function ExplainerStudio({ picker, starters: given = [], fills: givenFill
   };
 
   const generate = () => {
-    if (visitor) return;
+    // A guest is asked to sign up, and an account with neither its own GPU nor its own key to connect one, before any
+    // hint about the settings (the run would be refused for them whatever the settings say).
+    if (askFirst("run")) return;
     setTried(true);
     if (!prompt.trim() && !sources.length) return void toast("Add a prompt, or attach a file or link", { id: "faceless-blocker" });
     if (manualBad) return void toast("Duration must be Auto or a whole number of seconds between 15 and 600", { id: "faceless-blocker" });
@@ -314,7 +316,7 @@ export function ExplainerStudio({ picker, starters: given = [], fills: givenFill
       <header className="max-md:sticky top-chrome z-20 flex h-14 items-center gap-2 bg-background/85 px-4 backdrop-blur sm:px-6">
         <h1 className="truncate font-heading text-[22px] leading-none">Explainer</h1>
         <div className="ml-auto">
-          <EngineSwitch value={engine} onChange={setEngine} selfHostedOnly />
+          <EngineSwitch value={engine} onChange={setEngine} />
         </div>
         <PhoneNavButton />
       </header>
@@ -366,12 +368,13 @@ export function ExplainerStudio({ picker, starters: given = [], fills: givenFill
               ))}
               <button
                 type="button"
-                onClick={() => (sources.length >= MAX_SOURCES ? toast("Up to 3 sources per video — remove one to add another") : file.current?.click())}
+                onClick={() => (sources.length >= MAX_SOURCES ? toast("Up to 3 sources per video — remove one to add another") : askFirst() || file.current?.click())}
                 className="inline-flex h-8 items-center gap-1.5 rounded-full bg-secondary px-3 text-[13px] font-medium hover:bg-accent"
               >
                 <Paperclip className="size-3.5" /> Attach a file
               </button>
-              <LinkPopover engine={engine} disabled={sources.length >= MAX_SOURCES} onAdd={(s) => setSources((xs) => [...xs, s].slice(0, MAX_SOURCES))} />
+              {/* A link is read by the studio's server: the owner's. A visitor attaches the file or pastes the words. */}
+              {owner && <LinkPopover engine={engine} disabled={sources.length >= MAX_SOURCES} onAdd={(s) => setSources((xs) => [...xs, s].slice(0, MAX_SOURCES))} />}
               <input
                 ref={file}
                 type="file"
@@ -452,11 +455,10 @@ export function ExplainerStudio({ picker, starters: given = [], fills: givenFill
 
             <div className="mt-3 flex flex-wrap items-center gap-3">
               <EstimateLine data={estimate.data} loading={estimate.isFetching} engine={engine} className="min-w-0 flex-1" quiet={!tried} />
-              <Button onClick={generate} disabled={create.isPending || visitor} className="rounded-full">
+              <Button onClick={generate} disabled={create.isPending} className="rounded-full">
                 {create.isPending ? <Loader2 className="animate-spin" /> : <Sparkles />} Generate
               </Button>
             </div>
-            {visitor && <SelfHostNote className="mt-2">Explainer videos aren&apos;t available here.</SelfHostNote>}
           </div>
 
           <ol className="mt-6 grid gap-2 sm:grid-cols-3 lg:grid-cols-1" aria-label="How it works">

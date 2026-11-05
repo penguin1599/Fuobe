@@ -1,10 +1,12 @@
 import { AnchorSchema, makeAnchor } from "@/server/swap-studio";
-import { body, handle } from "@/server/shorts-schemas";
+import { jobRoute } from "@/server/swap-studio-account";
 
-/** A scene anchor for a shot (or a reference for a segment): your character put into its first frame. */
+const run = jobRoute(AnchorSchema, "Pick a shot", makeAnchor);
+
+/**
+ * A scene anchor for a shot (or a reference for a segment): your character put into its first frame. An account's on its
+ * own GPU or key (src/server/swap-studio-account.ts).
+ */
 export async function POST(request: Request, ctx: RouteContext<"/api/swap-studio/projects/[id]/anchors">) {
-  return handle(async () => {
-    const { id } = await ctx.params;
-    return Response.json(makeAnchor(id, await body(request, AnchorSchema, "Pick a shot")), { status: 201 });
-  }, request);
+  return run(request, ctx);
 }

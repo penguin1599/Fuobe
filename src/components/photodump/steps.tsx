@@ -1,7 +1,6 @@
 "use client";
 
 import { Check } from "lucide-react";
-import { useLikelyVisitor } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 /** Numbered wizard steps; steps already reached can be revisited. */
@@ -39,14 +38,13 @@ export function Steps({ steps, current, reached, onGo }: { steps: string[]; curr
 }
 
 /**
- * "Runs on Nano Banana Pro · 10 photos · ≈ $1.50" (or the reason it can't run). A guest or an account reads "Self-hosted
- * only" for a free run or a demo: these tools don't run on their own GPU yet, and their button is off.
+ * "Runs on Nano Banana Pro · 10 photos · ≈ $1.50" (or the reason it can't run). An account's run is priced on its own GPU
+ * or key ("Free · your GPU" on its GPU).
  */
 export function RunLine({ preview, loading }: { preview?: { modelName?: string; count?: number; costUsd?: number | null; demo?: boolean; notes: string[]; error?: string }; loading?: boolean }) {
-  const visitor = useLikelyVisitor();
   if (!preview) return <p className="h-5 text-[12.5px] text-muted-foreground">{loading ? "Pricing…" : ""}</p>;
   if (preview.error) return <p className="text-[12.5px] text-destructive">{preview.error}</p>;
-  const cost = visitor && (preview.demo || preview.costUsd === 0) ? "Not available here" : preview.demo ? "Placeholder · free" : preview.costUsd === 0 ? "Free · your GPU" : preview.costUsd == null ? "price unknown" : `≈ $${preview.costUsd.toFixed(2)}`;
+  const cost = preview.demo ? "Placeholder · free" : preview.costUsd === 0 ? "Free · your GPU" : preview.costUsd == null ? "price unknown" : `≈ $${preview.costUsd.toFixed(2)}`;
   return (
     <div className="space-y-0.5 text-[12.5px] text-muted-foreground">
       <p>

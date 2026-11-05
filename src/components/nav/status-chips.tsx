@@ -14,6 +14,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ownGpuOf, signInHref, useEngineMode, useHydrated, useStatus, useViewer, type EngineMode, type StatusInfo } from "@/lib/api";
 import { placeholdersOn } from "@/lib/demo-mode";
 import { deviceLabel } from "@/lib/gpu/readiness";
+import { shortState } from "@/lib/diagnose";
 import { safeLink, useInterest } from "@/lib/hosted";
 import type { ViewerKind } from "@/lib/nav-model";
 import { cn } from "@/lib/utils";
@@ -89,7 +90,7 @@ export function YourGpuChip({ gpu, guest, hosted, item }: { gpu: Viewer["gpu"]; 
       <>
         <span className="flex w-full items-center gap-3">
           <DotSlot ok={g.online} /> Your GPU
-          <span className="ml-auto">{g.online ? "online" : g.comfy === "down" ? "ComfyUI not running" : g.comfy === "no-setting" ? "needs a setting" : "offline"}</span>
+          <span className="ml-auto">{g.online ? "online" : g.comfy === "down" ? "ComfyUI not running" : g.comfy === "no-setting" ? "needs a setting" : shortState(g.trouble?.cause)}</span>
         </span>
         {(g.device || vram || g.mode === "computer") && (
           <span className="truncate pl-7 text-[11px]">{[g.mode === "computer" && "Your computer", deviceLabel(g.device), vram && `${vram} VRAM`].filter(Boolean).join(" · ")}</span>

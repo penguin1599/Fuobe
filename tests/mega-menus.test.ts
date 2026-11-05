@@ -1,12 +1,13 @@
 import fs from "node:fs";
 import path from "node:path";
 import { gzipSync } from "node:zlib";
+import sharp from "sharp";
 import { describe, expect, it } from "vitest";
 import { APPS, EFFECTS, MODELS, MOTIONS } from "@/lib/catalog";
 import { CANVAS_TEMPLATES } from "@/lib/catalog/canvas";
 import { APP_GROUPS, appsMenu, canvasMenu, EFFECT_GROUPS, LINE_MAX, menuCategory, MOTION_GROUPS, motionsMenu, presetLine, sameIdea, SERVER_MENUS, shortLine, type PresetGroup } from "@/lib/mega-menus.server";
 import { megaItems, megaMove, packMenu, ROW_CAPS, studiosMenu, TILE_COLS, TILE_ROWS, unpackMenu, type MegaModel } from "@/lib/mega-menus";
-import { keyPlaces } from "@/components/nav/mega-panel";
+import { keyPlaces, trackSizes } from "@/components/nav/mega-panel";
 import { CANVAS_INTRO } from "@/lib/canvas-template-cards";
 import { MENU_LINES } from "@/lib/menu-lines";
 import type { Preset } from "@/lib/catalog/types";
@@ -139,6 +140,47 @@ describe("the Canvas menu", () => {
     expect(menu.columns[0].lead?.cover?.poster).toBe(templateCover("canvas", CANVAS_INTRO)!.poster);
     expect(boards.map((b) => b.id)).not.toContain(CANVAS_INTRO);
     expect(menu.columns.at(-1)?.more).toEqual({ href: "/canvas?tab=templates", label: "See all ready boards" });
+  });
+
+  it("gives every picture larger copies, so a 2x or 3x screen gets one at least as wide as its box", async () => {
+    const copies = (srcset: string) => srcset.split(", ").map((c) => ({ url: c.split(" ")[0], w: Number(c.split(" ")[1].slice(0, -1)) }));
+    // A copy shows what the published still shows (as tests/preset-hd.test.ts measures: 128x96 grey, each from its mean).
+    const grey = (url: string) => sharp(file(url)).resize(128, 96, { fit: "fill" }).greyscale().raw().toBuffer();
+    const gap = (a: Buffer, b: Buffer) => {
+      const mean = (x: Buffer) => x.reduce((s, v) => s + v, 0) / x.length;
+      const [ma, mb] = [mean(a), mean(b)];
+      return a.reduce((sum, v, i) => sum + Math.abs(v - ma - (b[i] - mb)), 0) / a.length;
+    };
+    // The boxes as the panel and the phone sheet draw them (tests/e2e/mega-menus.mjs measures them): a tile at 1440
+    // and 1920 px on a 2x screen, the lead (two tracks) at 1440 px on a 2x screen, a phone card at 390 px on a 3x screen.
+    const tile = [222 * 2, 262 * 2, 167 * 3];
+    const lead = [454 * 2, 167 * 3];
+    const items = [...boards.map((b) => [b, tile] as const), [menu.columns[0].lead!, lead] as const];
+    for (const [e, needs] of items) {
+      const hd = e.cover?.hd;
+      expect(hd, e.id).toBeDefined();
+      for (const set of [hd!.avif, hd!.jpeg]) {
+        const listed = copies(set);
+        for (const c of listed) expect(fs.existsSync(file(c.url)), c.url).toBe(true);
+        for (const need of needs) expect(Math.max(...listed.map((c) => c.w)), `${e.id}: ${need} px`).toBeGreaterThanOrEqual(need);
+        const widest = listed.reduce((a, b) => (b.w > a.w ? b : a));
+        expect(gap(await grey(widest.url), await grey(e.cover!.poster)), widest.url).toBeLessThan(8);
+      }
+      // The published files are among them, so a 1x screen keeps its small copy.
+      expect(hd!.jpeg, e.id).toContain(`${e.cover!.thumb} 320w`);
+    }
+  });
+
+  it("tells the browser each picture's box width: a tile one track, the lead two less its border", () => {
+    const at = (sizes: string, vw: number) => {
+      const [wide, calc] = sizes.split(", ");
+      if (vw >= 1680) return Number(/ (\d+)px$/.exec(wide)![1]);
+      const [, side, span, extra] = /^calc\(\(100vw - (\d+)px\) \* (\d+) \/ 6 \+ (-?\d+)px\)$/.exec(calc)!;
+      return ((vw - Number(side)) * Number(span)) / 6 + Number(extra);
+    };
+    // As the panel draws them (tests/e2e/mega-menus.mjs): tiles 222 and 262 px wide, the lead 454 and 534 px.
+    expect([1440, 1920].map((vw) => at(trackSizes(1), vw))).toEqual([222, 262]);
+    expect([1440, 1920].map((vw) => at(trackSizes(2, 2), vw))).toEqual([454, 534]);
   });
 
   it("holds no model name", () => {

@@ -9,6 +9,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
+import { studioNodes } from "./lib/studio-nodes.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const out = path.join(root, "bin/lib/worker/dist");
@@ -26,26 +27,7 @@ for (const name of SOURCES) {
   fs.writeFileSync(path.join(out, `${name}.mjs`), `// Built from src/lib/${name}.ts by scripts/build-worker.mjs. Don't edit.\n${js}`);
 }
 
-// The node allowlist.
-const index = JSON.parse(fs.readFileSync(path.join(root, "workflows/comfyui/requirements.json"), "utf8"));
-const nodes = new Set();
-for (const wf of Object.values(index.workflows)) {
-  for (const c of wf.core) nodes.add(c);
-  for (const cs of Object.values(wf.packs)) for (const c of cs) nodes.add(c);
-}
-for (const f of fs.readdirSync(path.join(root, "workflows/comfyui"))) {
-  if (!f.endsWith(".json") || f === "requirements.json" || f === "manifest.json") continue;
-  try {
-    const g = JSON.parse(fs.readFileSync(path.join(root, "workflows/comfyui", f), "utf8"));
-    for (const n of Object.values(g)) if (n && typeof n === "object" && typeof n.class_type === "string") nodes.add(n.class_type);
-  } catch {}
-}
-// What the graph builders add on their own (LoRA loaders, video joins, overlays…).
-const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(path.join(dir, e.name)) : /\.tsx?$/.test(e.name) ? [path.join(dir, e.name)] : []));
-for (const file of [...walk(path.join(root, "src/lib")), ...walk(path.join(root, "src/server"))]) {
-  for (const m of fs.readFileSync(file, "utf8").matchAll(/class_type: "([^"]+)"/g)) nodes.add(m[1]);
-}
-for (const extra of ["LoraLoader", "LoraLoaderModelOnly"]) nodes.add(extra);
-const list = [...nodes].sort();
+// The node allowlist (the same list Fuobe Connect ships: scripts/connect-nodes.mjs).
+const list = studioNodes(root);
 fs.writeFileSync(path.join(out, "allowed-nodes.json"), `${JSON.stringify({ built: "scripts/build-worker.mjs", nodes: list }, null, 1)}\n`);
 console.log(`worker: ${SOURCES.length} modules, ${list.length} allowed node types -> ${path.relative(root, out)}`);

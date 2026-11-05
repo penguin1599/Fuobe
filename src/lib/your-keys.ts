@@ -1,4 +1,6 @@
 import { FAL_KEYS_URL } from "./connections";
+import { dualEngine } from "./catalog/engines";
+import { presetRoutes } from "./catalog/preset-recipe-routes";
 
 /**
  * Your keys (public sign-up): an account's own fal.ai key or Replicate token, so it can run paid models billed to its own
@@ -84,6 +86,27 @@ export function paidThrough(m: Routed | undefined, s: KeyStatus | undefined): Cl
   const keys = viewerKeys(s);
   if (!m || !keys || m.engine === "open") return null;
   return CLOUD_PROVIDERS.find((p) => keys.includes(p) && m.routes.some((r) => r.provider === p)) ?? null;
+}
+
+/**
+ * The account's key that runs a tool's cloud version, for "Run with your fal.ai key" when its own GPU is off: a preset's
+ * cloud routes in order, or a Fuobe Original (both engines) on the cloud engine. Null when no key of its runs one.
+ */
+export function cloudVersionKey(
+  preset: Parameters<typeof presetRoutes>[0] | undefined,
+  model: (Routed & { id: string }) | undefined,
+  keys: readonly CloudProvider[],
+  has: (id: string) => boolean,
+  getModel: (id: string) => Routed | undefined,
+): CloudProvider | null {
+  if (!keys.length) return null;
+  const ids = preset ? presetRoutes(preset, "cloud", has).map((r) => r.modelId) : model && dualEngine(model as Parameters<typeof dualEngine>[0]) ? [model.id] : [];
+  for (const id of ids) {
+    const m = getModel(id);
+    const p = m && CLOUD_PROVIDERS.find((k) => keys.includes(k) && m.routes.some((r) => r.provider === k));
+    if (p) return p;
+  }
+  return null;
 }
 
 /** "Add your fal.ai key": the words on a paid model an account can't run yet. */

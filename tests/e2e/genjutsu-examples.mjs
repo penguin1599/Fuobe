@@ -3,9 +3,9 @@
 // only once the card is half in view and plays muted; nothing moves when it arrives; the pause button, the actions and
 // "How it was made" are 44 px; switching modes drops the loop; the card is the page column's width (640 px) and on a
 // phone short enough to leave the upload box close. Reduced motion: the finished result as a still, no download until
-// Play. Visitors (--viewer guest | account: a studio with a password and public sign-up) see the video and how it was
-// made, no action row (nothing there they could run), no model names, no "Only you", and "isn't available" under the
-// card by the upload box. The owner: Use this example with no clip marks the card "In use" (the form's setup equals the
+// Play. Visitors (--viewer guest | account: a studio with a password and public sign-up) see the video, how it was made,
+// Use this example and Copy its setup (an account runs Genjutsu on its own GPU or key; a guest signs up when it adds its
+// clip), no model names, no "Only you", and no "isn't available" note. The owner: Use this example with no clip marks the card "In use" (the form's setup equals the
 // recipe), moves the focus to Choose a video, says what is still needed, and Undo puts the form back; a second mode's
 // example after the first asks nothing; a clip added after an example takes the example's length, and a mode change
 // drops it; with a clip and the example's kind of photos the estimate's request body equals the run that made the
@@ -166,11 +166,9 @@ try {
         if (visitor) check(`${tag} ${label}: no seed or "Part" chip for a visitor`, !/Seed \d|Part \d/.test(text), text.replace(/\s+/g, " ").slice(-120));
         check(`${tag} ${label}: no test words or file paths`, !/\b(test|pass(ed)?|owner|validated|oss-|\/api\/)/i.test(text), text.replace(/\s+/g, " ").slice(0, 160));
         if (visitor) {
-          check(`${tag} ${label}: a visitor has no Use this example`, (await c.locator("[data-use-example]").count()) === 0);
-          check(`${tag} ${label}: a visitor has no action row (only Play/Pause and How it was made)`, (await c.getByRole("button", { name: /Copy its setup/ }).count()) === 0 && (await c.locator("button").count()) === 1);
+          check(`${tag} ${label}: a visitor has Use this example and Copy its setup`, (await c.locator("[data-use-example]").count()) === 1 && (await c.getByRole("button", { name: /Copy its setup/ }).count()) === 1);
           check(`${tag} ${label}: no model names and no "Only you" for a visitor`, !/Group swap|Colour finish|Only you|MiniMax|H3/.test(text));
-          const noteBox = await page.getByText("Genjutsu isn't available here.").first().boundingBox();
-          check(`${tag} ${label}: "isn't available" sits under the card, by the upload box`, !!noteBox && noteBox.y > cardBox.y + cardBox.height && noteBox.y < dropBox.y + dropBox.height, noteBox ? `${Math.round(noteBox.y)}` : "none");
+          check(`${tag} ${label}: no "isn't available" note`, (await page.getByText("Genjutsu isn't available here.").count()) === 0);
         } else {
           check(`${tag} ${label}: the owner has Use this example`, await c.locator("[data-use-example]").isVisible());
         }

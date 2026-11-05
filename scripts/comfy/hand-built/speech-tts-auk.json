@@ -1,0 +1,61 @@
+{
+  "1": {
+    "class_type": "LoadAudio",
+    "inputs": {
+      "audio": "voice.wav"
+    },
+    "_meta": {
+      "title": "Voice to speak with (audio; optional: without it the voice comes from the description)"
+    }
+  },
+  "2": {
+    "class_type": "AuKModelLoader",
+    "inputs": {
+      "checkpoint_path": "ckpts/AuK-Flash/auk_flash.safetensors",
+      "config_path": "",
+      "qwen_path": "ckpts/Qwen2.5-Omni-3B",
+      "device": "cuda:0",
+      "dtype": "bf16",
+      "cpu_offload": false
+    },
+    "_meta": {
+      "title": "AuK Model Loader (AuK-Flash)"
+    }
+  },
+  "3": {
+    "class_type": "AuKGenerateEdit",
+    "inputs": {
+      "engine": [
+        "2",
+        0
+      ],
+      "instruction": "Say the following with the same voice: \"Hello, welcome to Fuobe.\"",
+      "generation_seconds": 3.0,
+      "use_prompt_enhancer": false,
+      "seed": 42,
+      "nfe_steps": 4,
+      "cfg_strength": 0.0,
+      "sway_sampling_coef": -1.0,
+      "input_audio": [
+        "1",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "AuK Generate / Edit (zero-shot TTS)"
+    }
+  },
+  "4": {
+    "class_type": "SaveAudio",
+    "inputs": {
+      "audio": [
+        "3",
+        0
+      ],
+      "filename_prefix": "fuobe/speech-tts-auk"
+    },
+    "_meta": {
+      "title": "Save (FLAC)"
+    }
+  }
+}

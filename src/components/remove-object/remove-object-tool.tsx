@@ -13,7 +13,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { StepList, type StepRow } from "@/components/av/step-list";
 import { Panel, ToolHero, ToolShell } from "@/components/av/tool-shell";
 import { useGeneration, useGenerationList } from "@/components/av/use-generation";
-import { SelfHostNote } from "@/components/self-host-note";
 import { useSubmitGuard } from "@/components/shorts/hooks";
 import { ClipBar, ClipDrop, costText, Field, Segmented } from "@/components/shorts/ui";
 import { clipDuration, clipSize, useSourceClip } from "@/components/shorts/use-source-clip";
@@ -21,7 +20,7 @@ import { Feed } from "@/components/studio/feed";
 import { radioKeys, radioTab } from "@/components/studio/radio-keys";
 import { SketchEditor, type Stroke } from "@/components/studio/sketch-editor";
 import { VideoTrimmer, type TrimRange, type VideoTrimmerHandle } from "@/components/studio/video-trimmer";
-import { useEngine, useGenerations, useLikelyVisitor, useModelAccess, useSoundLive } from "@/lib/api";
+import { useEngine, useGenerations, useModelAccess, useSoundLive } from "@/lib/api";
 import {
   CLICK_OPEN_PROBLEM,
   chooseEraser,
@@ -86,9 +85,6 @@ const personInUrl = () => new URLSearchParams(window.location.search).get("perso
 
 export function RemoveObjectTool({ person = false }: { person?: boolean } = {}) {
   const [engine, setEngine, engineMode] = useEngine();
-  // Removing an object doesn't run on an account's own GPU or key yet (only the studios' generations do): said up front,
-  // and the upload, the mask preview and Remove are off, instead of a run the server refuses.
-  const visitor = useLikelyVisitor();
   const access = useModelAccess();
   const source = useSourceClip(REMOVE.maxBytes);
   const clip = source.clip;
@@ -255,8 +251,7 @@ export function RemoveObjectTool({ person = false }: { person?: boolean } = {}) 
               : estimate.isError
                 ? (estimate.error as Error).message
                 : null;
-  const toolName = personAsked ? "Remove a person" : "Remove object";
-  const blocker = visitor ? `${toolName} isn't available here` : setupBlocker;
+  const blocker = setupBlocker;
 
   const start = () => {
     if (blocker || !body) return void toast(blocker ?? "Not ready yet", { id: "remove-blocker" });
@@ -272,7 +267,7 @@ export function RemoveObjectTool({ person = false }: { person?: boolean } = {}) 
 
   const canPreview = !!body && est?.previewUsd != null;
   const makePreview = () => {
-    if (visitor || !body || !canPreview || !est) return;
+    if (!body || !canPreview || !est) return;
     const of = { exact: est.previewExact, eraser: est.modelName, green: est.previewGreen };
     void previewGuard(JSON.stringify(body), (requestId) => actions.preview.mutateAsync({ ...body, requestId }))
       .then((g) => g && setPreviewOf({ id: g.id, ...of }))
@@ -281,25 +276,22 @@ export function RemoveObjectTool({ person = false }: { person?: boolean } = {}) 
   const preview = useGeneration(previewOf?.id ?? null).data;
 
   return (
-    <ToolShell title="Video tools" wide selfHostedOnly>
+    <ToolShell title="Video tools" wide>
       {!clip && (
         <ToolHero
           title={personAsked ? "Remove a person from a video" : "Remove anything from a video"}
           subtitle={
             personAsked
-              ? `Name who goes, check their green mask, and the scene is rebuilt behind them — redo any part that comes out weak${visitor ? "." : ", free on your own ComfyUI."}`
-              : `Type what goes, click it, or paint over it — the gap is filled frame by frame and the sound stays${visitor ? "." : ", free on your own ComfyUI."}`
+              ? `Name who goes, check their green mask, and the scene is rebuilt behind them — redo any part that comes out weak, free on your own ComfyUI.`
+              : `Type what goes, click it, or paint over it — the gap is filled frame by frame and the sound stays, free on your own ComfyUI.`
           }
-        >
-          {visitor && <SelfHostNote className="mt-3 max-w-xl">{toolName} isn&apos;t available here.</SelfHostNote>}
-        </ToolHero>
+        />
       )}
       <div className={cn("mx-auto", clip ? "pt-4" : "mt-8 max-w-[640px]")}>
         {!clip ? (
           <ClipDrop
             accept={REMOVE.accept}
             limits={LIMITS}
-            disabled={visitor}
             onFile={(f) => {
               const err = source.pick(f);
               if (err) toast.error(err);
@@ -534,11 +526,11 @@ export function RemoveObjectTool({ person = false }: { person?: boolean } = {}) 
               <div className="space-y-3 border-t pt-3">
                 {body && est?.previewUsd != null && (
                   <div className="flex items-center gap-2">
-                    <Button variant="outline" size="sm" className="rounded-full" onClick={makePreview} disabled={actions.preview.isPending || (preview && (preview.status === "queued" || preview.status === "running")) || visitor}>
+                    <Button variant="outline" size="sm" className="rounded-full" onClick={makePreview} disabled={actions.preview.isPending || (preview && (preview.status === "queued" || preview.status === "running"))}>
                       {actions.preview.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <Eye className="size-3.5" />} {est.previewGreen ? "Check the green mask" : "Preview the mask"}
                     </Button>
                     <span className="min-w-0 text-[12px] leading-snug text-muted-foreground">
-                      first {REMOVE.previewSeconds} s · {est.demo ? "demo" : engine === "open" ? (visitor ? "not available here" : "free") : costText({ costUsd: est.previewUsd, demo: false }, "cloud")}
+                      first {REMOVE.previewSeconds} s · {est.demo ? "demo" : engine === "open" ? "free" : costText({ costUsd: est.previewUsd, demo: false }, "cloud")}
                       {!est.previewExact && ` · how SAM 3.1 reads it — ${est.modelName} finds the object itself`}
                     </span>
                   </div>
@@ -550,7 +542,7 @@ export function RemoveObjectTool({ person = false }: { person?: boolean } = {}) 
                     ) : (
                       <>
                         <p className="flex items-center gap-1.5 text-[15px] font-semibold tabular-nums">
-                          {costText(est, engine, visitor)}
+                          {costText(est, engine)}
                           {estimate.isFetching && <Loader2 className="size-3 animate-spin text-muted-foreground" aria-label="Updating the price" />}
                         </p>
                         {est && (
@@ -561,7 +553,7 @@ export function RemoveObjectTool({ person = false }: { person?: boolean } = {}) 
                       </>
                     )}
                   </div>
-                  <Button className="rounded-full" onClick={start} disabled={!!blocker || actions.run.isPending || visitor}>
+                  <Button className="rounded-full" onClick={start} disabled={!!blocker || actions.run.isPending}>
                     {actions.run.isPending ? <Loader2 className="size-4 animate-spin" /> : <EraserIcon className="size-4" />} Remove it
                   </Button>
                 </div>

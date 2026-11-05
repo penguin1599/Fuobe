@@ -52,8 +52,8 @@ describe("FIBO 2 models", () => {
       expect(route, `${id} ${op}`).toMatchObject({ provider: "comfyui", endpoint: wid });
       const { manifest } = getWorkflow(wid!);
       expect(manifest.capability).toBe(op);
-      // Not validated against a ComfyUI until the owner's queue is idle.
-      expect(manifest.validated).toBe(false);
+      // Each graph passed a real run on a GPU.
+      expect(manifest.validated).toBe(true);
     }
     expect(m.routes.map((r) => r.op).sort()).toEqual(Object.keys(routes).sort());
   });

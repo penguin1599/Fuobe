@@ -10,6 +10,7 @@
  * hug what you see.
  */
 import type { Pricing } from "./catalog/types";
+import type { LayoutDraft, LayoutItem } from "./layout-prompt";
 
 export type Box = [x: number, y: number, w: number, h: number];
 
@@ -100,7 +101,8 @@ export type LayerTool =
   | "angles"
   | "expand"
   | "inpaint"
-  | "enhance";
+  | "enhance"
+  | "rerender";
 
 export interface LayerProject {
   id: string;
@@ -201,6 +203,8 @@ export interface LayerJobInput {
     aspect?: string;
     /** Enhancer: one of {@link ENHANCE_LOOKS}. */
     look?: EnhanceLook;
+    /** Re-render from layers: the layers and text as a layout ({@link layersLayout}). */
+    layout?: LayoutDraft | Record<string, unknown>;
   };
 }
 
@@ -220,6 +224,7 @@ export const TOOL_LABELS: Record<LayerTool, string> = {
   expand: "Expand",
   inpaint: "Inpaint",
   enhance: "Enhance",
+  rerender: "Re-render from layers",
 };
 
 /**
@@ -239,7 +244,8 @@ export const TOOL_MODELS: Record<LayerTool, { cloud: string[]; open: string[] }>
   // reads it (fal lists $0 per compute second, real cost unverified: the catalog's $0.001 is a placeholder).
   "text-detect": { cloud: ["ideogram-3-text-layers", "florence-2-ocr"], open: ["oss-ocr-lines"] },
   "text-edit": { cloud: ["nano-banana-pro", "seedream-5-pro"], open: ["oss-qwen-image-21", "oss-qwen-image-21-turbo", "oss-krea2-edit"] },
-  "bg-remove": { cloud: ["birefnet-cloud", "ideogram-remove-bg"], open: ["oss-rmbg"] },
+  // Bria's guided cut-out takes optional words on what to keep or drop; FeyNoBg keeps fine hair (nm10-keying).
+  "bg-remove": { cloud: ["birefnet-cloud", "ideogram-remove-bg", "bria-guided-cutout"], open: ["oss-rmbg", "oss-matte-feynobg"] },
   regional: { cloud: ["seedream-5-pro", "nano-banana-pro"], open: ["oss-qwen-image-21", "oss-krea2-edit", "oss-fibo2-edit-turbo"] },
   // SeedVR2 restores detail as it enlarges; 4x ESRGAN is the quick choice.
   upscale: { cloud: ["topaz-image", "seedvr-image", "recraft-crisp"], open: ["oss-seedvr2-image", "oss-upscale-image"] },
@@ -255,6 +261,9 @@ export const TOOL_MODELS: Record<LayerTool, { cloud: string[]; open: string[] }>
   inpaint: { cloud: ["nano-banana-pro", "bria-fibo-2", "z-image-inpaint"], open: ["oss-qwen-image-21", "oss-flux-fill"] },
   // The retouch looks; Detail runs on {@link ENHANCE_DETAIL_MODELS}.
   enhance: { cloud: ["nano-banana-pro", "seedream-5-pro"], open: ["oss-qwen-image-21", "oss-qwen-image-21-turbo", "oss-krea2-edit"] },
+  // One repaint of the arrangement from its boxes: MOSS-Image on both engines (fal hosts it), and the cloud's other models
+  // that read layout boxes in their prompt (Ideogram 4.5, FLUX.3).
+  rerender: { cloud: ["moss-image", "ideogram-4-5", "flux-3"], open: ["oss-moss-image"] },
 };
 
 // ---------------------------------------------------------------------------
@@ -377,6 +386,8 @@ export interface LayerModelInfo {
   pricing?: { unit: string; usd: number; note?: string; promo?: Pricing["promo"] };
   /** Providers its routes run on (demo detection: none of them connected). */
   providers: string[];
+  /** It takes words on what to keep or drop (Bria's guided cut-out): Remove background shows a box for them. */
+  guided?: boolean;
 }
 
 /** Cuts the background back out after an edit model repaints a transparent layer. */
@@ -1120,7 +1131,7 @@ export const LAYER_ELEMENT_KINDS: { kind: LayerElementKind; label: string; hint:
   { kind: "style", label: "Style", hint: "A look, texture or background to reuse" },
 ];
 
-const GENERIC_NAME = /^(background|original image|layer \d+|cut-out|edited layer|text edit|upscaled|relit|new angle|inpainted|enhanced|edited region|expanded fill|color graded|generated layer|original|new)$/i;
+const GENERIC_NAME = /^(background|original image|layer \d+|cut-out|edited layer|text edit|upscaled|relit|new angle|inpainted|enhanced|edited region|expanded fill|color graded|generated layer|original|new|re-render)$/i;
 const PERSON = /\b(person|people|man|men|woman|women|girl|boy|child|kid|baby|face|portrait|model|character|subject|figure|hero|lady|guy|dancer|singer|athlete|cat|dog|animal|creature|robot|avatar|mascot)\b/i;
 const STYLE = /\b(background|backdrop|texture|pattern|sky|wall|floor|style|look|gradient|scene|landscape|scenery)\b/i;
 
@@ -1170,7 +1181,88 @@ export function jobStatusText(r: LayerJobResult | null | undefined): string {
 }
 
 /** Tools whose result changes the document when it lands (text detection only fills the Edit text list). */
-export const APPLIES_TO_DOC = new Set<LayerTool>(["decompose", "split", "regenerate", "generate-layer", "text-edit", "bg-remove", "regional", "upscale", "relight", "angles", "expand", "inpaint", "enhance"]);
+export const APPLIES_TO_DOC = new Set<LayerTool>(["decompose", "split", "regenerate", "generate-layer", "text-edit", "bg-remove", "regional", "upscale", "relight", "angles", "expand", "inpaint", "enhance", "rerender"]);
+
+// ---------------------------------------------------------------------------
+// Re-render from layers (research new-models-7.md §4.10): the arrangement as a layout, painted again as one picture
+
+/** Boxes a re-render sends at most: the largest layers, and the first lines of text. */
+export const RERENDER_MAX_LAYERS = 32;
+export const RERENDER_MAX_TEXT = 16;
+/** A layer covering this much of the canvas is the backdrop: said in the caption, not boxed. */
+const BACKDROP_SHARE = 0.9;
+
+/** A line of text on the picture, placed in the document (doc px), as Edit text lists it. */
+export interface PlacedText {
+  text: string;
+  box: Box | null;
+}
+
+export interface LayersLayout {
+  draft: LayoutDraft;
+  /** The words for the whole picture: the person's, else made from the layers' names. */
+  caption: string;
+  /** Layers in the draft, lines of text in it, and the backdrop layers named in the caption. */
+  counts: { layers: number; text: number; backdrop: number };
+}
+
+const r6 = (n: number) => Math.round(n * 1e6) / 1e6;
+
+/** What a layer shows, in words: its prompt, else its name ("a picture element" for a generic one). */
+function layerWords(n: Pick<LayerNode, "name" | "prompt">): string {
+  const p = n.prompt?.trim();
+  if (p) return p.replace(/[.\s]+$/, "");
+  const name = n.name.trim();
+  return !name || GENERIC_NAME.test(name) ? "a picture element, kept as it looks now" : name;
+}
+
+/**
+ * The document as a layout for one repaint: each visible layer's box (its rotation-aware bounds, kept on the canvas) with
+ * its name or prompt as an object item (a person or animal as a character), bottom to top; each line of text read off the
+ * picture as a text item with its exact words. A layer that fills the canvas is the backdrop, named in the caption. The
+ * boxes are 0-1 fractions of the canvas, so the model's own size places them.
+ */
+export function layersLayout(doc: Pick<LayerDoc, "width" | "height" | "nodes">, text: PlacedText[] = [], words = ""): LayersLayout {
+  const { width: W, height: H } = doc;
+  const canvas: Box = [0, 0, W, H];
+  // The part on the canvas, when it is at least a pixel each way (a sliver would be a box with no size).
+  const onCanvas = (b: Box): Box | null => {
+    const box = intersect(b, canvas);
+    return box && box[2] >= 1 && box[3] >= 1 ? box : null;
+  };
+  const frac = (b: Box): [number, number, number, number] => [r6(b[0] / W), r6(b[1] / H), r6((b[0] + b[2]) / W), r6((b[1] + b[3]) / H)];
+  const backdrop: string[] = [];
+  const layers: { z: number; area: number; item: LayoutItem }[] = [];
+  for (const n of doc.nodes) {
+    if (n.hidden || (n.opacity ?? 1) <= 0.05 || n.role === "original") continue;
+    // An earlier re-render is a repaint of the layers under it, not a layer of its own.
+    if (n.revisions[n.revision]?.label === TOOL_LABELS.rerender) continue;
+    const box = onCanvas(rotatedBounds(n.x, n.y, n.w, n.h, n.rotation));
+    if (!box) continue;
+    const area = (box[2] * box[3]) / (W * H);
+    const what = layerWords(n);
+    if (area >= BACKDROP_SHARE) {
+      backdrop.push(what);
+      continue;
+    }
+    const label = PERSON.test(`${n.name} ${n.prompt ?? ""}`) ? "character" : "object";
+    layers.push({ z: n.z, area, item: { label, caption: what.charAt(0).toUpperCase() + what.slice(1), box: frac(box) } });
+  }
+  const kept = [...layers].sort((a, b) => b.area - a.area).slice(0, RERENDER_MAX_LAYERS).sort((a, b) => a.z - b.z);
+  const lines = text
+    .flatMap((t) => {
+      const line = t.text.replace(/\s+/g, " ").trim();
+      const box = t.box && onCanvas(t.box);
+      return line && box ? [{ label: "text" as const, caption: "Lettering in the same typeface, colour and size as now", text: line, box: frac(box) }] : [];
+    })
+    .slice(0, RERENDER_MAX_TEXT);
+  const named = kept.map((k) => k.item.caption.toLowerCase()).filter((c) => !c.startsWith("a picture element"));
+  const behind = backdrop.length ? ` Behind everything: ${backdrop.join("; ")}.` : "";
+  const auto = `One coherent picture that keeps this arrangement${named.length ? `: ${named.slice(0, 8).join(", ")}` : ""}.${behind} Every element sits where it is now, with one light, perspective and colour grade across the whole picture.`;
+  const caption = words.trim() ? `${words.trim().replace(/[.\s]+$/, "")}.${behind}` : auto;
+  const draft: LayoutDraft = { summary: { caption, meta: ["re-render"], canvas: "single" }, items: [...kept.map((k) => k.item), ...lines] };
+  return { draft, caption, counts: { layers: kept.length, text: lines.length, backdrop: backdrop.length } };
+}
 
 // ---------------------------------------------------------------------------
 // Zip (stored): built in the browser from rendered PNGs

@@ -9,10 +9,9 @@ import { toast } from "sonner";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { PhoneNavButton } from "@/components/nav/phone-nav-button";
 import { OldFootageOffer } from "@/components/restore/old-footage";
-import { SelfHostNote } from "@/components/self-host-note";
 import { EngineSwitch } from "@/components/studio/engine-switch";
 import { VideoTrimmer } from "@/components/studio/video-trimmer";
-import { useEngine, useIsOwner, useLikelyVisitor, useModelAccess } from "@/lib/api";
+import { useAskBeforeUpload, useEngine, useModelAccess } from "@/lib/api";
 import {
   clipShapeProblem,
   coveredFirst,
@@ -59,9 +58,6 @@ export function ShortsStudio({ models }: { models: Record<Engine, ModelChoice[]>
   const source = useSourceClip(SHORTS.maxBytes);
   const { clip } = source;
   const [range, setRange] = useState<TrimRange | null>(null);
-  // A short doesn't run on an account's own GPU or key yet (only the studios' generations do): said up front, and the
-  // upload and Generate are off, instead of a run the server refuses.
-  const visitor = useLikelyVisitor();
 
   // Hand-offs: /shorts?tab=history, ?preset=shorts-claymation, ?video=/api/files/….
   useEffect(() => {
@@ -107,7 +103,7 @@ export function ShortsStudio({ models }: { models: Record<Engine, ModelChoice[]>
         </TabRow>
         <div className="ml-auto shrink-0">
           {/* A phone's header has room for the title and the tabs, not "Add key" too. */}
-          <EngineSwitch value={engine} onChange={setEngine} wordless selfHostedOnly />
+          <EngineSwitch value={engine} onChange={setEngine} wordless />
         </div>
         <PhoneNavButton />
       </header>
@@ -122,11 +118,9 @@ export function ShortsStudio({ models }: { models: Record<Engine, ModelChoice[]>
               <p className="mx-auto mt-2 max-w-[560px] text-body text-pretty text-muted-foreground">
                 Upload a clip up to 2 minutes, pick a look, and get a finished short. Your motion and sound stay.
               </p>
-              {visitor && <SelfHostNote className="mx-auto mt-3 max-w-[560px]">Shorts Studio isn&apos;t available here.</SelfHostNote>}
               <Steps steps={STEPS} current={!presetId ? 0 : !clip?.url ? 1 : 1} className="mt-5" />
             </div>
             <Workspace
-              visitor={visitor}
               engine={engine}
               models={engineModels}
               presetId={presetId}
@@ -143,7 +137,6 @@ export function ShortsStudio({ models }: { models: Record<Engine, ModelChoice[]>
 }
 
 function Workspace({
-  visitor,
   engine,
   models,
   presetId,
@@ -152,7 +145,6 @@ function Workspace({
   range,
   setRange,
 }: {
-  visitor: boolean;
   engine: Engine;
   models: ModelChoice[];
   presetId: string | null;
@@ -167,9 +159,9 @@ function Workspace({
   const selectedBuiltIn = SHORTS_PRESETS.find((p) => p.id === presetId);
   const selectedCustom = custom.data?.find((p) => p.id === presetId);
   const selectedName = selectedBuiltIn?.name ?? selectedCustom?.name;
-  // A preset of your own is saved to the studio's library, which is its owner's: its card shows once that's known, so
-  // a visitor never sees it in the grid and then gone.
-  const isOwner = useIsOwner();
+  // A preset of your own is made of pictures you upload: a guest is asked to sign up first, and an account with neither
+  // its own GPU nor its own key to connect one (as before any upload).
+  const askFirst = useAskBeforeUpload();
 
   // Phones: after picking a look, a bar points down to the upload step until it's on screen.
   const [setupVisible, setSetupVisible] = useState(false);
@@ -188,13 +180,12 @@ function Workspace({
           custom={custom.data ?? []}
           presetId={presetId}
           onSelect={setPresetId}
-          onCreate={isOwner ? () => setDialog({ open: true }) : undefined}
+          onCreate={() => askFirst() || setDialog({ open: true })}
           onEdit={(id) => setDialog({ open: true, preset: custom.data?.find((p) => p.id === id) })}
         />
       </section>
       <aside ref={setup} id="shorts-setup" aria-labelledby="shorts-step-2" className="scrollbar-none min-w-0 scroll-mt-16 lg:sticky lg:top-[calc(var(--chrome-top)+1rem)] lg:max-h-[calc(var(--content-h)-4.5rem)] lg:overflow-y-auto lg:overscroll-contain lg:rounded-2xl">
         <SetupPanel
-          visitor={visitor}
           engine={engine}
           models={models}
           presetId={presetId}
@@ -236,7 +227,6 @@ function PresetGrid({
   custom: ShortsCustomPreset[];
   presetId: string | null;
   onSelect: (id: string) => void;
-  /** None for a guest or an account: no "Create preset" card. */
   onCreate?: () => void;
   onEdit: (id: string) => void;
 }) {
@@ -307,7 +297,6 @@ function PresetGrid({
 const LIMITS = "MP4 or MOV · 4 s to 2 min · up to 200 MB";
 
 function SetupPanel({
-  visitor,
   engine,
   models,
   presetId,
@@ -318,8 +307,6 @@ function SetupPanel({
   range,
   setRange,
 }: {
-  /** A guest or an account: the upload and Generate are off (the page says shorts run on a self-hosted Fuobe). */
-  visitor: boolean;
   engine: Engine;
   models: ModelChoice[];
   presetId: string | null;
@@ -345,8 +332,7 @@ function SetupPanel({
   const pickedOn = models.some((m) => m.id === pickedModel[engine]) ? pickedModel[engine] : "";
   const modelId = pickedOn || (customRefs > 0 && engine === "cloud" && refModel ? refModel : models[0]?.id);
   const model = models.find((m) => m.id === modelId);
-  // An open model is free on a self-hosted Fuobe: a guest or an account reads that, not "your GPU".
-  const priceOf = (m?: ModelChoice) => (visitor && m?.engine === "open" ? "Not available here" : m?.price);
+  const priceOf = (m?: ModelChoice) => m?.price;
   const duration = clipDuration(clip);
   const actions = useShortsActions();
   const presetType = SHORTS_PRESETS.find((p) => p.id === presetId)?.type;
@@ -376,7 +362,7 @@ function SetupPanel({
   const estimate = useShortsEstimate(estimateBody);
   const est = estimate.data;
 
-  const setupBlocker = !presetId
+  const blocker = !presetId
     ? "Pick a preset first"
     : !clip
       ? "Upload a video"
@@ -395,7 +381,6 @@ function SetupPanel({
                 : estimate.error
                   ? (estimate.error as Error).message
                   : null;
-  const blocker = visitor ? "Shorts Studio isn't available here" : setupBlocker;
 
   const guard = useSubmitGuard();
   const [leaving, setLeaving] = useState(false);
@@ -435,7 +420,6 @@ function SetupPanel({
         <ClipDrop
           accept={SHORTS.accept}
           limits={LIMITS}
-          disabled={visitor}
           onFile={(f) => {
             const err = source.pick(f);
             if (err) toast.error(err);
@@ -546,7 +530,7 @@ function SetupPanel({
           <span className="text-[13px] text-muted-foreground">{est ? `${est.segments} segment${est.segments === 1 ? "" : "s"} · ${est.seconds} s` : "Estimate"}</span>
           <span className="flex items-center gap-1.5 font-mono text-[13px] font-medium tabular-nums" aria-live="polite">
             {estimate.isFetching && <Loader2 className="size-3 animate-spin text-muted-foreground" />}
-            {estimateBody ? costText(est, engine, visitor) : "—"}
+            {estimateBody ? costText(est, engine) : "—"}
           </span>
         </div>
         {est && !est.demo && engine === "cloud" && <p className="text-[12px] text-muted-foreground">You&apos;re only charged for the actual length.</p>}
@@ -565,7 +549,7 @@ function SetupPanel({
         <button
           type="button"
           onClick={generate}
-          disabled={busy || visitor}
+          disabled={busy}
           aria-disabled={!!blocker || busy}
           aria-describedby={blocker ? "shorts-blocker" : undefined}
           className={cn(

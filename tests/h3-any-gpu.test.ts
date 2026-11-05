@@ -118,8 +118,9 @@ describe("the FastH3 graphs", () => {
     }
     expect(entry(TRIM).notes).toMatch(/8 GB figure is FastVideo's test/);
     expect(entry("minimax-h3-fast-i2v").notes).toMatch(/FL2VA was not distilled/);
-    // Unvalidated like the other H3 graphs until a GPU run.
-    for (const id of [...FAST, TRIM]) expect(entry(id).validated, id).toBe(false);
+    // The FastH3 V2 graphs passed a GPU run; Trim waits for one.
+    for (const id of FAST) expect(entry(id).validated, id).toBe(true);
+    expect(entry(TRIM).validated).toBe(false);
   });
 
   it("give the full graphs a decode loader of their own, so Fast decode swaps only the decoder", () => {
@@ -147,6 +148,31 @@ describe("the graph a run takes", () => {
     expect(variant("minimax-h3-i2v", "i2v", { gpuTier: "fast", orbit: true })).toBe("minimax-h3-orbit");
     expect(variant("minimax-h3-t2v", "t2v", { gpuTier: "standard", quality: "best" })).toBe("minimax-h3-t2v-hq");
     expect(variant("minimax-h3-t2v", "t2v", {})).toBe("minimax-h3-t2v");
+  });
+
+  it("Fast · Pika Flex runs its own graph on the full model, over any tier; the plan refuses a smaller tier picked with it", () => {
+    // Pika's bf16 adapters are made for the full fl2va int8 model: the Flex graphs win over a tier here.
+    expect(variant("minimax-h3-t2v", "t2v", { quality: "flex" })).toBe("minimax-h3-flex-t2v");
+    expect(variant("minimax-h3-i2v", "i2v", { quality: "flex", gpuTier: "standard" })).toBe("minimax-h3-flex-i2v");
+    expect(variant("minimax-h3-flf2v", "flf2v", { quality: "flex", gpuTier: "fast" })).toBe("minimax-h3-flex-flf2v");
+    expect(variant("minimax-h3-i2v", "i2v", { quality: "flex", orbit: true })).toBe("minimax-h3-orbit");
+    try {
+      // Auto on a 16 GB card: Flex keeps the full model (the pre-flight then judges the card), with no FastH3 file.
+      checked({ gb: 16, name: RTX4070 });
+      expect(h3Gpu("minimax-h3-t2v", { quality: "flex" }, has)).toEqual({ gpuTier: "standard" });
+      // FastH3 V2 or Trim picked with Flex: refused in plain words, never one choice dropped.
+      expect(() => h3Gpu("minimax-h3-i2v", { quality: "flex", gpuTier: "fast" }, has)).toThrow(T.TIER_FLEX_REFUSAL);
+      expect(() => h3Gpu("minimax-h3-t2v", { quality: "flex", gpuTier: "trim" }, has)).toThrow(/Fast · Pika Flex needs a 32 GB GPU/);
+      // Trim has no start-frame graph, so Flex with Trim on a start frame runs the full model, as Trim alone does there.
+      expect(h3Gpu("minimax-h3-i2v", { quality: "flex", gpuTier: "trim" }, has)).toEqual({ gpuTier: "standard" });
+      expect(h3Gpu("minimax-h3-t2v", { quality: "flex", gpuTier: "standard" }, has)).toEqual({ gpuTier: "standard" });
+      // The composer says the same before the run.
+      expect(T.h3TierNote({ quality: "flex", gpuTier: "fast" }, "t2v")).toBe(T.TIER_FLEX_REFUSAL);
+      expect(T.h3TierNote({ quality: "flex" }, "t2v", "fast")).toBeUndefined();
+      expect(T.h3TierNote({ quality: "flex", gpuTier: "trim" }, "i2v")).toBeUndefined();
+    } finally {
+      dropSnapshots("install");
+    }
   });
 
   it("binds the card's file and keeps the H3 canvas and frame grid", async () => {
@@ -181,7 +207,7 @@ describe("Auto and Options → GPU tier, decided once per run", () => {
       expect(h3Gpu("minimax-h3-t2v", {}, has, has)).toEqual({ gpuTier: "standard" });
       // Best and Fast decode on a smaller build say they need 32 GB.
       checked({ gb: 16, name: RTX4070 });
-      expect(h3Gpu("minimax-h3-t2v", { quality: "best", vae: T.SOL_VAE }, has, has)?.note).toMatch(/Best needs a 32 GB GPU.*Fast decode needs a 32 GB GPU/);
+      expect(h3Gpu("minimax-h3-t2v", { quality: "best", vae: T.SOL_VAE }, has, has)?.note).toMatch(/Sharper needs a 32 GB GPU.*Fast decode needs a 32 GB GPU/);
       // Asked for: on any card; an orbit and another model take no tier.
       checked({ gb: 48, name: RTX4090 });
       expect(h3Gpu("minimax-h3-t2v", { gpuTier: "trim" }, has, has)).toMatchObject({ gpuTier: "trim", unet: T.TRIM_FILES.int8.file });
@@ -192,13 +218,13 @@ describe("Auto and Options → GPU tier, decided once per run", () => {
     }
   });
 
-  it("keeps Auto on the full model until ComfyUI has accepted the smaller build's graph; asking for it still runs it", () => {
+  it("keeps Auto on the full model until ComfyUI has accepted the smaller build's graph, then takes it on a smaller card; asking for it runs it", () => {
     checked({ gb: 16, name: RTX4070 });
     try {
       const accepted = (id: string) => entry(id)?.validated === true;
-      expect(accepted("minimax-h3-fast-t2v")).toBe(false);
-      expect(h3Gpu("minimax-h3-t2v", {}, has, accepted)).toEqual({ gpuTier: "standard" });
-      expect(h3Gpu("minimax-h3-t2v", {}, has)).toEqual({ gpuTier: "standard" });
+      expect(accepted("minimax-h3-fast-t2v")).toBe(true);
+      expect(h3Gpu("minimax-h3-t2v", {}, has, () => false)).toEqual({ gpuTier: "standard" });
+      expect(h3Gpu("minimax-h3-t2v", {}, has)).toMatchObject({ gpuTier: "fast", unet: T.FAST_FILES.int8.file });
       expect(h3Gpu("minimax-h3-t2v", { gpuTier: "fast" }, has, accepted)).toMatchObject({ gpuTier: "fast", unet: T.FAST_FILES.int8.file });
     } finally {
       dropSnapshots("install");

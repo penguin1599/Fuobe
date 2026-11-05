@@ -120,7 +120,8 @@ const SWITCHES = [
   { hub: "Audio", from: "/audio", tab: "Music", to: "/audio/music" },
   { hub: "Audio", from: "/audio/music", tab: "Translate", to: "/audio/translate" },
   { hub: "Audio", from: "/audio/translate", tab: "Dialogue", to: "/audio/dialogue" },
-  { hub: "Audio", from: "/audio/split", tab: "Speech", to: "/audio" },
+  { hub: "Audio", from: "/audio/split", tab: "Speech", to: "/audio/speech" },
+  { hub: "Audio", from: "/audio/music", tab: "Clean up voice", to: "/audio" },
   { hub: "Video tools", from: "/video-tools", tab: "Trim", to: "/video-tools/trim" },
   { hub: "Upscale", from: "/upscale/fps", tab: "Export", to: "/upscale/export" },
   { hub: "Upscale", from: "/upscale/export", tab: "SDR to HDR", to: "/upscale/hdr" },
@@ -222,7 +223,7 @@ try {
     const header = page.locator("#content header").first();
     const fresh = await header.innerText();
     for (const [tab, to] of [
-      ["Speech", "/audio"],
+      ["Speech", "/audio/speech"],
       ["Translate", "/audio/translate"],
       ["Music", "/audio/music"],
     ]) {

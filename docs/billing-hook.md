@@ -47,6 +47,7 @@ type RunFacts = {
   kind: "image" | "video" | "audio" | "text" | "model3d"; engine: "open" | "cloud"; provider: string;
   jobs: number; outputsPerJob: number; megapixels: number | null; seconds: number | null; fps: number | null;
   loras: number; inputs: { image: number; video: number; audio: number }; lane: string | null; providerUsd: number | null;
+  steps?: { model: string; op: string }[];   // the run's other steps beside `model` (a 2K take's finish on this install's GPUs)
 };
 type QueueFacts = { lane: string; ahead: number; etaS: number | null; workersOnline: number; nextOpenAt: number | null; mine: { waiting: number; running: number } };
 type Action = { label: string; url: string };              // Fuobe opens url as given (https, or a path on this site)

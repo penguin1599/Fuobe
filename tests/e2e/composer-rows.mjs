@@ -49,7 +49,7 @@ const STUDIOS = [
   "/motion-control",
   "/reframe",
   "/upscale",
-  "/audio",
+  "/audio/speech",
   "/audio/dialogue",
   "/audio/sfx",
   "/video-tools",

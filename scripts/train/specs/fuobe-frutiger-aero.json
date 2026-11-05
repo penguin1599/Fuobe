@@ -1,0 +1,43 @@
+{
+  "id": "fuobe-frutiger-aero",
+  "name": "Fuobe Frutiger aero",
+  "kind": "style",
+  "base": "z-image-turbo",
+  "media": "image",
+  "presets": [
+    "Frutiger aero"
+  ],
+  "trigger": "fbaero",
+  "dataset": {
+    "min": 40,
+    "max": 60,
+    "what": "Renders Fuobe made itself (Blender, own designs).",
+    "captions": [
+      "Every caption starts with \"fbaero style, \" and goes on in one or two long sentences (Z-Image style): who or what is in the picture, where, the light and the framing.",
+      "Describe the scene, never the look the LoRA learns (no \"grainy\", \"film look\" or the like), so the trigger carries it.",
+      "No names of people, places that identify someone, brands, camera models or photographers."
+    ]
+  },
+  "train": {
+    "steps": 2000,
+    "rank": 16,
+    "learningRate": 0.0001
+  },
+  "routes": {
+    "fal": {
+      "trainer": "fal-ai/z-image-trainer",
+      "extra": {
+        "training_type": "style"
+      }
+    },
+    "aiToolkit": {
+      "arch": "zimage:turbo"
+    }
+  },
+  "target": {
+    "file": "fuobe-frutiger-aero.safetensors",
+    "strength": 0.8,
+    "hfRepo": "fuobe/fuobe-frutiger-aero"
+  },
+  "notes": "fal trains on Z-Image base: whether a base-trained LoRA behaves the same on Z-Image Turbo (Soul's model) is unverified; AI-Toolkit trains on Turbo with the training adapter, so the first evaluation compares the two routes' files on Soul."
+}

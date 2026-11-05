@@ -149,7 +149,7 @@ Outputs: `image` (the object on black, size × size) and `mask`. One difference 
 - **No dependencies, no compiled code.** No xformers, nvdiffrast, spconv, flash-attn or custom kernels. No downloads or network calls at run time. A grep of `idol/*.py` and `__init__.py` for `subprocess`, `os.system`, `eval`, `exec`, `pickle` and `torch.load` finds nothing. Weights load through ComfyUI's own loaders.
 - **APIs it uses, all present in 0.41.0** (`/home/user/ComfyUI` @ `fc04da91`): `comfy_api/latest/_io.py` `BackgroundRemoval` L619, `Splat` L688, `Load3DCamera` L803, `DynamicCombo` L1231, `search_aliases` L1855, `advanced=` on inputs (L164ff); SPLAT counts (`geometry_types.py` L18–35); `bg_removal_model.encode_image` (L44). Real minimum ComfyUI: **v0.23.0** (TripoSplat), not the README's 0.22.
 - **Not run by ComfyUI.** `scripts/convert.py` is run by hand (needs torch, safetensors, huggingface_hub; downloads the speridlabs files, checks the config constants and `pos_pe`, merges the decoders, writes fp16 / bf16 / fp32). `tests/parity.py` and `tests/e2e.py` import ComfyUI and idol-sdk for manual checks.
-- **Maturity.** Brand new, one author. Three commits, all on 2026-10-30 within 24 minutes (`b471ad1`, `9c21eeb` adds Prune Splat, `4d3a4f6`). Every commit has a `Co-Authored-By` trailer for an AI model: AI-assisted code. 19 stars, 1 fork, no tags or releases. **Not in the Comfy Registry** (`api.comfy.org/nodes/comfyui-idol` → 404; search "idol" → 0). No CI. The code is small and readable (`nodes.py` 9,262 B, `camera.py` 3,804 B, `preprocess.py` 2,354 B); I found no bugs on reading. Edge cases: Prune's `count` reports item 0 only; Camera uses item 0 of a batch.
+- **Maturity.** Brand new, one author. Three commits, all on 2026-10-30 within 24 minutes (`b471ad1`, `9c21eeb` adds Prune Splat, `4d3a4f6`). Every commit has a `Co-Authored-By` trailer for an AI model: AI-assisted code. 19 stars, 1 fork, no tags or releases. **Not in the Comfy Registry** (`api.comfy.org/nodes/comfyui-idol` → 404; search "idol" → 0). **Correction (2026-11-02, idol-2):** `api.comfy.org/nodes/comfyui-idol` now answers with a *different* pack: PedroMarinhoDev/ComfyUI-Idol ("Idol (image to 3D splat)", 1.0.0, created 2026-10-30 11:13 UTC, status flagged, ComfyUI ≥ 0.43.0). Nynxz's pack is still not in the Registry, so a Registry install of `comfyui-idol` would fetch the other author's code: Fuobe pins Nynxz's repository by commit (`packs.json` registry null). No CI. The code is small and readable (`nodes.py` 9,262 B, `camera.py` 3,804 B, `preprocess.py` 2,354 B); I found no bugs on reading. Edge cases: Prune's `count` reports item 0 only; Camera uses item 0 of a batch.
 
 ### 5.3 The pack's example workflow
 
@@ -236,7 +236,7 @@ Fuobe's existing cloud TripoSplat in Splat mode (`triposplat`, fal `tripo3d/trip
   - **Splat:** cloud `triposplat` ("The subject as a .ply splat · ≈ $0.05"); open `oss-triposplat` ("The subject as a .spz splat + an orbit video · 8 GB GPU · MIT", L57).
   - `CLOUD_NOTICES` adds "Built with DINOv3" to cloud TripoSplat and TRELLIS.2 (L67). The studio's hint under the button names TripoSplat by hand (`model3d-studio.tsx` L314–320).
 - **The open model** `oss-triposplat` (`src/lib/catalog/models.ts` L1380): route `comfy('splat', 'image-to-splat-triposplat')`, a `numGaussians` slider 32,768–1,048,576. Its manifest entry (`workflows/comfyui/manifest.json` L15453) is pinned to ComfyUI 0.41.0 (`fc04da91`): defaults steps 20, cfg 3, 262,144 Gaussians, 75 orbit frames, `.spz`, cut-out on; `vramGb` 8, "VRAM unverified. Validated by /prompt only."
-- **Viewers.** GLBs show in `@google/model-viewer` 4.3.1 (`package.json` L35). three 0.183.2 (L56) drives Cinema's scene viewer. **Fuobe does not draw splats**: `result-media.tsx` L248 and `model-card.tsx` L177 say so and point to SuperSplat.
+- **Viewers.** GLBs show in `@google/model-viewer` 4.3.1 (`package.json` L35). three 0.183.2 (L56) drives Cinema's scene viewer. **Fuobe does not draw splats**: `result-media.tsx` L248 and `model-card.tsx` L177 say so and point to SuperSplat. *(Since idol-4, 2026-11-03: it does, with Spark; see §9 idol-4.)*
 - **Elsewhere.** Canvas: `model3d` nodes default to op `image-to-3d` (`canvas.ts` L404); `splat` takes images (L516); the tile is `canvas/nodes.tsx` L469–472. Feed: image next steps are animate, upscale, edit (`output-actions.ts` L169–170), no 3D action; 3D outputs get "View in 3D" (L146). Library: a 3D tab (`library-view.tsx` L58). Licences: `src/lib/licences.ts` builds rows from the manifest and `NODE_PACKS` (from L406).
 - **Name clash.** `src/lib/catalog/apps.ts` L1486 already ships a video app called **"Idol"** ("Become a K-pop idol on stage"), mirroring a Higgsfield effect (`higgsfield-inventory.md` L414). The 3D model needs another name in pickers, ⌘K, the Library and Settings: **"Idol 3D"**.
 - **The local ComfyUI** (`127.0.0.1:8188`): v0.41.0, CPU only, 14.3 GB RAM. It has every stock TripoSplat and splat node. The `diffusion_models`, `vae`, `clip_vision` and `background_removal` folders are empty, so nothing 3D can run there; only `/prompt` validation.
@@ -312,6 +312,32 @@ A `splat` suite in `scripts/eval/cases/splat.json`, kind `video` (the orbit vide
 
 A lazily loaded three.js Gaussian-splat viewer for `.spz` / `.ply` / `.ksplat` in `model-card.tsx`, `studio/result-media.tsx` and the Library's 3D tab, replacing "Fuobe doesn't draw splats yet". Orbit, zoom, reset, an opacity cut-off (default 0.05 for Idol), "Save a still" to the Library; the orbit video stays as the poster and the fallback. The library choice (Spark or GaussianSplats3D, say) is a guess and needs its own check of licence, version, `.spz` support and phone performance. Works for TripoSplat results on both engines.
 
+**Built (2026-11-03): Spark 2.3.1.** The two candidates, checked at npm and in the packages themselves:
+
+| | Spark (`@sparkjsdev/spark`) | GaussianSplats3D (`@mkkellogg/gaussian-splats-3d`) |
+|---|---|---|
+| Licence | MIT (© 2025 World Labs Technologies) | MIT |
+| Version | 2.3.1, published 2026-10-01 (2.4.0 of 2026-10-20 was 14 days old: too new) | 0.4.7, 2025-01-25, no release since |
+| three | peer `>=0.180.0` (Fuobe has 0.183.2) | peer `>=0.160.0` |
+| `.spz` | yes (its README; Fuobe's demo `.spz` v2 parses, see below) | no (`.ply`, `.splat`, `.ksplat` only, its README) |
+| `.ply`, degree-0 SH | yes (Idol's 17-float layout parses) | yes |
+| `.ksplat` | yes | yes (its own format) |
+| WebGL2 | yes ("targeting 98%+ WebGL2 support") | yes |
+| Bundle | `spark.module.min.js` 2.60 MB, **0.92 MB gzipped** (the Rust/WASM core is inlined as base64); one dependency, `fflate` | not measured (ruled out on `.spz`) |
+| Per-splat opacity cut-off | a `dyno` object modifier (the viewer's "Hide faint haze", live); `transcodeSpz` also takes `opacityThreshold` | `splatAlphaRemovalThreshold` at load only (0-255) |
+
+Spark loads only through a dynamic import (`src/components/model3d/splat-engine.ts`, from `splat-viewer.tsx`); `tests/splat-view.test.ts` checks that nothing else imports it, and `tests/e2e/splat-viewer.mjs` that a page without a splat never fetches it (matched by its WASM glue's module name, so it holds for hashed production chunks too).
+
+Numbers measured here (this container: 4 CPUs, no GPU; Chromium's WebGL2 runs on SwiftShader, a software renderer):
+
+- **Parsing.** Spark's own decoder (`transcodeSpz`, in Node) reads the demo `.ply` and `.spz` (4,096 Gaussians, 1,280 of them haze) to the same 4,096, positions identical to the bit and v2 rotations identical; with `opacityThreshold` 0.05 it keeps 2,816, the solid ones.
+- **Sizes at 262,144 Gaussians** (`node scripts/gen-demo-splat.mjs --gaussians=262144`): `.ply` 17,826,208 bytes (matches §2.1's 17.8 MB), `.spz` v2 2,770,631 bytes (6.4×; real splats compress less than this synthetic one, guess).
+- **Load.** The 17.8 MB `.ply` from the local server to the toolbar showing: 1.6 s at 390 px (fetch, parse, upload).
+- **Frame time: not measured on a phone.** SwiftShader takes about 8 s per frame at 262,144 Gaussians (median of 51 frames while dragging at 390 px), so software rendering says nothing about a phone's GPU. The 4,096-Gaussian demo draws within about 3 s of opening on SwiftShader. Measure on a real phone (an iPhone 12 / Pixel 6 class device, a 262,144-Gaussian `.spz`) before calling it fast; the viewer caps the pixel ratio at 1.5 on touch screens and draws only when something changes (a drag, the slider, Spark finishing a sort), never in a loop.
+- **Size limit.** The viewer opens files up to 48 MB on a touch screen (a 262,144-Gaussian `.ply` fits; a 1,048,576 one at 71 MB doesn't) and 160 MB elsewhere; past that the orbit video or picture stays, with the download.
+
+The cut-off starts at 0.05 for Idol 3D (both engines) and at 0 for TripoSplat, until the A/B (idol-3) says what TripoSplat's haze is. The orbit video stays as the fallback with no WebGL2, for a file over the limit, and with reduced motion in the full-screen viewer (until "Look around in 3D").
+
 ### idol-5 · "Make it 3D (quick)" on image results (P1)
 
 A menu action on image results (`output-actions.ts`, `case "image"`) that opens `/image-to-3d?mode=splat&model=oss-idol&quality=quick&image=…` with the picture in the slot and the photo crop off. Shown only when the open engine is available (a new `ActionContext.openEngine`); `NEXT_STEPS.image` stays as it is. The studio learns `?image=` and `?quality=`. Copy says "tens of seconds on a consumer GPU", not 2 s.
@@ -324,6 +350,8 @@ On an open Idol result card, "Build the final with TRELLIS.2" opens From an imag
 
 Graph `image-to-mesh-idol`: the Idol graph → core `SplatToMesh` (resolution 384, `min_opacity` 0.02) → `SaveGLB`, plus the orbit video. ModelDef `oss-idol-mesh` "Idol 3D quick mesh" in From an image (open list, after Hunyuan3D 2.1). The `.glb` opens in model-viewer and can go to Rig & animate (cloud Meshy rigging, as today for any GLB). An eval case first; Hi3D refinement waits (CUDA only, geometry only, `/home/user/ext/hi3d/README.md` L60, L119).
 
+**idol-7 (2026-11-03):** built as `image-to-mesh-idol` (core nodes only, `/prompt`-validated on the CPU server, no GPU run) and `oss-idol-mesh`, last in From an image's open list (after Pixal3D, TRELLIS.2 and Hunyuan3D 2.1; Pixal3D became the default after this plan was written). The GLB is the model output with no role, as every image-to-3D graph's, so the server finishes it (web GLB, pivot at the bottom; a finish of a vertex-coloured unlit GLB keeps `COLOR_0` and `KHR_materials_unlit`) and, with Chromium and ffmpeg, replaces the splat orbit with a turntable of the mesh. `meshResolution` is `SplatToMesh.resolution` (64–768, steps of 16). Hi3D (hi3d-refine) now exists: Refine this mesh and Refine detail are offered on these results as on the other open models (Hi3D's result has no colour). The eval cases are `scripts/eval/cases/mesh.json` (idol-3's `splat` suite isn't built yet); mesh quality is still unmeasured.
+
 ### idol-8 · Fill the other sides from one picture (P2)
 
 Graph `image-to-views-idol` (needs the pack): the Idol graph → `IdolCamera` → `RenderSplat` with `frames` 4 (four views 90° apart, starting at the input view; `nodes_gaussian_splat.py` L1004–1006) → four images. In From several images, "Make the other sides from the front" fills the left, back and right slots for `oss-trellis2-multi`; in Elements, "Add side and back views". The orbit direction must be matched to Fuobe's side names (`SIDES_HINT`). Quality for faces is unknown: eval first.
@@ -331,6 +359,58 @@ Graph `image-to-views-idol` (needs the pack): the Idol graph → `IdolCamera` �
 ### idol-9 · Idol props in Cinema Studio's 3D scene (P2)
 
 Place an Idol splat in the MoGe scene viewer (`src/components/cinema/scene-viewer.tsx`, layout `object` at L633) with move, scale and turn handles, using idol-4's renderer inside the scene. Idol's predicted camera can set the first orientation.
+
+## Results (pending a GPU run)
+
+_Package idol-3 (2026-11-03) built the measurement; no numbers yet. This machine has no GPU, so only the case file and demo runs were checked here, and demo numbers are never results. §3 and §7.2 stay the vendor's until this section has a run._
+
+**The suite.** `scripts/eval/cases/splat.json` (`pnpm eval:validate`), 11 single objects with your own pictures in `scripts/eval/local/splat/` (never committed; the file names are in `scripts/eval/README.md`, "Your own inputs"): three generated product renders (bottle, sneaker, headphones), three photos tagged `photo` (mug, handbag, figurine), a stylised character, a person (made up, or someone who agreed), two with thin parts (chair, plant) and glass with chrome. Three seeds each (1001, 2002, 3003), so the promote rule's three results per case hold. The input picture is each case's reference.
+
+| Variant | Model | Settings | Runs on |
+|---|---|---|---|
+| `idol-best` (the candidate) | `oss-idol` | 50 euler, cfg 4, 262,144 Gaussians (`IDOL_PRESETS.best`) | every case |
+| `idol-quick` | `oss-idol` | 20 dpmpp_2m, cfg 4, 65,536 (`IDOL_PRESETS.quick`) | every case |
+| `triposplat-today` | `oss-triposplat` | its graph's defaults: 20 dpmpp_2m, cfg 3, 262,144 | every case |
+| `idol-photo-crop` | `oss-idol` | Best with `photoCrop` on (`cropMode` real on the clean graph) | the 3 photos |
+| `triposplat-cloud` | fal `tripo3d/triposplat` (`triposplat`), labelled TripoSplat | fal's defaults | cloud runs only; about $0.05 a job, under the spend cap |
+
+TripoSplat at Idol's sampler (50 euler, cfg 4), which would tell the weights from the settings, is not in the suite yet: `image-to-splat-triposplat` binds `steps` and `cfg` but not `sampler`, and adding the binding changes a workflow contract that `tests/comfy-library-4.test.ts` pins. Until it lands, a win for `idol-best` may be its 50 Euler steps rather than its weights.
+
+**What is measured.** The orbit video (role `turntable`) is the scored and reviewed output; the `.spz` stays with each job.
+
+| Number | What it decides |
+|---|---|
+| `style` (DINOv2 ViT-S/14, Apache-2.0: the orbit's frames against the input picture) | the main metric: how much of the object survives every angle. Picks the default and the Quick settings |
+| `drift`, `driftMax`, `warp` (temporal) | that the winner doesn't turn less smoothly (bands 0.004 drift, 0.002 warp) |
+| `aesthetic` (LAION v2) | that the winner doesn't look worse (band 0.15) |
+| blind ratings (`pnpm eval:review`) | for each pair of variants a rule compares: at least 6 per case, or every such pair the review offered when it offered fewer (3 per case for one reviewer at 3 seeds), and at least 55 % of the non-tie ratings to the winner |
+| `haze` (share of Gaussians under opacity 0.05 in the saved file), `gaussians` | whether TripoSplat's files carry Idol's haze (§2.4), so the splat viewer's opacity cut-off (idol-4) knows which models need it. On a ComfyUI with ComfyUI-Idol, Idol's file is pruned at 0.05 by its clean graph, so its haze there is near zero by design |
+| `seconds`, `vramGb` (from ComfyUI's `/system_stats` and `/history`) | the time and peak memory on that GPU, to replace "unmeasured in ComfyUI" in the manifest notes and the vendor's figures in §3 |
+
+**The commands** (a Fuobe connected to a ComfyUI on an 8–16 GB GPU with both models' weights; `scripts/eval/README.md`, "The splat suite"):
+
+```bash
+pnpm eval:setup --download --dinov2                       # the metrics venv, with DINOv2 fetched now
+pnpm eval:run --suite splat --engine open --variants idol-best,idol-quick,triposplat-today,idol-photo-crop --dry-run
+pnpm eval:run --suite splat --engine open --variants idol-best,idol-quick,triposplat-today,idol-photo-crop \
+  --label "<GPU>, driver <version>, ComfyUI <version>"
+pnpm eval:review latest                                   # rate every pair blind
+pnpm eval:report latest
+pnpm eval:compare latest:triposplat-today latest:idol-best --per-case
+pnpm eval:compare latest:idol-best latest:idol-quick --per-case
+pnpm eval:promote latest --against triposplat-today       # decision 1 only: Idol Best against TripoSplat today
+pnpm eval:run --suite splat --engine cloud --variants triposplat-cloud   # optional: priced before it starts (about $0.05 a job in the catalog today)
+```
+
+**What each result changes** (the suite's `decides` field; a person makes each change in its own reviewed commit, with this section filled in):
+
+1. **Splat mode's open default** (`MODELS_3D.splat.open` in `src/lib/av/model3d.ts`, TripoSplat first today): Idol 3D goes first only if `idol-best` scores at least as well as `triposplat-today` on style in at least 8 of the 11 cases, stays within the aesthetic and temporal bands on the suite's means, and takes at least 55 % of the non-tie blind ratings of their pairs, with at least 6 per case or every such pair the review offered when it offered fewer (3 per case for one reviewer at 3 seeds). `pnpm eval:promote latest --against triposplat-today` checks the per-case part; without `--against` it also weighs Idol Quick and the photo crop, which is not this decision. TripoSplat at Idol's sampler should run first (above).
+2. **Idol's Quick look** (`IDOL_PRESETS.quick`): stays at 20 dpmpp_2m and 65,536 Gaussians while `idol-quick` is within 0.02 style of `idol-best` on the suite's mean and Best takes no more than 70 % of their non-tie ratings; otherwise the next run tries 30 steps or 131,072 Gaussians.
+3. **The photo crop** (on for uploads today): stays on only if `idol-photo-crop` scores at least as well as `idol-best` on style in at least 2 of the 3 photos and takes at least 55 % of their non-tie ratings; otherwise it starts off.
+
+| Run | GPU, driver, ComfyUI | Graphs (core or clean) | Results |
+|---|---|---|---|
+| _pending_ | | | |
 
 ## 10. Risks
 
@@ -346,7 +426,7 @@ Place an Idol splat in the MoGe scene viewer (`src/components/cinema/scene-viewe
 - **The SDK route needs gated repos** (DINOv3 manual approval; FLUX.2-dev repo terms). Use the ComfyUI route and the ungated files.
 - **URL drift.** `flux2-vae`'s URL works only through HF's rename redirect.
 - **Scope.** One object, background removed. Not a scene model (MoGe stays for Cinema). The core photo crop is my analysis until checked.
-- **No splat viewer yet,** so "look around it" is an orbit video until idol-4 lands.
+- **No splat viewer yet,** so "look around it" is an orbit video until idol-4 lands. *(Landed 2026-11-03, Spark 2.3.1; phone frame time still unmeasured.)*
 - **VRAM.** A 7.2 GB vendor peak rules out 6 GB GPUs; 8 GB is borderline and unmeasured in ComfyUI.
 - **CPU and Apple.** Possible in principle through ComfyUI in fp32, but likely tens of minutes per object (guess). Don't call it quick on CPU-only installs.
 - **ComfyUI API drift.** The pack relies on `comfy_api.latest` types and the TripoSplat code. Both are unchanged from 0.41.0 to 0.43.1. The core-only graph is the safer base.
@@ -366,7 +446,7 @@ Place an Idol splat in the MoGe scene viewer (`src/components/cinema/scene-viewe
 - What format the project page's 0.4 / 3.2 / 12.2 MB file sizes are.
 - How good `SplatToMesh` meshes and `RenderSplat` side views of Idol splats are.
 - Whether Speridlabs, fal or Replicate will host Idol, and what comes after "v0.1".
-- Which three.js splat renderer and version Fuobe should adopt.
+- Which three.js splat renderer and version Fuobe should adopt. *(Answered: Spark 2.3.1, §9 idol-4. Still unknown: its frame time on phones.)*
 
 ## Sources (read 2026-10-30)
 

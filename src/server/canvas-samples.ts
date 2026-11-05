@@ -49,7 +49,7 @@ export function adoptSample(src: string): string | null {
  * The board with its starting files in place: each input node a sample names gets the stored copy and a plain name. A
  * sample whose file isn't there leaves its input empty (the board still opens, and asks for that one file).
  */
-export function fillSamples(graph: CanvasGraph, samples: CanvasTemplate["samples"]): CanvasGraph {
+export function fillSamples(graph: CanvasGraph, samples: CanvasTemplate["samples"], copy = true): CanvasGraph {
   if (!samples) return graph;
   return {
     ...graph,
@@ -58,7 +58,13 @@ export function fillSamples(graph: CanvasGraph, samples: CanvasTemplate["samples
       if (!s || n.data.url) return n;
       const abs = sampleFile(s.src);
       if (!abs) return n;
-      return { ...n, data: { ...n.data, url: storedSample(abs), name: s.name } };
+      return { ...n, data: { ...n.data, url: copy ? storedSample(abs) : s.src, name: s.name } };
     }),
   };
 }
+
+/**
+ * Whether a board's file is one of Fuobe's published example files, named by its plain public path: a visitor's board
+ * (a guest's draft, an account's own canvas) keeps it as it is, never a copy in anyone's storage.
+ */
+export const isPublishedSample = (src: string): boolean => sampleFile(src) !== null;

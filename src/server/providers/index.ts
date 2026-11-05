@@ -5,6 +5,7 @@ import { falProvider } from "./fal";
 import { llmProvider } from "./llm";
 import { mockProvider } from "./mock";
 import { replicateProvider } from "./replicate";
+import { worldcastProvider } from "./worldcast";
 import type { ProviderAdapter } from "./types";
 
 const notImplemented = (id: ProviderId, label: string): ProviderAdapter => ({
@@ -43,6 +44,7 @@ export const PROVIDERS: Record<ProviderId, ProviderAdapter> = {
   openai: notImplemented("openai", "OpenAI"),
   google: notImplemented("google", "Google"),
   llm: llmProvider,
+  worldcast: worldcastProvider,
 };
 
 /**

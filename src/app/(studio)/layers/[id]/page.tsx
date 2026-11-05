@@ -25,6 +25,7 @@ function toolModels(): Record<string, LayerModelInfo> {
         ? { pricing: { unit: m.pricing.unit, usd: m.pricing.usd, ...(m.pricing.note ? { note: m.pricing.note } : {}), ...(m.pricing.promo ? { promo: m.pricing.promo } : {}) } }
         : {}),
       providers: [...new Set(m.routes.map((r) => r.provider))],
+      ...(m.options.guided ? { guided: true } : {}),
     };
   }
   return out;

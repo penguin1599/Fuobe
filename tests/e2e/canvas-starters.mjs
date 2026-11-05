@@ -73,7 +73,7 @@ try {
         check(`${tag}: a visitor sees only boards with a real cover`, n > 0 && covered === n, `${covered}/${n}`);
         check(`${tag}: no model or engine words for a visitor`, !ENGINE_WORDS.test(t), (t.match(ENGINE_WORDS) ?? [""])[0]);
         check(`${tag}: no "No cover yet" or More templates for a visitor`, !/No cover yet|More templates|Use template/.test(t));
-        check(`${tag}: the visitor's action is to see how it works`, (await page.getByText("See how it works").count()) === n);
+        check(`${tag}: the visitor's action opens the board in the editor`, (await page.locator("#templates a[data-use-board]").count()) === n);
         check(`${tag}: no "isn't available here" note for a visitor`, !/isn.t available here/.test(t));
         const firstCard = await cards.first().evaluate((e) => e.getBoundingClientRect().top);
         const vh = await page.evaluate(() => window.innerHeight);
@@ -95,7 +95,8 @@ try {
         check(`${tag}: the owner can use the board from its page`, (await page.getByRole("button", { name: "Use template" }).count()) === 1);
       } else {
         check(`${tag}: no model or engine words on the board's page`, !ENGINE_WORDS.test(pt), (pt.match(ENGINE_WORDS) ?? [""])[0]);
-        check(`${tag}: the page has no "isn't available here" note, one quiet line instead`, !/isn.t available here/.test(pt) && /One tap opens it with a photo ready/.test(pt));
+        check(`${tag}: the page has no "isn't available here" note, one quiet line instead`, !/isn.t available here/.test(pt) && /Opens the board in the editor/.test(pt));
+        check(`${tag}: Use this board leads on the board's page`, (await page.getByRole("link", { name: "Use this board" }).getAttribute("href")) === "/canvas/try/effect-chain-pearl-earring");
         await page.getByRole("link", { name: "Try this effect in Video" }).click();
         await page.waitForURL(/\/video\?preset=effect-pearl-earring&example=effect-pearl-earring\.1/);
         await page.getByText("Pearl Earring").first().waitFor({ timeout: 60_000 }).catch(() => {});

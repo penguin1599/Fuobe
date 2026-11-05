@@ -7,20 +7,20 @@ import { Suspense, useCallback, useMemo, useRef, useState, type ComponentProps }
 import { useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { PageHeader, PageShell } from "@/components/page-shell";
-import { SelfHostNote } from "@/components/self-host-note";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { EngineSwitch } from "@/components/studio/engine-switch";
 import { fileToList, type SlotValue } from "@/components/studio/media-slot";
 import { radioKeys, radioTab } from "@/components/studio/radio-keys";
-import { useRun, useRunPreview } from "@/components/photodump/hooks";
+import { useAskFirst } from "@/components/photodump/ask-first";
+import { usePhotoCharacters, useRun, useRunPreview, useSaveCharacter } from "@/components/photodump/hooks";
 import { ResultsGrid } from "@/components/photodump/results";
 import { RunLine } from "@/components/photodump/steps";
 import { AnimatePosesButton } from "@/components/turnaround/animate-poses";
 import { TurnaroundButton } from "@/components/turnaround/turnaround-dialog";
 import { HandoffImage } from "@/components/nav/next-steps";
-import { useElements, useEngine, useGenerations, useLikelyVisitor, useSaveElement } from "@/lib/api";
+import { useAskBeforeUpload, useEngine, useGenerations } from "@/lib/api";
 import { castFieldVisible, castNameFor, randomCast, SHEET_MAX_REFS, type CastAnswers, type CastFieldData } from "@/lib/catalog/packs";
 import { sheetPictures } from "@/lib/catalog/turnaround";
 import type { Generation } from "@/lib/catalog/types";
@@ -109,10 +109,24 @@ function CastForm({ fields, values, set }: { fields: CastFieldData[]; values: Ca
  */
 export function SaveCharacter({ item, extra, defaultName }: { item: Generation; extra: string[]; defaultName: string }) {
   const [name, setName] = useState(defaultName);
-  const save = useSaveElement();
-  const elements = useElements();
+  // The owner's character is an element (@mentions, its page); an account's is its own, picked by name in Photodump
+  // and Fashion Factory.
+  const save = useSaveCharacter();
+  const elements = usePhotoCharacters();
   const refs = [...item.outputs.filter((o) => o.kind === "image").map((o) => o.url), ...extra].slice(0, 20);
   const saved = save.data ?? elements.data?.find((e) => e.kind === "character" && !!refs[0] && e.references.includes(refs[0]));
+  if (saved && !save.owner)
+    return (
+      <div className="flex flex-wrap items-center gap-2 rounded-2xl border bg-background p-3">
+        <span className="grid size-7 place-items-center rounded-full bg-success/15 text-success">
+          <Check className="size-4" />
+        </span>
+        <p className="min-w-0 flex-1 text-[13px]">
+          Saved as <span className="font-medium">{saved.name}</span> — pick it under My character in <Link href="/photodump" className="text-brand-text underline underline-offset-2">Photodump</Link> or{" "}
+          <Link href="/fashion-factory" className="text-brand-text underline underline-offset-2">Fashion Factory</Link>.
+        </p>
+      </div>
+    );
   if (saved)
     return (
       <div className="flex flex-wrap items-center gap-2 rounded-2xl border bg-background p-3">
@@ -137,8 +151,8 @@ export function SaveCharacter({ item, extra, defaultName }: { item: Generation; 
       <Button
         disabled={!name.trim() || save.isPending || elements.isLoading}
         onClick={() =>
-          save.mutate(
-            { name: name.trim(), kind: "character", references: refs },
+          save.save(
+            { name: name.trim(), references: refs },
             {
               // The card turns into "Saved as @handle · Open": no toast needed.
               onError: (e) => toastError(e),
@@ -179,9 +193,12 @@ function SheetTurnaround(props: TurnaroundProps) {
 
 export function CharacterSheetView({ fields, defaults }: { fields: CastFieldData[]; defaults: CastAnswers }) {
   const [engine, setEngine] = useEngine();
-  // A sheet doesn't run on an account's own GPU or key yet (only the studios' generations do): said up front, and the
-  // uploads and Create are off, instead of a run the server refuses.
-  const visitor = useLikelyVisitor();
+  // A guest is asked to sign up before choosing photos, and an account with neither its own GPU nor its own key to
+  // connect one.
+  const askFirst = useAskBeforeUpload();
+  // The sheet itself: a guest gets the sign-up card and an account with nothing to run on "Connect your GPU" before it is
+  // sent (a press before the page knows who is looking waits for that).
+  const askRun = useAskFirst();
   const [mode, setMode] = useState<Mode>("reference");
   const [photos, setPhotos] = useState<SlotValue[]>([]);
   const [details, setDetails] = useState("");
@@ -209,7 +226,7 @@ export function CharacterSheetView({ fields, defaults }: { fields: CastFieldData
           : null;
   const preview = useRunPreview("/api/photodump/character", body);
   const addFiles = (files: Iterable<File>) => {
-    if (visitor) return;
+    if (askFirst()) return;
     const list = [...files].filter((f) => /^image\//.test(f.type));
     if (photos.length + list.length > SHEET_MAX_REFS) toast(`Maximum ${SHEET_MAX_REFS} images`);
     list.slice(0, SHEET_MAX_REFS - photos.length).forEach((f) => fileToList(f, setPhotos, "image"));
@@ -219,16 +236,16 @@ export function CharacterSheetView({ fields, defaults }: { fields: CastFieldData
     setMode("reference");
     setPhotos((xs) => (xs.some((x) => x.ref === url) ? xs : [{ ref: url, preview: url, kind: "image" as const, id: nanoid(8) }, ...xs].slice(0, SHEET_MAX_REFS)));
   }, []);
-  const create = () => {
-    if (visitor) return;
-    if (mode === "reference" && !photos.length) return toast("Upload at least 1 image");
-    if (!body) return toast(mode === "describe" ? "Describe your character first" : "Wait for the uploads to finish");
-    run.mutate(body, {
-      // The run line already says which model runs and why (its notes), so no toast here.
-      onSuccess: (r) => setIds((xs) => [...r.items.map((g) => g.id), ...xs]),
-      onError: (e) => toastError(e, "Failed to create character sheet"),
-    });
-  };
+  const create = () =>
+    askRun(() => {
+      if (mode === "reference" && !photos.length) return toast("Upload at least 1 image");
+      if (!body) return toast(mode === "describe" ? "Describe your character first" : "Wait for the uploads to finish");
+      run.mutate(body, {
+        // The run line already says which model runs and why (its notes), so no toast here.
+        onSuccess: (r) => setIds((xs) => [...r.items.map((g) => g.id), ...xs]),
+        onError: (e) => toastError(e, "Failed to create character sheet"),
+      });
+    }, "run");
 
   return (
     <PageShell wide>
@@ -237,9 +254,8 @@ export function CharacterSheetView({ fields, defaults }: { fields: CastFieldData
       </Suspense>
       <TabFromLink param="mode" ids={MODE_IDS} onTab={setMode} />
       <PageHeader title="Character Sheet" description="Build your AI avatar: a consistent character for your videos, from a reference or defined from scratch.">
-        <EngineSwitch value={engine} onChange={setEngine} selfHostedOnly />
+        <EngineSwitch value={engine} onChange={setEngine} />
       </PageHeader>
-      {visitor && <SelfHostNote className="-mt-3 mb-6 max-w-2xl">Character Sheet isn&apos;t available here.</SelfHostNote>}
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <section className="min-w-0 space-y-4">
           <TabRow role="tablist" aria-label="How to build it" follow>
@@ -271,12 +287,11 @@ export function CharacterSheetView({ fields, defaults }: { fields: CastFieldData
                   addFiles(e.dataTransfer.files);
                 }}
                 onPaste={(e) => addFiles(e.clipboardData.files)}
-                className={cn("rounded-2xl border border-dashed transition-colors", over && !visitor && "border-primary bg-brand-faint")}
+                className={cn("rounded-2xl border border-dashed transition-colors", over && "border-primary bg-brand-faint")}
               >
                 <button
                   type="button"
-                  onClick={() => fileInput.current?.click()}
-                  disabled={visitor}
+                  onClick={() => askFirst() || fileInput.current?.click()}
                   className="flex w-full flex-col items-center justify-center gap-2 rounded-2xl px-4 py-10 text-center outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset disabled:pointer-events-none disabled:opacity-50"
                 >
                   <ImagePlus className="size-6 text-muted-foreground" />
@@ -342,7 +357,7 @@ export function CharacterSheetView({ fields, defaults }: { fields: CastFieldData
             <div className="min-w-0 flex-1">
               <RunLine preview={body ? preview.data : undefined} loading={preview.isFetching} />
             </div>
-            <Button onClick={create} disabled={run.isPending || uploading || visitor}>
+            <Button onClick={create} disabled={run.isPending || uploading}>
               {run.isPending ? <Loader2 className="animate-spin" /> : <Sparkles />} {run.isPending ? "Submitting..." : "Create AI Avatar"}
             </Button>
           </div>

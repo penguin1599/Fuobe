@@ -1,6 +1,10 @@
-"""Fuobe Connect's pairing and job runner outside ComfyUI, for the end-to-end test (tests/e2e/fuobe-connect.mjs in the
-Fuobe repo): it asks the studio for a code, prints it as one JSON line, waits for the approval, then runs that person's
-jobs on the ComfyUI at --comfy until it is stopped (or unpaired).
+"""Test-only: Fuobe Connect's pairing and job runner outside ComfyUI, for the end-to-end test (tests/e2e/fuobe-connect.mjs
+in the Fuobe repo), against a stand-in studio on this computer. It asks the studio for a code, prints it as one JSON
+line, waits for the approval, then runs that person's jobs on the ComfyUI at --comfy until it is stopped (or unpaired).
+
+It prints the worker token only when FUOBE_CONNECT_TEST_PRINT_TOKEN=1 (the end-to-end test needs it, with a throwaway
+studio); otherwise only its last four characters. A token to start with comes from FUOBE_CONNECT_TOKEN, never from the
+command line (where other programs on this computer could read it). Not part of the published pack.
 
     python tests/pair_and_run.py --site http://127.0.0.1:3361 --comfy http://127.0.0.1:3362
 """
@@ -39,7 +43,8 @@ async def main(site_url: str, comfy_url: str, name: str, token: str | None):
                 p = await site.pair_poll(a.body["id"], a.body["secret"])
                 if p.status == 200 and p.body.get("state") == "approved":
                     token = p.body["token"]
-                    say(event="paired", workerId=p.body["workerId"], token=token)
+                    shown = token if os.environ.get("FUOBE_CONNECT_TEST_PRINT_TOKEN") == "1" else f"…{token[-4:]}"
+                    say(event="paired", workerId=p.body["workerId"], token=shown, account=p.body.get("account"))
                     break
                 if p.status == 404:
                     say(event="gone")
@@ -58,6 +63,5 @@ if __name__ == "__main__":
     ap.add_argument("--site", required=True)
     ap.add_argument("--comfy", required=True)
     ap.add_argument("--name", default="test-pc")
-    ap.add_argument("--token")
     args = ap.parse_args()
-    sys.exit(asyncio.run(main(args.site, args.comfy, args.name, args.token)))
+    sys.exit(asyncio.run(main(args.site, args.comfy, args.name, os.environ.get("FUOBE_CONNECT_TOKEN") or None)))

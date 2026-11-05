@@ -11,7 +11,17 @@ FAMILIES = {
     "lipsync": ["lipsync", "lipsyncOffset"],
     "continuity": ["continuity"],
     "palette": ["paletteFit", "paletteCover"],
+    # Soundtrack separation against the case's known stems (scripts/eval/fixtures/make-separation.py).
+    "separation": [
+        "voiceSiSdr", "remixSiSdr", "musicSiSdr", "effectsSiSdr", "backgroundSiSdr", "voiceSdr", "backgroundSdr",
+        "mixError", "bedLevel", "bedPeak", "bedScale", "stereoCorrGap", "noiseInVoice", "speedX",
+    ],
+    # Word error rate of the voice stem (Whisper), of the input as it is (the same ASR without separating first), and of
+    # the job's own transcript when its graph transcribes (Qwen3-ASR in the dub's first step).
+    "wer": ["wer", "werInput", "werTranscript"],
     "background": ["bgDiff", "bgPsnr"],
+    # A splat file's nearly transparent share (opacity under 0.05) and its count (the splat suite).
+    "splat": ["haze", "gaussians"],
 }
 
 METRICS = {
@@ -30,8 +40,27 @@ METRICS = {
     "continuity": {"label": "Shot continuity", "better": "higher", "unit": "cosine between consecutive shots"},
     "paletteFit": {"label": "Palette distance", "better": "lower", "unit": "mean ΔE76 to the nearest palette colour"},
     "paletteCover": {"label": "Palette used", "better": "higher", "unit": "share of the palette's colours"},
+    "voiceSiSdr": {"label": "Dialogue SI-SDR", "better": "higher", "unit": "dB against the known speech"},
+    "musicSiSdr": {"label": "Music SI-SDR", "better": "higher", "unit": "dB against the known music"},
+    "effectsSiSdr": {"label": "Effects SI-SDR", "better": "higher", "unit": "dB against the known effects"},
+    "backgroundSiSdr": {"label": "Music & effects SI-SDR", "better": "higher", "unit": "dB against the known bed"},
+    "voiceSdr": {"label": "Dialogue SDR", "better": "higher", "unit": "dB (level counts)"},
+    "backgroundSdr": {"label": "Music & effects SDR", "better": "higher", "unit": "dB (level counts)"},
+    "mixError": {"label": "Stems vs input", "better": "lower", "unit": "dB under the input (voice + bed)"},
+    "bedLevel": {"label": "Bed level vs reference", "better": "none", "unit": "dB (0 = same; AudioMerge's peak scaling shows negative)"},
+    "bedPeak": {"label": "Bed peak", "better": "none", "unit": "dBFS"},
+    "remixSiSdr": {"label": "Clean dialogue SI-SDR", "better": "higher", "unit": "dB against the voice + the known bed at the level asked"},
+    "bedScale": {"label": "Bed scaling", "better": "none", "unit": "dB, the bed against input − voice (0 = as subtracted; AudioMerge's peak scaling shows negative)"},
+    "stereoCorrGap": {"label": "Bed stereo gap", "better": "lower", "unit": "|L/R correlation − the reference bed's|"},
+    "noiseInVoice": {"label": "Noise left in the dialogue", "better": "lower", "unit": "share of the known hum or hiss"},
+    "speedX": {"label": "Speed", "better": "higher", "unit": "x real time (all passes)"},
+    "wer": {"label": "WER, dialogue stem", "better": "lower", "unit": "word error rate 0–1"},
+    "werInput": {"label": "WER, input as is", "better": "lower", "unit": "word error rate 0–1"},
+    "werTranscript": {"label": "WER, the job's transcript", "better": "lower", "unit": "word error rate 0–1"},
     "bgDiff": {"label": "Background change vs the source", "better": "lower", "unit": "mean abs error 0–1 on the frame's outer ring"},
     "bgPsnr": {"label": "Background PSNR vs the source", "better": "higher", "unit": "dB on the frame's outer ring"},
+    "haze": {"label": "Splat haze", "better": "lower", "unit": "share of Gaussians under opacity 0.05"},
+    "gaussians": {"label": "Gaussians", "better": "none", "unit": "count in the splat file"},
 }
 
 # Weights, each pinned to a Hugging Face revision. "commercial" says whether the model itself may be used
@@ -90,6 +119,14 @@ MODELS = {
         "repo": "insightface model zoo (downloaded by insightface)",
         "licence": "non-commercial research only (insightface model packs)",
         "commercial": False,
+    },
+    # Speech recognition for the separation suite's word error rate (pnpm eval:setup --asr).
+    "whisper-base-en": {
+        "repo": "openai/whisper-base.en",
+        "files": ["config.json", "generation_config.json", "model.safetensors", "preprocessor_config.json", "tokenizer.json", "tokenizer_config.json", "vocab.json", "merges.txt", "normalizer.json", "added_tokens.json", "special_tokens_map.json"],
+        "revision": "911407f4214e0e1d82085af863093ec0b66f9cd6",
+        "licence": "MIT (OpenAI Whisper code and weights; the Hugging Face card says Apache-2.0)",
+        "commercial": True,
     },
     # Style similarity on image features alone (--style-model dinov2): DINOv2 ViT-S/14 as timm packs it.
     "dinov2-small": {

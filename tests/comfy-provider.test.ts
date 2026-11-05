@@ -304,6 +304,64 @@ describe("ComfyUI output mapping", () => {
     expect(res).toMatchObject({ state: "succeeded", outputs: [{ kind: "video", url: expect.stringContaining("gen-mm_00001.mp4") }] });
   });
 
+  it("keeps every pass's EXR frames when a meta-batch key saves frames in each pass and its clip in the last", async () => {
+    const prefix = "fuobe/gen-exr";
+    const graph = { "7": { class_type: "VHS_VideoCombine", inputs: { filename_prefix: prefix } }, "11": { class_type: "SaveImageAdvanced", inputs: { filename_prefix: prefix } } };
+    const frames = (from: number) => ({ "11": { images: [0, 1].map((i) => file(`gen-exr_${String(from + i).padStart(5, "0")}_.exr`)) } });
+    // ComfyUI numbers the first pass as queued; VHS re-queues each later pass under a more negative number.
+    const first = { prompt: [5, "p-exr", graph], ...done(frames(1)) };
+    const passes = { "pass-b": { prompt: [-7, "pass-b", graph], ...done({ ...frames(5), "7": { gifs: [file("gen-exr_00001.webm")] } }) }, "p-exr": first, "pass-a": { prompt: [-6, "pass-a", graph], ...done(frames(3)) } };
+    let queued = true;
+    const fetched: string[] = [];
+    handler = (url) => {
+      if (url.includes("/history/p-exr")) return json({ "p-exr": first });
+      if (url.endsWith("/queue")) return json({ queue_running: queued ? [[-6, "pass-a", graph]] : [], queue_pending: [] });
+      if (url.includes("/history?max_items")) return json(passes);
+      if (url.includes("/view?")) {
+        fetched.push(new URL(url).searchParams.get("filename")!);
+        return new Response(new Uint8Array([1, 2, 3]));
+      }
+      return json({});
+    };
+    const meta = { workflowId: "video-key-corridorkey", nodeCount: 11, prefix, metaBatch: true, generationId: "gen-exr" };
+    // The first pass's frames alone are not the result: the job is still running.
+    expect(await comfyProvider.poll(pollCtx("p-exr", meta))).toMatchObject({ state: "running", message: "Rendering the next batch of frames" });
+    queued = false;
+    const res = await comfyProvider.poll(pollCtx("p-exr", meta));
+    expect(res).toMatchObject({ state: "succeeded", outputs: [{ kind: "video", url: expect.stringContaining("gen-exr_00001.webm"), meta: { frames: 6, artifacts: { exr: expect.any(String) } } }] });
+    // Every pass's frames, in pass order.
+    expect(fetched).toEqual([1, 2, 3, 4, 5, 6].map((n) => `gen-exr_0000${n}_.exr`));
+  });
+
+  it("has a computer's tab follow a meta-batch key whose first pass saved only frames, then collect every pass's frames", async () => {
+    const { planRelayOutputs } = await import("@/server/providers/comfyui");
+    const prefix = "fuobe/gen-relay-exr";
+    const t = { id: "task-exr", workflow_id: "video-key-corridorkey", meta_batch: 1, prefix } as unknown as Parameters<typeof planRelayOutputs>[0];
+    const frames = (from: number) => ({ "11": { images: [file(`gen_${from}_.exr`)] } });
+    const first = { prompt: [3, "p1"], ...done(frames(1)) };
+    expect(planRelayOutputs(t, [first], false)).toEqual({ follow: prefix });
+    const plan = planRelayOutputs(t, [{ prompt: [-5, "p3"], ...done({ ...frames(3), "7": { gifs: [file("gen.webm")] } }) }, first, { prompt: [-4, "p2"], ...done(frames(2)) }], true);
+    expect("wanted" in plan && plan.wanted.map((w) => [w.kind, w.filename])).toEqual([
+      ["video", "gen.webm"],
+      ["frame", "gen_1_.exr"],
+      ["frame", "gen_2_.exr"],
+      ["frame", "gen_3_.exr"],
+    ]);
+  });
+
+  it("orders a meta-batch's passes and keeps the last clip with every pass's frames", async () => {
+    const { metaBatchResults } = await import("@/server/providers/comfyui");
+    const out = (url: string, role?: string) => ({ url, kind: role === "frames" ? ("image" as const) : ("video" as const), ...(role && { meta: { role } }) });
+    const passes = [
+      { prompt: [-9], files: [out("f3", "frames"), out("clip")] },
+      { prompt: [0], files: [out("f1", "frames")] },
+      { prompt: [-8], files: [out("f2", "frames")] },
+    ];
+    expect(metaBatchResults(passes, (p) => p.files).map((o) => o.url)).toEqual(["clip", "f1", "f2", "f3"]);
+    // Frames with no clip yet: not a result.
+    expect(metaBatchResults(passes.slice(1), (p) => p.files)).toEqual([]);
+  });
+
   it("reports a meta-batch pass that failed instead of 'no output'", async () => {
     const prefix = "fuobe/gen-mm-fail";
     const graph = { "22": { class_type: "VHS_VideoCombine", inputs: { filename_prefix: prefix } } };

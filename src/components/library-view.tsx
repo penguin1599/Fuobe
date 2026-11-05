@@ -18,7 +18,7 @@ import { PageShell } from "@/components/page-shell";
 import { useShare } from "@/components/share/share-provider";
 import { SharedLinks } from "@/components/share/shared-links";
 import { useSkillBuilder } from "@/components/skills/skill-builder-provider";
-import { downloadUrl, ForeverConfirmProvider, useConfirmForever } from "@/components/studio/result-actions";
+import { ForeverConfirmProvider, useConfirmForever } from "@/components/studio/result-actions";
 import { Viewer } from "@/components/studio/viewer";
 import {
   AlertDialog,
@@ -52,6 +52,8 @@ import { starterShown, type StarterCardData } from "@/lib/starters/types";
 import { cn } from "@/lib/utils";
 import { onAttr, TAB_PILL, TabRow, useSwapFade } from "@/components/ui/tab-row";
 import { toastError } from "@/lib/refusals";
+import { downloadZip } from "@/lib/zip-download";
+import { ACCOUNT_ZIP_MAX_RUNS } from "@/lib/guest-access";
 
 type TabId = "all" | "images" | "videos" | "audio" | "text" | "3d" | "favorites" | "uploads" | "shared" | "trash";
 
@@ -856,10 +858,12 @@ function Inner({ starters: given }: { starters: StarterCardData[] }) {
                   icon={Download}
                   label="Download"
                   disabled={!selectedGens.some((g) => g.status === "succeeded")}
-                  onClick={() => {
+                  onClick={async () => {
                     const done = selectedGens.filter((g) => g.status === "succeeded").map((g) => g.id);
-                    downloadUrl(`/api/generations/zip?ids=${done.slice(0, BULK_MAX).join(",")}`);
-                    if (done.length > BULK_MAX) toast(`The zip has the first ${BULK_MAX} of ${done.length}`, { description: "Select the rest and download them as a second zip." });
+                    // A signed-in account zips its own runs, fewer at a time, one zip at a time. It asks first, so a refusal is said, not a failed download.
+                    const max = account && !owner ? ACCOUNT_ZIP_MAX_RUNS : BULK_MAX;
+                    if (!(await downloadZip(`/api/generations/zip?ids=${done.slice(0, max).join(",")}`))) return;
+                    if (done.length > max) toast(`The zip has the first ${max} of ${done.length}`, { description: "Select the rest and download them as a second zip." });
                   }}
                 />
                 {/* The steps behind the selected results as a skill (a whole stack when its batch is selected). Stays on phones. */}

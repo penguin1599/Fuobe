@@ -7,7 +7,7 @@ import { useEffect, useState } from "react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { fileToList, SlotPreview, type SlotValue } from "@/components/studio/media-slot";
 import { radioKeys, radioTab } from "@/components/studio/radio-keys";
-import { useElements, useModelAccess } from "@/lib/api";
+import { useElements, useLikelyVisitor, useModelAccess } from "@/lib/api";
 import { keepOffered, offered } from "@/lib/model-access";
 import {
   ANIMATION_MODES,
@@ -129,6 +129,7 @@ export function EpisodeSettingsForm({
   styleIds: string[];
 }) {
   const [own, setOwn] = useState(value.styleRefs.length > 0);
+  const visitor = useLikelyVisitor();
   const maxRefs = picker.maxStyleRefs?.[value.engine] ?? MAX_STYLE_REFS;
   // Frame by frame moves a camera over each picture (Ken Burns, no video model); Fully animated picks a video model.
   const frames = value.animation === "frames";
@@ -235,9 +236,12 @@ export function EpisodeSettingsForm({
         </div>
       </Section>
 
-      <Section title="Characters and places" hint="The script puts them in the scenes where they belong; their pictures keep them the same.">
-        <ElementsPicker value={value.elements} onChange={(elements) => onChange({ elements })} />
-      </Section>
+      {/* Characters and places are the studio owner's Elements: a visitor's script draws its own. */}
+      {!visitor && (
+        <Section title="Characters and places" hint="The script puts them in the scenes where they belong; their pictures keep them the same.">
+          <ElementsPicker value={value.elements} onChange={(elements) => onChange({ elements })} />
+        </Section>
+      )}
 
       <Collapsible>
         <CollapsibleTrigger className="group/adv inline-flex items-center gap-1 rounded text-[13px] font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">

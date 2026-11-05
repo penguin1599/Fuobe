@@ -47,6 +47,7 @@ export const HOSTED_WORDS = {
   notOffered: "This one runs on your own GPU. Connect one in Settings, or pick another model.",
   loras: "Extra LoRAs run on your own GPU. Connect one in Settings, or run without them.",
   inputs: "This kind of file runs on your own GPU. Connect one in Settings, or use a picture.",
+  rtxCard: "This one needs an NVIDIA RTX card, and this studio's GPUs can't run it right now. Connect your own GPU in Settings, or pick another choice.",
   notHosted: "Runs on this studio's GPUs aren't open to this account. Connect your own GPU in Settings.",
   waitedTooLong: "This studio's GPUs were busy, so it didn't run. Not charged.",
 };
@@ -61,6 +62,14 @@ export function poolAllows(p: Pick<Policy, "pool">, modelId: string, presetId?: 
     if (m.apps?.allow && !m.apps.allow.includes(presetId)) return false;
   }
   return true;
+}
+
+/**
+ * May this whole run go on this install's GPUs: its model and every other step it makes (a 2K take's Open-H3 Regenerate
+ * finish), so a policy that keeps a model off the pool keeps it off as a step too.
+ */
+export function poolAllowsRun(p: Pick<Policy, "pool">, planned: { model: { id: string }; steps?: { model: string }[] }, presetId?: string | null): boolean {
+  return [planned.model.id, ...(planned.steps ?? []).map((s) => s.model)].every((id) => poolAllows(p, id, presetId));
 }
 
 /** The file kinds a request uses (for the policy's uploads rule and the billing facts). */
@@ -138,7 +147,7 @@ export function placeInLine(generationId: string): { place: number; etaSeconds: 
 /** The facts the billing service prices a run by (from a planned request: previewGeneration's answer). */
 export function runFacts(
   req: GenerationRequest,
-  p: { model: { id: string; kind: string; engine: "open" | "cloud" }; op: string; jobs: number; outputs: number; providerId: string; costUsd: number | null; loras: { applied: unknown[] } },
+  p: { model: { id: string; kind: string; engine: "open" | "cloud" }; op: string; jobs: number; outputs: number; providerId: string; costUsd: number | null; loras: { applied: unknown[] }; steps?: { model: string; op: string }[] },
   kind: RunFacts["kind"],
 ): RunFacts {
   const model = getModel(p.model.id);
@@ -161,5 +170,7 @@ export function runFacts(
     inputs: inputCounts(req),
     lane: POOL_LANE,
     providerUsd: p.costUsd,
+    // The run's other steps (a 2K take's finish), each a model and op the service prices beside the main one.
+    ...(p.steps?.length && { steps: p.steps.map((s) => ({ model: s.model, op: s.op })) }),
   };
 }

@@ -10,7 +10,7 @@ export default function Page() {
   return (
     <LegalPage title="Terms" lead="Simple terms for a creative studio." updated="3 November 2026" cards>
       <LegalSection title="Using Fuobe" icon={Sparkles}>
-        <p>Fuobe is a free, open-source creative studio. Make whatever you like, kindly and within the law.</p>
+        <p>Fuobe is a free, open-source creative studio. Make whatever you can imagine.</p>
       </LegalSection>
       <LegalSection title="What you upload" icon={ImageUp}>
         <p>Upload things you own or have permission to use.</p>

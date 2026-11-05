@@ -1,0 +1,43 @@
+{
+  "1": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "input.png"
+    },
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "2": {
+    "class_type": "AILab_FeyNoBg",
+    "inputs": {
+      "image": [
+        "1",
+        0
+      ],
+      "mask_blur": 0,
+      "mask_offset": 0,
+      "invert_output": false,
+      "refine_foreground": true,
+      "unload_model": false,
+      "background": "Alpha",
+      "background_color": "#222222"
+    },
+    "_meta": {
+      "title": "FeyNoBg fine-hair matte (foreground refine on)"
+    }
+  },
+  "3": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "2",
+        0
+      ],
+      "filename_prefix": "fuobe/image-matte-feynobg"
+    },
+    "_meta": {
+      "title": "Save Image (RGBA)"
+    }
+  }
+}

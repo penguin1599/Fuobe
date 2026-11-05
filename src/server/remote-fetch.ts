@@ -369,6 +369,36 @@ export function discardBody(res: Response): void {
   if (res.body && !res.bodyUsed) res.body.cancel().catch(() => {});
 }
 
+/**
+ * The start of an answer's body as text (an error page, for a details line): at most `maxBytes`, waited for at most `ms`.
+ * The rest is let go of, so a body that never ends can't hold the caller.
+ */
+export async function peekText(res: Response, maxBytes = 4096, ms = 2000): Promise<string> {
+  if (!res.body || res.bodyUsed) return "";
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  let timer: NodeJS.Timeout | undefined;
+  const late = new Promise<null>((r) => {
+    timer = setTimeout(() => r(null), ms);
+    timer.unref?.();
+  });
+  try {
+    while (size < maxBytes) {
+      const next = await Promise.race([reader.read(), late]);
+      if (!next || next.done) break;
+      chunks.push(next.value);
+      size += next.value.length;
+    }
+  } catch {
+    // A body that broke off: what came is enough.
+  } finally {
+    clearTimeout(timer);
+    reader.cancel().catch(() => {});
+  }
+  return Buffer.concat(chunks).subarray(0, maxBytes).toString("utf8");
+}
+
 const mbOf = (n: number) => (n >= 2 ** 30 ? `${Math.round(n / 2 ** 30)} GB` : `${Math.max(1, Math.round(n / 2 ** 20))} MB`);
 
 export async function fetchPublic(url: string, init: RequestInit = {}, o: PublicFetchOptions = {}): Promise<Response> {

@@ -16,6 +16,39 @@ export function targetShortEdge(resolution: string | undefined): number | undefi
   return n === 1 ? 1080 : n === 2 ? 1440 : Math.round(n * 540);
 }
 
+/** A factor tier ("2x", "2.25x", "4x": Kandinsky VSR picks a factor, not a size) as its number. */
+export function factorTier(resolution: string | undefined): number | undefined {
+  const m = /^(\d+(?:\.\d+)?)x$/i.exec(resolution?.trim() ?? "");
+  return m ? Number(m[1]) : undefined;
+}
+
+/**
+ * A model that upscales by factors only (Kandinsky VSR's 2x, 2.25x and 4x, on both engines) and a resolution that isn't one of
+ * them (an API call, a chain, Reuse from another upscaler): refused before the run, in the words the server answers with.
+ */
+export function factorTierProblem(name: string, offered: string[] | undefined, resolution: string | undefined): string | null {
+  if (!offered?.length || resolution === undefined || offered.includes(resolution)) return null;
+  if (!offered.every((r) => factorTier(r) !== undefined)) return null;
+  return `${name} upscales by ${offered.slice(0, -1).join(", ")} or ${offered.at(-1)}: pick one of those`;
+}
+
+/**
+ * A clip whose sides a factor can't take (ModelOptions.sideMultiple: fal's Kandinsky VSR needs widths and heights in
+ * multiples of 16 at 2x and 4x), with the factor that can, in the words the composer shows and the server refuses with.
+ */
+export function sideMultipleProblem(
+  name: string,
+  rule: { of: number; factors: string[] } | undefined,
+  offered: string[] | undefined,
+  resolution: string | undefined,
+  source: { width: number; height: number } | undefined,
+): string | null {
+  if (!rule || !resolution || !rule.factors.includes(resolution) || !source?.width || !source.height) return null;
+  if (source.width % rule.of === 0 && source.height % rule.of === 0) return null;
+  const other = (offered ?? []).find((r) => !rule.factors.includes(r));
+  return `${name} at ${resolution} needs a clip whose width and height are multiples of ${rule.of} (this one is ${source.width}×${source.height})${other ? `: pick ${other}, or resize the clip first` : ": resize the clip first"}`;
+}
+
 /**
  * The factor an upscaler that takes one needs to reach `resolution` from a clip of `source` size: target ÷
  * shorter edge, kept within the API's min–max and rounded to 3 decimals (1080p → 1440p is 1.333, which lands on
@@ -25,6 +58,8 @@ export function targetShortEdge(resolution: string | undefined): number | undefi
 export function upscaleFactorFor(resolution: string | undefined, source: { width: number; height: number } | undefined, min = 1, max = 4): number | undefined {
   const lo = Math.min(min, max);
   if (resolution?.trim().toLowerCase() === "original") return Math.max(lo, 1);
+  const factor = factorTier(resolution);
+  if (factor !== undefined) return Math.max(lo, Math.min(Math.max(min, max), factor));
   const target = targetShortEdge(resolution);
   const short = source ? Math.min(source.width, source.height) : 0;
   if (!target || !(short > 0)) return undefined;
@@ -34,7 +69,7 @@ export function upscaleFactorFor(resolution: string | undefined, source: { width
 /** The size a clip comes out at for `resolution` (its shape kept, even numbers), or undefined when unknown. */
 export function upscaledSize(source: { width: number; height: number } | undefined, resolution: string | undefined, factor?: number): { width: number; height: number } | undefined {
   if (!source?.width || !source.height) return undefined;
-  const k = factor ?? (resolution?.trim().toLowerCase() === "original" ? 1 : (targetShortEdge(resolution) ?? 0) / Math.min(source.width, source.height));
+  const k = factor ?? factorTier(resolution) ?? (resolution?.trim().toLowerCase() === "original" ? 1 : (targetShortEdge(resolution) ?? 0) / Math.min(source.width, source.height));
   if (!(k > 0)) return undefined;
   const even = (n: number) => Math.max(2, Math.round(n / 2) * 2);
   return { width: even(source.width * k), height: even(source.height * k) };

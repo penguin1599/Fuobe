@@ -6,6 +6,7 @@ import type { RemoveMode } from "@/lib/catalog/remove-object";
 import type { Engine, Generation, PixelPoint } from "@/lib/catalog/types";
 import { useDebounced } from "@/components/faceless/hooks";
 import { send } from "@/components/shorts/hooks";
+import { COMPUTER_KICK_EVENT } from "@/lib/api";
 
 /** React Query hooks for /api/remove-object/** (the Remove object tab of Video tools). */
 
@@ -57,6 +58,12 @@ export function useRemovalEstimate(body: RemovalBody | null) {
   });
 }
 
+/**
+ * A run started: the tab that runs this person's jobs on the ComfyUI on this computer (an account's "Your GPU") asks for
+ * them at once, as after a studio run.
+ */
+const kick = () => window.dispatchEvent(new Event(COMPUTER_KICK_EVENT));
+
 export function useRemovalActions() {
   const qc = useQueryClient();
   const seed = (g: Generation) => qc.setQueryData(["generation", g.id], g);
@@ -64,6 +71,7 @@ export function useRemovalActions() {
     run: useMutation({
       mutationFn: (b: RemovalBody) => send<{ final: Generation; items: Generation[] }>("/api/remove-object", "POST", b),
       onSuccess: (r) => {
+        kick();
         r.items.forEach(seed);
         void qc.invalidateQueries({ queryKey: ["generations"] });
       },
@@ -71,13 +79,17 @@ export function useRemovalActions() {
     reroll: useMutation({
       mutationFn: (b: { id: string; window: number; seed?: number; requestId?: string }) => send<{ final: Generation; items: Generation[] }>("/api/remove-object/reroll", "POST", b),
       onSuccess: (r) => {
+        kick();
         r.items.forEach(seed);
         void qc.invalidateQueries({ queryKey: ["generations"] });
       },
     }),
     preview: useMutation({
       mutationFn: (b: RemovalBody) => send<Generation>("/api/remove-object/preview", "POST", b),
-      onSuccess: seed,
+      onSuccess: (g) => {
+        kick();
+        seed(g);
+      },
     }),
   };
 }

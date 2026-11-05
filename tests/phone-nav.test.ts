@@ -247,16 +247,19 @@ describe("the Studios sheet", () => {
   it("lists what a group's studios hold inside as pills under the tiles, by their tabs' names, as a visitor may run them", () => {
     const sell = at("/", () => sheet({ group: "sell" }));
     // Ads Studio is a tile of the group already: not a pill again.
-    expect(pills(sell)).toEqual(["Click to Ad", "Ad Multiplier"]);
+    expect(pills(sell)).toEqual(["Click to Ad", "Ad Multiplier", "From a selfie"]);
     expect(words(sell)).toContain("Marketing Studio");
     const people = at("/", () => sheet({ group: "people" }));
-    expect(pills(people)).toEqual(["Motion transfer", "Character swap", "Object swap", "Restyle", "Insert"]);
-    // Pages that say "isn't available here" to a visitor, and the owner's own modes, aren't linked for them.
-    for (const w of ["From a selfie", "From Reference", "From picture", "Split soundtrack", "Remove dialogue", "From an image", "Blockout"]) {
-      for (const g of LAUNCHER_GROUPS) expect(pills(at("/", () => sheet({ group: g.id }))), `${g.id}: ${w}`).not.toContain(w);
-    }
+    expect(pills(people)).toEqual(["From Reference", "Build from scratch", "From a description", "Motion transfer", "Character swap", "Object swap", "Restyle", "Insert", "From picture", "Finish"]);
+    // Split soundtrack and Remove dialogue run for visitors with an account (on their own GPU or key): linked too.
+    for (const w of ["Split soundtrack", "Remove dialogue"]) expect(LAUNCHER_GROUPS.some((g) => pills(at("/", () => sheet({ group: g.id }))).includes(w)), w).toBe(true);
+    // Cinema Studio's Blockout is linked for everyone (a guest is offered a free account on a run).
+    const film = at("/", () => sheet({ group: "film" }));
+    expect(pills(film)).toContain("Blockout");
+    expect(hrefs(film)).toContain("/cinema?blockout=1");
+    // Image to 3D runs for visitors with an account (on their own GPU or key): its modes are linked too.
     const finish = at("/", () => sheet({ group: "finish" }));
-    expect(pills(finish)).toEqual(["Image", "Video", "FPS Boost", "SDR to HDR", "Export"]);
+    expect(pills(finish)).toEqual(["Image", "Video", "FPS Boost", "SDR to HDR", "Export", "From an image", "From several images", "From text", "Pick an object", "Splat"]);
     // Each pill links its feature (a route, or its studio with ?mode= / ?tab=).
     expect(hrefs(sell)).toEqual(expect.arrayContaining(["/marketing/click-to-ad", "/ads", "/ads/multiplier"]));
     expect(hrefs(people)).toEqual(expect.arrayContaining(["/genjutsu?mode=motion", "/genjutsu?mode=insert"]));

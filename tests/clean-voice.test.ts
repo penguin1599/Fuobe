@@ -18,7 +18,7 @@ import {
   tooLongProblem,
   workRate,
 } from "@/lib/av/clean-voice";
-import { HUB_MODES, modeHref } from "@/lib/hubs";
+import { HUB_MODES, modeHref, modeOfPath } from "@/lib/hubs";
 import { cleanedName } from "@/components/audio-tools/clean-voice-switch";
 import { outputActions } from "@/lib/output-actions";
 import { APPS, getModel } from "@/lib/catalog";
@@ -208,10 +208,11 @@ describe("the report in words", () => {
 });
 
 describe("where Clean up voice opens", () => {
-  it("is an Audio mode right after Transcribe, and an app that renders the same tool", () => {
-    const ids = HUB_MODES.audio.map((m) => m.id);
-    expect(ids.indexOf("clean")).toBe(ids.indexOf("transcribe") + 1);
-    expect(modeHref("audio", "clean")).toBe("/audio/clean");
+  it("is Audio's first mode (/audio opens on it, /audio/clean too), and an app that renders the same tool", () => {
+    expect(HUB_MODES.audio[0]).toEqual({ id: "clean", label: "Clean up voice" });
+    expect(modeHref("audio", "clean")).toBe("/audio");
+    expect(modeOfPath("audio", "/audio")).toBe("clean");
+    expect(modeOfPath("audio", "/audio/clean")).toBe("clean");
     const app = APPS.find((a) => a.id === "app-clean-up-voice")!;
     expect(app).toMatchObject({ tool: "clean-voice", category: "Utility", cloud: null, open: { modelId: "oss-reuse-voice", op: "enhance-voice" } });
     expect(app.parity).toBe("Runs on open-source models only, on your GPU or CPU. RE-USE isn't hosted on fal or Replicate.");

@@ -1,0 +1,42 @@
+{
+  "id": "fuobe-beauty-details",
+  "name": "Fuobe beauty details",
+  "kind": "concept",
+  "base": "z-image-turbo",
+  "media": "image",
+  "presets": [
+    "Grillz Selfie",
+    "Bleached Brows",
+    "Long legs",
+    "Creatures"
+  ],
+  "trigger": "fbbeautydetail",
+  "dataset": {
+    "min": 20,
+    "max": 40,
+    "what": "One small set per concept (grillz, bleached brows, low-angle long legs, creature fusion), Fuobe's own or licensed.",
+    "captions": [
+      "Every caption starts with \"fbbeautydetail, \" and names the detail in the same words each time, then the scene in one long sentence.",
+      "No names of people, brands or photographers."
+    ]
+  },
+  "train": {
+    "steps": 1200,
+    "rank": 16,
+    "learningRate": 0.0001
+  },
+  "routes": {
+    "fal": {
+      "trainer": "fal-ai/z-image-turbo-trainer-v2"
+    },
+    "aiToolkit": {
+      "arch": "zimage:turbo"
+    }
+  },
+  "target": {
+    "file": "fuobe-beauty-details.safetensors",
+    "strength": 0.7,
+    "hfRepo": "fuobe/fuobe-beauty-details"
+  },
+  "notes": "The plan trains one LoRA per concept: copy this spec per concept (fuobe-grillz, fuobe-bleached-brows, fuobe-long-legs, fuobe-creatures) and add each to the research's fuobeTrainedLoras before the first run."
+}

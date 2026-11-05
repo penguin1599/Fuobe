@@ -37,7 +37,7 @@ const pathOf = (href: string) => href.split(/[?#]/)[0];
 const q = (s = "") => new URLSearchParams(s);
 const KINDS: (ViewerKind | undefined)[] = ["guest", "account", "owner", undefined];
 
-/** The sidebar's 44 rows before the navigation model (origin/main), in their groups and order. */
+/** The sidebar's 44 rows before the navigation model (origin/main), in their groups and order, and Kinetic Motion since. */
 const OLD_NAV: [string, [string, string][]][] = [
   [
     "Create",
@@ -73,6 +73,7 @@ const OLD_NAV: [string, [string, string][]][] = [
       ["/mixed-media", "Mixed Media"],
       ["/marketing", "Marketing Studio"],
       ["/ads", "Ads Studio"],
+      ["/kinetic", "Fuobe Kinetic Motion"],
       ["/moodboards", "Moodboards"],
       ["/photodump", "Photodump"],
       ["/fashion-factory", "Fashion Factory"],
@@ -104,10 +105,12 @@ describe("nav model: entries", () => {
   it("has unique ids, and unique links apart from a hub's first mode (the hub's own page)", () => {
     const ids = NAV_ENTRIES.map((e) => e.id);
     expect(new Set(ids).size).toBe(ids.length);
-    const firstModes = new Set(Object.entries(HUB_MODES).map(([hub, modes]) => `${hub}-${modes[0].id}`));
+    // Audio's first mode, Clean up voice, has a row in the Sound column: it links its own page (the same tool as /audio).
+    const firstModes = new Set(Object.entries(HUB_MODES).map(([hub, modes]) => `${hub}-${modes[0].id}`).filter((id) => id !== "audio-clean"));
     const hrefs = NAV_ENTRIES.filter((e) => !firstModes.has(e.id)).map((e) => e.href);
     expect(new Set(hrefs).size).toBe(hrefs.length);
     for (const id of firstModes) expect(entry(id)?.href).toBe(`/${entry(id)!.parent}`);
+    expect(entry("audio-clean")?.href).toBe("/audio/clean");
   });
 
   it("links only to pages that exist (or a settings section, an action, the source)", () => {
@@ -138,9 +141,9 @@ describe("nav model: entries", () => {
     for (const [, rows] of OLD_NAV) for (const [href, label] of rows) expect(NAV_ENTRIES.find((e) => e.href === href)?.label, href).toBe(label);
   });
 
-  it("derives the four groups (Create, Library, Studios, More) exactly as they were: 44 rows", () => {
+  it("derives the four groups (Create, Library, Studios, More) exactly as they were, with Kinetic Motion: 45 rows", () => {
     expect(NAV.map((g) => [g.label, g.items.map((i) => [i.href, i.label])])).toEqual(OLD_NAV);
-    expect(NAV.flatMap((g) => g.items)).toHaveLength(44);
+    expect(NAV.flatMap((g) => g.items)).toHaveLength(45);
     expect(NAV.find((g) => g.label === "Studios")?.collapsible).toBe(true);
     // The same rows prefetch eagerly, with an icon each and search words.
     expect(
@@ -215,9 +218,9 @@ describe("nav model: launcher", () => {
     expect(launcherEntries("guest")).toHaveLength(34);
     expect(launcherEntries("guest", "sell").map((e) => e.id)).toEqual(["marketing", "ads", "kinetic", "mixed-media", "moodboards", "photodump"]);
     expect(launcherEntries(undefined, "finish").map((e) => e.id)).toEqual(["upscale", "image-to-3d", "apps"]);
-    // Sound: the Audio studio, then voice's neighbours (music, sound effects, clean-up, translate & dub); Lipsync stays in Social.
-    expect(launcherEntries(undefined, "sound").map((e) => e.href)).toEqual(["/audio", "/audio/music", "/audio/sfx", "/audio/clean", "/audio/translate"]);
-    expect(launcherEntries(undefined, "sound").map((e) => e.short)).toEqual(["Audio", "Music", "Sound effects", "Clean up", "Translate"]);
+    // Sound: the Audio studio, then Clean up voice (its first mode), music, sound effects, translate & dub; Lipsync stays in Social.
+    expect(launcherEntries(undefined, "sound").map((e) => e.href)).toEqual(["/audio", "/audio/clean", "/audio/music", "/audio/sfx", "/audio/translate"]);
+    expect(launcherEntries(undefined, "sound").map((e) => e.short)).toEqual(["Audio", "Clean up", "Music", "Sound effects", "Translate"]);
     expect(entry("audio-translate")?.label).toBe("Translate & dub");
     expect(entry("lipsync")?.group).toBe("social");
     for (const e of launcherEntries(undefined)) expect(Object.hasOwn(PRESET_COVERS, e.cover!), `${e.id}: ${e.cover}`).toBe(true);
@@ -232,7 +235,7 @@ describe("nav model: launcher", () => {
 
 describe("nav model: who sees what", () => {
   const ids = (k: ViewerKind | undefined) => new Set(entriesFor(k).map((e) => e.id));
-  const OWNER_ONLY = ["setting-cloud", "setting-comfyui", "setting-engine", "setting-loras", "setting-training", "setting-text-ai", "setting-assist-connectors", "setting-notifications", "setting-security", "setting-demo", "video-tools-restore"];
+  const OWNER_ONLY = ["setting-cloud", "setting-comfyui", "setting-engine", "setting-loras", "setting-training", "setting-text-ai", "setting-assist-connectors", "setting-notifications", "setting-security", "setting-demo"];
 
   it("keeps the install's settings and its own tools from guests and accounts", () => {
     for (const k of ["guest", "account", undefined] as const) for (const id of OWNER_ONLY) expect(ids(k).has(id), `${k} sees ${id}`).toBe(false);

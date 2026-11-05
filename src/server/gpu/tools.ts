@@ -1,18 +1,25 @@
 import "server-only";
 import { FLY_MODELS } from "@/lib/catalog/fly-around";
 import { DUB_STEP_MODELS } from "@/lib/av/dub";
+import { HI3D_MODEL } from "@/lib/av/hi3d";
+import { IDOL_VIEWS_WORKFLOW } from "@/lib/av/idol-views";
 import { SPLIT_MODEL } from "@/lib/av/split";
+import { VOICE_FIRST_MODELS, VOICE_FIRST_MUX } from "@/lib/av/voice-first";
+import { BURN_MODELS } from "@/lib/av/captions";
 import { CLEAN_DIALOGUE_PRESET, OPEN_MODEL as CLEAN_DIALOGUE_MODEL, OPEN_MUX_MODEL as CLEAN_DIALOGUE_MUX } from "@/lib/av/clean-dialogue";
 import { REMOVE_DIALOGUE_MODELS } from "@/lib/av/remove-dialogue";
 import { CLEAN_MODEL } from "@/lib/av/clean-voice";
 import { getModel, getPreset, MODELS, modelsFor, PRESETS } from "@/lib/catalog";
 import { graphLoras, PERSON_REMOVER_LORA } from "@/lib/catalog/character-swap";
 import { BLOCKOUT_MODELS, PATH_MODELS } from "@/lib/catalog/cinema";
+import { WORLD_JOIN, WORLD_MODEL } from "@/lib/world";
 import { dualEngine, onEngine, runsOn } from "@/lib/catalog/engines";
 import { FRAMES_MODELS } from "@/lib/catalog/keyframes";
 import { PERSON_REMOVAL_TOOLS, REMOVE_TOOLS } from "@/lib/catalog/remove-object";
 import { RESTORE, RESTORE_OPEN_JOIN } from "@/lib/catalog/restore";
-import { REGEN_DEFAULT_TIER, REGEN_JOIN, REGEN_MODEL, REGEN_OFFERED, regenerateGraphLoras } from "@/lib/catalog/regenerate";
+import { H3_LATENT_DRAFT_WORKFLOW, H3_OPEN_MODEL, REGEN_DEFAULT_TIER, REGEN_JOIN, REGEN_LATENT_WORKFLOW, REGEN_MODEL, regenerateGraphLoras } from "@/lib/catalog/regenerate";
+import { pikaFlexGraphLoras } from "@/lib/catalog/pika-flex";
+import { RTX_FRAMEGEN_MODEL, RTX_HDR_MODEL, RTX_UPSCALE_MODEL } from "@/lib/catalog/rtx-video";
 import { COMPOSITE_MODEL } from "@/lib/catalog/sharpen";
 import { ORIGINALS, SHARPEN_TOOLS } from "@/lib/catalog/genjutsu";
 import { libraryEntry, loraEntry, loraRef, needsToken } from "@/lib/catalog/loras";
@@ -97,7 +104,10 @@ export function modelTool(modelId: string, op: string): Tool | null {
   if (!routes.length) return null;
   const workflows = [...new Set(routes.filter((r) => r.provider === "comfyui").flatMap((r) => expand(r.endpoint)))];
   // With the LoRAs a graph loads itself (Open-H3 Regenerate's refiner LoRA, which a run downloads).
-  const loras = [...(m.options.loras ?? []), ...routes.flatMap((r) => (r.provider === "comfyui" ? regenerateGraphLoras(r.endpoint) : []))].map(loraNeed);
+  const loras = [
+    ...(m.options.loras ?? []),
+    ...routes.flatMap((r) => (r.provider === "comfyui" ? [...regenerateGraphLoras(r.endpoint), ...pikaFlexGraphLoras(r.endpoint, {})] : [])),
+  ].map(loraNeed);
   return {
     ref: `model:${modelId}#${op}`,
     name: m.name,
@@ -156,11 +166,15 @@ export interface StudioRowDef {
   config?: StudioConfig;
   /** A studio with graphs of its own (Character swap). */
   workflows?: string[];
+  /** What such a studio makes (video unless said). */
+  kind?: string;
   /**
    * A tool that runs open models' operations in steps (Split soundtrack, Cinema's fly path, the turnaround): their graphs
    * and LoRAs together, with the LoRAs a step adds itself (the turnaround's Angles LoRA). The first names the tool.
    */
   steps?: { modelId: string; op: Operation; loras?: LoraRef[] }[];
+  /** Operations of the open default that have a row of their own (MiniMax H3's references: the Ref2VA partition). */
+  skipOps?: Operation[];
 }
 
 /** The board's rows (src/lib/hubs.ts names the hub modes): each studio's open default. */
@@ -181,7 +195,24 @@ export const STUDIO_ROWS: StudioRowDef[] = [
     ],
   },
   { href: "/upscale", label: "Upscale", group: "Images", config: S.UPSCALE_STUDIO },
-  { href: "/video", label: "Video", group: "Video", config: S.VIDEO_STUDIO },
+  // hi3d-refine: Image to 3D with "Refine detail · Hi3D 1.0": the default open model, then Hi3D's refine of its mesh.
+  {
+    href: "/image-to-3d",
+    label: "Image to 3D, refined",
+    group: "Images",
+    steps: [
+      { modelId: "oss-pixal3d", op: "image-to-3d" },
+      { modelId: HI3D_MODEL, op: "refine-3d" },
+    ],
+  },
+  // idol-7: Image to 3D's quick mesh (From an image, Idol 3D quick mesh): Idol's splat turned into a vertex-coloured mesh.
+  { href: "/image-to-3d?model=oss-idol-mesh", label: "Image to 3D, quick mesh", group: "Images", steps: [{ modelId: "oss-idol-mesh", op: "image-to-3d" }] },
+  // idol-8: From several images' "Make the other sides from the front": Idol 3D's four views, which need the ComfyUI-Idol pack.
+  { href: "/image-to-3d?mode=multi", label: "Other sides from one picture", group: "Images", kind: "image", workflows: [IDOL_VIEWS_WORKFLOW] },
+  // MiniMax H3's references (Pika H3 Flex Ref2VA) need the Ref2VA partition and Pika's adapter: a row of their own, so the
+  // Video row stays what text, image and frame clips need.
+  { href: "/video", label: "Video", group: "Video", config: S.VIDEO_STUDIO, skipOps: ["ref2v"] },
+  { href: "/video?model=oss-minimax-h3", label: "Video from references", group: "Video", steps: [{ modelId: "oss-minimax-h3", op: "ref2v" }] },
   // Keyframe animation (Fuobe Animation): Frames mode's Animation style, every gap in one graph on Wan 2.2 with AniSora.
   { href: "/video?model=fuobe-animation", label: "Keyframe animation", group: "Video", steps: [{ modelId: "fuobe-animation", op: "keyframes" }] },
   { href: "/motion-control", label: "Motion control", group: "Video", config: S.MOTION_CONTROL_STUDIO },
@@ -189,6 +220,29 @@ export const STUDIO_ROWS: StudioRowDef[] = [
   { href: "/extend", label: "Extend", group: "Video", config: S.EXTEND_STUDIO },
   { href: "/reframe", label: "Reframe", group: "Video", config: S.REFRAME_STUDIO },
   { href: "/lipsync", label: "Lipsync", group: "Video", config: S.LIPSYNC_STUDIO },
+  // nm10-kandinsky6: Kandinsky 6.0's clips with dialogue and sound (the Video studio, and Lipsync's "talking character from
+  // words" link), on Lite unless Quality picks Pro.
+  {
+    href: "/video?model=oss-kandinsky6",
+    label: "Video with dialogue",
+    group: "Video",
+    steps: [
+      { modelId: "oss-kandinsky6", op: "t2v" },
+      { modelId: "oss-kandinsky6", op: "i2v" },
+    ],
+  },
+  // Clean the voice first on a lip re-sync of a clip: the voice cleaned, the re-sync on it, and the clip's music and
+  // effects put back by the stream-copy mux.
+  {
+    href: "/lipsync?model=oss-infinitetalk-v2v",
+    label: "Lip re-sync, voice cleaned",
+    group: "Video",
+    steps: [
+      { modelId: VOICE_FIRST_MODELS.open, op: "separate-audio" },
+      { modelId: "oss-infinitetalk-v2v", op: "lipsync" },
+      { modelId: VOICE_FIRST_MUX, op: "mux" },
+    ],
+  },
   { href: "/character-swap", label: "Character swap", group: "Video", workflows: [STUDIO_WORKFLOWS.mask, STUDIO_WORKFLOWS.segment] },
   // Cinema's 3D scene films a still along a keyframed camera path (N7-5).
   { href: "/cinema", label: "Fly path", group: "Video", steps: [{ modelId: PATH_MODELS.open, op: "camera-path" }] },
@@ -220,6 +274,17 @@ export const STUDIO_ROWS: StudioRowDef[] = [
       { modelId: "oss-join-encoded", op: "concat" },
     ],
   },
+  // World mode (nm10-hy-nomas-world): Cinema's World take, Hy-Nomas turn by turn on Nynxz's port, and the turns joined into
+  // one film. The projects list takes ?world=1 on to the project picked, which opens the World panel.
+  {
+    href: "/cinema?world=1",
+    label: "World mode",
+    group: "Video",
+    steps: [
+      { modelId: WORLD_MODEL, op: "world-turn" },
+      { modelId: WORLD_JOIN, op: "concat" },
+    ],
+  },
   // The turnaround (N7-6): Frames mode's start/end-frame clips joined into one film, with the sides it has no picture of
   // drawn first by the Angles app (src/lib/catalog/turnaround.ts).
   {
@@ -235,12 +300,15 @@ export const STUDIO_ROWS: StudioRowDef[] = [
   // Turnaround stills · 8 views: the character from all 8 sides at eye level, drawn by QMA · 96 views (the
   // turnaround dialog's Stills route; its graph loads the QMA LoRA itself). It also draws a film's missing sides when picked.
   { href: "/character-sheet?stills=1", label: "Turnaround stills · 8 views", group: "Images", steps: [{ modelId: QMA_MODEL, op: "edit" }] },
-  { href: "/audio", label: "Voice", group: "Audio", config: S.AUDIO_STUDIO },
+  { href: "/audio/speech", label: "Voice", group: "Audio", config: S.AUDIO_STUDIO },
   { href: "/audio/dialogue", label: "Dialogue", group: "Audio", config: S.DIALOGUE_STUDIO },
   { href: "/audio/voice-change", label: "Voice change", group: "Audio", config: S.VOICE_CHANGE_STUDIO },
   // Design a voice: Qwen3-TTS designs the takes and clones the one saved (VoxCPM2 is the other choice).
   { href: "/audio/design", label: "Design a voice", group: "Audio", steps: [{ modelId: "oss-qwen3-tts", op: "voice-design" }, { modelId: "oss-qwen3-tts", op: "tts" }] },
   { href: "/audio/transcribe", label: "Transcribe", group: "Audio", config: S.TRANSCRIBE_STUDIO },
+  // Edit speech (nm10-speech-edit): Qwen3-ASR times the words, AuK re-speaks the changed parts (a video's sound goes back on
+  // the picture with the stream-copy mux).
+  { href: "/audio/edit-speech", label: "Edit speech", group: "Audio", steps: [{ modelId: "oss-qwen3-asr", op: "transcribe" }, { modelId: "oss-auk", op: "speech-edit" }] },
   // DBS soundtrack separation (D1): dialogue, music and effects.
   { href: "/audio/split", label: "Split soundtrack", group: "Audio", steps: [{ modelId: SPLIT_MODEL, op: "separate-audio" }] },
   // Clean up dialogue (DBS D5, Split soundtrack's preset): graph C's remix, and the stream-copy mux for a video.
@@ -275,46 +343,49 @@ export const STUDIO_ROWS: StudioRowDef[] = [
   { href: "/audio/video", label: "Sound for video", group: "Audio", config: S.FOLEY_STUDIO },
   { href: "/upscale/video", label: "Upscale video", group: "Video tools", config: S.VIDEO_UPSCALE_STUDIO },
   // Upscale → Video's Regenerate · creative (Open-H3 Regenerate with its refiner LoRA); a clip over 15 s is redrawn in
-  // parts joined packet by packet. Listed only while it is offered (REGEN_OFFERED).
-  ...(REGEN_OFFERED
-    ? [
-        {
-          href: `/upscale/video?model=${REGEN_MODEL}&resolution=${REGEN_DEFAULT_TIER}`,
-          label: "Regenerate in 2K",
-          group: "Video tools",
-          steps: [
-            { modelId: REGEN_MODEL, op: "upscale-video" as const },
-            { modelId: REGEN_JOIN, op: "concat" as const },
-          ],
-        } satisfies StudioRowDef,
-      ]
-    : []),
+  // parts joined packet by packet. It needs a 48 GB card: the row says what the connected GPU lacks.
+  {
+    href: `/upscale/video?model=${REGEN_MODEL}&resolution=${REGEN_DEFAULT_TIER}`,
+    label: "Regenerate in 2K",
+    group: "Video tools",
+    steps: [
+      { modelId: REGEN_MODEL, op: "upscale-video" as const },
+      { modelId: REGEN_JOIN, op: "concat" as const },
+    ],
+  } satisfies StudioRowDef,
+  // NVIDIA RTX Video in Upscale → Video ("Quick · RTX"), FPS boost and SDR to HDR. An NVIDIA RTX card only (frame
+  // generation: RTX 40 or later): elsewhere the row reads "Needs an NVIDIA RTX card".
+  { href: `/upscale/video?model=${RTX_UPSCALE_MODEL}`, label: "Quick upscale · RTX", group: "Video tools", steps: [{ modelId: RTX_UPSCALE_MODEL, op: "upscale-video" }] },
+  // MiniMax H3 at 2K on your GPU (Cinema and the Video studio's 2K tier, and Finish in 2K on a take): the 768p draft that
+  // keeps its latent, and the 2K finish from it. It finishes with Open-H3 Regenerate (a 48 GB card).
+  { href: `/video?model=${H3_OPEN_MODEL}&resolution=2K`, label: "MiniMax H3 in 2K", group: "Video", workflows: [H3_LATENT_DRAFT_WORKFLOW, REGEN_LATENT_WORKFLOW] } satisfies StudioRowDef,
   // The Character swap at 1080p / 2K / 4K (Genjutsu, and Sharpen in Character Swap Studio's Finish): the 768p swap, the
   // person's mask (SAM 3.1 on H3 Relay's graph), the part at 24 fps, the swap regenerated, only the character composited
-  // over the footage, the windows joined and the part's sound put back. It regenerates with Open-H3 Regenerate, so it is
-  // listed only while that is offered (REGEN_OFFERED).
-  ...(REGEN_OFFERED
-    ? [
-        {
-          href: "/genjutsu?mode=character",
-          label: "Character swap in 2K",
-          group: "Video tools",
-          steps: [
-            { modelId: ORIGINALS.character, op: "video-swap" as const },
-            { modelId: SHARPEN_TOOLS.mask, op: "bg-remove-video" as const },
-            { modelId: SHARPEN_TOOLS.fit, op: "trim" as const },
-            { modelId: REGEN_MODEL, op: "upscale-video" as const },
-            { modelId: COMPOSITE_MODEL, op: "composite" as const },
-            { modelId: REGEN_JOIN, op: "concat" as const },
-            { modelId: SHARPEN_TOOLS.mux, op: "mux" as const },
-          ],
-        } satisfies StudioRowDef,
-      ]
-    : []),
+  // over the footage, the windows joined and the part's sound put back. It regenerates with Open-H3 Regenerate (a 48 GB card).
+  {
+    href: "/genjutsu?mode=character",
+    label: "Character swap in 2K",
+    group: "Video tools",
+    steps: [
+      { modelId: ORIGINALS.character, op: "video-swap" as const },
+      { modelId: SHARPEN_TOOLS.mask, op: "bg-remove-video" as const },
+      { modelId: SHARPEN_TOOLS.fit, op: "trim" as const },
+      { modelId: REGEN_MODEL, op: "upscale-video" as const },
+      { modelId: COMPOSITE_MODEL, op: "composite" as const },
+      { modelId: REGEN_JOIN, op: "concat" as const },
+      { modelId: SHARPEN_TOOLS.mux, op: "mux" as const },
+    ],
+  } satisfies StudioRowDef,
+  // Upscale → Video's Kandinsky VSR (2x, 2.25x, 4x; clips up to 5 s).
+  { href: "/upscale/video?model=oss-kandinsky6-vsr", label: "Kandinsky VSR", group: "Video tools", steps: [{ modelId: "oss-kandinsky6-vsr", op: "upscale-video" }] },
   { href: "/upscale/fps", label: "FPS boost", group: "Video tools", config: S.FPS_BOOST_STUDIO },
+  { href: `/upscale/fps?model=${RTX_FRAMEGEN_MODEL}`, label: "FPS boost · RTX", group: "Video tools", steps: [{ modelId: RTX_FRAMEGEN_MODEL, op: "interpolate" }] },
   { href: "/upscale/hdr", label: "SDR to HDR", group: "Video tools", config: S.SDR_TO_HDR_STUDIO },
+  { href: `/upscale/hdr?model=${RTX_HDR_MODEL}`, label: "SDR to HDR · RTX", group: "Video tools", steps: [{ modelId: RTX_HDR_MODEL, op: "sdr-to-hdr" }] },
   { href: "/upscale/export", label: "Export", group: "Video tools", config: S.VIDEO_EXPORT_STUDIO },
   { href: "/video-tools", label: "Remove background", group: "Video tools", config: S.VIDEO_MATTE_STUDIO },
+  // nm10-keying: CorridorKey 2.0 on footage shot on a green screen (its own list: ModelOptions.greenScreen).
+  { href: "/video-tools/green-screen", label: "Green screen", group: "Video tools", config: S.VIDEO_KEY_STUDIO },
   // DBS D2: the split, then the stream-copy mux (one stem in place of the sound, or the voice over the lowered bed).
   {
     href: "/video-tools/remove-dialogue",
@@ -323,6 +394,18 @@ export const STUDIO_ROWS: StudioRowDef[] = [
     steps: [
       { modelId: REMOVE_DIALOGUE_MODELS.split, op: "separate-audio" },
       { modelId: REMOVE_DIALOGUE_MODELS.mux, op: "mux" },
+    ],
+  },
+  // Captions on your GPU: the voice cleaned first (Clean the voice first, on for a clip once it has passed a real run), its
+  // words, and the burn-in.
+  {
+    href: "/video-tools/captions",
+    label: "Captions",
+    group: "Video tools",
+    steps: [
+      { modelId: VOICE_FIRST_MODELS.open, op: "separate-audio" },
+      { modelId: "oss-qwen3-asr", op: "transcribe" },
+      { modelId: BURN_MODELS.open, op: "captions" },
     ],
   },
   // Remove a person: the part fitted to 24 fps, its first frame cleaned by Qwen-Image 2.1, the green
@@ -378,14 +461,15 @@ export function studioTool(row: StudioRowDef): Tool | null {
   }
   if (row.workflows) {
     const segment = row.workflows[row.workflows.length - 1];
-    return { ref: `studio:${row.href}`, name: row.label, kind: "video", workflows: row.workflows.filter((w) => !!loadIndex().workflows[w]), loras: graphLoras(segment, {}).map(loraNeed) };
+    const loras = [...graphLoras(segment, {}), ...row.workflows.flatMap((w) => regenerateGraphLoras(w))];
+    return { ref: `studio:${row.href}`, name: row.label, kind: row.kind ?? "video", workflows: row.workflows.filter((w) => !!loadIndex().workflows[w]), loras: loras.map(loraNeed) };
   }
   const c = row.config;
   const id = c?.defaultModels.open;
   if (!c || !id) return null;
   const m = openModel(getModel(id));
   if (!m) return null;
-  const ops = modelOps(m).filter((op) => c.ops.includes(op));
+  const ops = modelOps(m).filter((op) => c.ops.includes(op) && !row.skipOps?.includes(op));
   const parts = (ops.length ? ops : modelOps(m)).map((op) => modelTool(id, op)).filter((t): t is Tool => !!t);
   if (!parts.length) return null;
   return {
@@ -404,8 +488,9 @@ export function studioOthers(row: StudioRowDef): Tool[] {
   const c = row.config;
   if (!c) return [];
   const ops = c.pickerOps ?? c.ops;
+  const keyers = c.ops.includes("bg-remove-video");
   return modelsFor({ kind: c.kind, ops, engine: "open" })
-    .filter((m) => m.id !== c.defaultModels.open)
+    .filter((m) => m.id !== c.defaultModels.open && (!keyers || !!m.options.greenScreen === !!c.greenScreen))
     .flatMap((m) => {
       const op = modelOps(openModel(m) ?? m).find((o) => ops.includes(o));
       const t = op ? modelTool(m.id, op) : null;

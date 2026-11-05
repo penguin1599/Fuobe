@@ -17,7 +17,9 @@ import { exactOrbitKeys, exactSummary, exactWords, type ExactOrbit } from "@/lib
 import { getModel, getPreset } from "./index";
 import { onEngine } from "./engines";
 import { estimateCost, planGeneration } from "./plan";
+import type { TurnSide } from "./turnaround";
 import type { Engine, GenerationRequest, GenParams, ModelDef } from "./types";
+import { WORLDCAST_AFTER, WORLDCAST_MODELS, WORLDCAST_SECONDS, worldcastFallback, worldcastNote, worldcastSteps, type WorldcastDepth } from "./worldcast-plan";
 
 /** What films a path on each engine , what makes the depth on the open engine, and the cloud's route with views. */
 export const FLY_MODELS = { open: "oss-uni3c-path", cloud: "minimax-h3-max-camera", depth: "oss-scene-moge", views: "minimax-h3-max" } as const;
@@ -45,6 +47,15 @@ export interface FlyAroundInput {
   feature?: string;
   title?: string;
   seed?: number;
+  /** Views by the person's own side (Canvas's Fly around with named views): WorldCast's anchors on the open engine. */
+  sides?: Partial<Record<TurnSide, string>>;
+  /** WorldCast's depth model (default MoGe 2). */
+  depth?: WorldcastDepth;
+}
+
+/** What the planner knows about this install: whether its WorldCast worker answers and WorldCast is switched on. */
+export interface FlyContext {
+  worldcast?: boolean;
 }
 
 export interface FlyStep {
@@ -100,7 +111,7 @@ function stepCost(req: GenerationRequest, engine: Engine): number | null {
 }
 
 /** Plan a fly-around: the steps each engine runs, priced (free on the open engine), and what it still needs. */
-export function planFlyAround(input: FlyAroundInput): FlyAroundPlan {
+export function planFlyAround(input: FlyAroundInput, ctx: FlyContext = {}): FlyAroundPlan {
   const { engine } = input;
   const feature = input.feature ?? "fly-around";
   const { keys, label } = flyKeys(input);
@@ -112,7 +123,17 @@ export function planFlyAround(input: FlyAroundInput): FlyAroundPlan {
   let model: ModelDef;
   let duration: number;
   const image = input.image;
-  if (engine === "open") {
+  if (engine === "open" && ctx.worldcast) {
+    // N7-9: WorldCast on the studio's worker; the still is the first frame and, when the views are named, the front's anchor.
+    model = getModel(WORLDCAST_MODELS.film)!;
+    duration = WORLDCAST_SECONDS;
+    const sides = (Object.entries(input.sides ?? {}) as [TurnSide, string][]).filter(([, url]) => !!url).map(([side, url]) => ({ side, src: { url } }));
+    steps.push(
+      ...worldcastSteps({ feature, title: input.title, still: image ? { url: image } : undefined, anchors: sides, keys, prompt: input.prompt, seed: input.seed, depth: input.depth }),
+    );
+    notes.push(worldcastNote(sides.length, input.depth), WORLDCAST_AFTER);
+    if (views.length && !sides.length) notes.push("WorldCast needs to know which side each view shows: name them to use them");
+  } else if (engine === "open") {
     model = getModel(FLY_MODELS.open)!;
     duration = Math.round((PATH_FRAMES / PATH_FPS) * 10) / 10;
     const resolution = model.options.resolutions?.find((r) => r.toLowerCase() === input.resolution?.toLowerCase()) ?? "480p";
@@ -137,6 +158,7 @@ export function planFlyAround(input: FlyAroundInput): FlyAroundPlan {
       });
     }
     if (views.length) notes.push("Your other views aren't used on your GPU: it films from the still alone");
+    if (ctx.worldcast === false) notes.push(worldcastFallback("Uni3C"));
   } else if (views.length) {
     model = getModel(FLY_MODELS.views)!;
     duration = nearest(model.options.durations ?? FLY_DURATIONS, input.duration ?? 5);

@@ -1,4 +1,5 @@
 import "server-only";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { nanoid } from "nanoid";
@@ -13,10 +14,10 @@ import { applySketch, stripMotionPaths } from "@/lib/catalog/sketch";
 import { cueText, type Cue } from "@/lib/cues";
 import { HELPER_FEATURES, HELPER_SUFFIX, isReviewStatus, type AssetUse, type ReviewFilter } from "@/lib/library";
 import { checkWatermarkBoxes, COPY as WATERMARK_COPY, parseScanReport, rejectedRepair, type WatermarkQuality } from "@/lib/watermark";
-import { upscaleTier } from "@/lib/av/upscale";
+import { sideMultipleProblem, upscaleTier } from "@/lib/av/upscale";
 import { chainedWaitMessage, framesWait, keyframeChain } from "@/lib/catalog/keyframes";
 import { clipFpsProblem, clipSizeProblem, clipTotalProblem, clipWindowProblem, elementClipProblem, insertRangeProblem, portraitShapeProblem, sourceFrames, voiceWindowProblem } from "@/lib/catalog/clip-windows";
-import { avatarSeconds, clipEditSeconds, estimateCost, inferOperation, movedAppRequest, planGeneration, presetRoute, routeLoras, routesFor, withoutTriggers } from "@/lib/catalog/plan";
+import { avatarSeconds, clipEditSeconds, estimateCost, inferOperation, movedAppRequest, planGeneration, presetRoute, routeLoras, routesFor, sourceLengthProblem, withoutTriggers } from "@/lib/catalog/plan";
 import { framedLength, keepMatte, sizeValue } from "@/lib/catalog/payload";
 import { fitLoras, loraName, lorasFit } from "@/lib/catalog/loras";
 import { dualEngine, onEngine, pickEngine } from "@/lib/catalog/engines";
@@ -29,7 +30,8 @@ import { finishSteps, mosaicPixels, unionMasks } from "@/lib/soul-post";
 import { ANGLES_ORIGINAL, MOSAIC_SCALE } from "@/lib/catalog/open-tools";
 import { computeDimensions } from "@/lib/comfy";
 import { captionFromWords, parseCaption } from "@/lib/ideogram-caption";
-import { h3Frames, h3Prompt } from "@/lib/h3-prompt";
+import { h3Frames, h3Prompt, inH3Layout } from "@/lib/h3-prompt";
+import { h3ReferenceTags, h3TalkPrompt } from "@/lib/h3-references";
 import {
   CHAIN_LIST_SLACK,
   LAST_FRAME_CHAIN,
@@ -60,18 +62,38 @@ import { H3_TIER_PARAM, H3_UNET_PARAM } from "@/lib/gpu/h3-tier";
 import { DETAILS_MAX_IMAGES, GPU_PARAM, QWEN21_SPEED, speedLora } from "@/lib/qwen21-speed";
 import { BLOCKED_CARD_MESSAGE, looksBlocked } from "./safety-card";
 import { pollTrainings } from "./training";
-import { createEndFrameClip, createExtendChain, createKeyframeFilm, createMosaicRun, createRelitClip, createShotFilm, createStillTo3d, createVoiceFirst, joinClips } from "./chains";
+import { createEndFrameClip, createExtendChain, createKeyframeFilm, createMosaicRun, createRefinedModel, createRelitClip, createShotFilm, createStillTo3d, createVoiceFirst, joinClips } from "./chains";
+import { chainedRefine } from "@/lib/av/hi3d";
 import { wantsVoiceFirst } from "@/lib/av/voice-first";
-import { createRegenerateRun } from "./regenerate";
-import { REGEN_MODEL, regenerateGraphLoras } from "@/lib/catalog/regenerate";
+import { createH3TwoKRun, createRegenerateRun, keepsH3Latent, regenHeld, regenSwitchedOff } from "./regenerate";
+import { H3_2K_STEPS_NOTE, h3TwoKRequests, REGEN_COPY, REGEN_MODEL, regenerateGraphLoras, wantsH3TwoK } from "@/lib/catalog/regenerate";
 import { enhancePrompt, enhanceSoulWords, ideogramCaption } from "./enhance";
+import { kandinskyPrompt } from "@/lib/kandinsky-prompt";
 import { carriesLayout } from "@/lib/layout-prompt";
 import { setResolver, watchGenerations, type LiveEvent } from "./live";
 import { provider, PROVIDERS, RETIRED_PROVIDER_ERROR } from "./providers";
-import { comfyLoraFiles, computerScope, onOwnGpu, outputFetch, outsideOwnGpu, OWN_OUTPUT_LIMITS, ownGpu, probeComfy, relayFile, type OwnGpu } from "./providers/comfyui";
+import { comfyLoraFiles, comfyPlace, computerScope, onOwnGpu, outputFetch, outsideOwnGpu, OWN_OUTPUT_LIMITS, ownGpu, ownLink, probeComfy, relayFile, troubleError, type OwnGpu } from "./providers/comfyui";
 import { accountById, accountGpu, gpuLink, type AccountGpu } from "./auth";
-import { accountEngineMode, accountKey, paidAllowed } from "./account-keys";
-import { addKeyMessage, isCloudProvider, keyRemovedMessage, type CloudProvider } from "@/lib/your-keys";
+import { accountEngineMode, accountKey, accountProviders, paidAllowed } from "./account-keys";
+import { addKeyMessage, CLOUD_PROVIDERS, isCloudProvider, keyRemovedMessage, type CloudProvider } from "@/lib/your-keys";
+import { cachedGpuState, GpuError, noteGpuState, testGpu } from "./account-gpu";
+import { presetRoutes } from "@/lib/catalog/preset-recipe-routes";
+import {
+  backoffMs,
+  diagnoseGpu,
+  diagnoseGpuJob,
+  diagnoseKey,
+  resultExpired,
+  retryPlan,
+  troubleOf,
+  waitingWords,
+  withKeyAction,
+  type Diagnosis,
+  type GpuFailure,
+  type KeyStage,
+  type RunTrouble,
+  type TroubleAction,
+} from "@/lib/diagnose";
 import { CONNECT_GPU_MESSAGE, GUEST_RUN_MESSAGE, OWN_GPU_TOOL_MESSAGE } from "@/lib/guest-access";
 import { outsideTenant, runAsTenant, tenant, tenantAccount } from "./tenant";
 import { generationAccount } from "./account-library";
@@ -81,6 +103,7 @@ import { missingFilesMessage, type MissingFiles } from "@/lib/missing-files";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { graphLoras as h3GraphLoras } from "@/lib/catalog/character-swap";
+import { PIKA_FLEX_REF_WORKFLOW, pikaFlexGraphLoras } from "@/lib/catalog/pika-flex";
 import { restoreGraphLoras } from "@/lib/restore-graph";
 import { ensureLorasOnComfy, prepareCloudLoras, withoutUnreachableCivitai } from "./loras";
 import { ACCESS_PLACE } from "@/lib/model-access";
@@ -100,7 +123,7 @@ import { accountSend } from "./account-send";
 import { stamped, stampOf, withRunStamp } from "./run-stamp";
 import { placeInLine, poolWaitMs, runOnPool } from "./hosted";
 import { sweepBilling } from "./billing-outbox";
-import { inDemoScope } from "./demo-scope";
+import { inDemoScope, outsideDemo } from "./demo-scope";
 import { moderationConfigured } from "./moderation";
 import { holdForCheck, sweepOutputChecks } from "./output-checks";
 import { absolutePath, adoptFile, contentTypeFor, deleteAsset, localHead, readRef, saveFile, scratchDir, scratchOutputFile } from "./storage";
@@ -197,6 +220,7 @@ export function toGeneration(r: Row): Generation {
     pinnedAt: r.pinned_at ?? null,
     review: isReviewStatus(r.review) ? r.review : null,
     ...(r.status === "failed" && r.fix_json && { fix: parseFix(r.fix_json) }),
+    ...(r.status === "failed" && r.fix_json && parseTrouble(r.fix_json)),
     // Failed or stopped before a paid provider took the job (a refused key, an empty balance): nothing was billed.
     ...((r.status === "failed" || r.status === "canceled") && !r.external_id && (r.provider === "fal" || r.provider === "replicate") && { notBilled: true as const }),
     // On this install's GPUs (hosted runs): what it cost, or that it cost nothing.
@@ -217,10 +241,21 @@ function poolQueue(id: string): { queue: { place: number; etaSeconds: number | n
 
 function parseFix(json: string): GenerationFix | null {
   try {
-    const f = JSON.parse(json) as GenerationFix;
+    const { trouble: _trouble, ...f } = JSON.parse(json) as GenerationFix & { trouble?: unknown };
+    void _trouble;
     return f && typeof f.code === "string" && Array.isArray(f.items) ? f : null;
   } catch {
     return null;
+  }
+}
+
+/** What an account's GPU or key ran into (fix_json `trouble`), as the Generation field. */
+function parseTrouble(json: string): { trouble: RunTrouble } | Record<string, never> {
+  try {
+    const t = (JSON.parse(json) as { trouble?: RunTrouble }).trouble;
+    return t && typeof t.cause === "string" && Array.isArray(t.actions) ? { trouble: t } : {};
+  } catch {
+    return {};
   }
 }
 
@@ -378,6 +413,12 @@ export interface AssetRef {
   /** SQL that names the row, and the key that tells rows apart (default `id`; a Cinema take and its project are one project). */
   name?: string;
   key?: string;
+  /**
+   * The column naming the account a row belongs to (an account's own board or project). Such a row keeps only that
+   * account's own files: what a board names is checked when the file is read, not when the board is saved, and a
+   * project's free text is never checked, so a row naming the owner's or another account's file must never keep it.
+   */
+  account?: string;
 }
 
 /**
@@ -427,6 +468,12 @@ export const ASSET_REFS: AssetRef[] = [
   { table: "swap_projects", cols: ["data_json"], what: "Character Swap project", name: "name" },
   // A user skill's bundled text files: its recipe.json names the files a run starts from (an example, a fixed logo).
   { table: "skills", cols: ["files_json"], what: "skill", key: "name", name: "title" },
+  // An account's own boards and projects (public sign-up): a board's pages (its nodes' pictures and clips), and a
+  // project's data (a Shorts session or preset, a Cinema project, a Character Swap project…) and its list line (a
+  // short's final video, a swap's character picture). `key` is set so an owner's dry run never deletes these rows
+  // (skill-runs.ts STUDIO_TABLES). `account` lets a row keep only its own account's files.
+  { table: "account_canvases", cols: ["pages_json"], what: "account canvas", key: "id", name: "name", account: "account_id" },
+  { table: "account_projects", cols: ["data_json", "summary_json"], what: "account project", key: "id", name: "name", account: "account_id" },
 ];
 
 /**
@@ -435,7 +482,8 @@ export const ASSET_REFS: AssetRef[] = [
  */
 export const ASSET_FREE: Record<string, string> = {
   "generations.provider_input_json": "what a provider was sent: its own upload URLs or file names, never ours",
-  "generations.fix_json": "what a failed ComfyUI run was missing: model file names, node classes and packs",
+  "generations.fix_json":
+    "what a failed ComfyUI run was missing (model file names, node classes and packs), and what an account's GPU or key ran into: a cause, a details line and its buttons' links",
   "gpu_snapshots.inventory_json": "what a GPU's ComfyUI has (class names, model file names and sizes), never a Fuobe file",
   "gpu_snapshots.report_json": "readiness built from that inventory",
   "generations.external_meta_json": "the provider's job handles",
@@ -488,14 +536,17 @@ export const ASSET_FREE: Record<string, string> = {
   "relay_workers.hours_json": "a worker's hours: a time zone and windows",
   "relay_workers.allow_json": "the lanes the owner lets a worker run, with their delays",
   "relay_pairings.facts_json": "what a paired ComfyUI said about itself: its name, GPU and version",
+  "account_canvases.summary_json": "an account board's list line: node and page counts, and its outline (node types, places and short labels)",
 };
 
 /** The query that finds the rows of one ASSET_REFS table naming a file (@id), except the purged generation's own (@g). */
 export function assetRefSql(r: AssetRef): string {
   const where = r.cols.map((c) => `instr(COALESCE(${c}, ''), @id) > 0`).join(" OR ");
   const except = r.except ? ` AND ${r.except} != @g` : "";
+  // A row of the file's own account only (the owner's files have no account, so no account's row keeps them).
+  const own = r.account ? ` AND ${r.account} = (SELECT account_id FROM assets WHERE id = @id)` : "";
   const trashed = r.table === "generations" ? ", EXISTS (SELECT 1 FROM generation_trash t WHERE t.generation_id = generations.id) AS trashed" : "";
-  return `SELECT ${r.key ?? "id"} AS k, ${r.name ?? "NULL"} AS n${trashed} FROM ${r.table} WHERE (${where})${except} LIMIT @max`;
+  return `SELECT ${r.key ?? "id"} AS k, ${r.name ?? "NULL"} AS n${trashed} FROM ${r.table} WHERE (${where})${except}${own} LIMIT @max`;
 }
 
 /**
@@ -788,13 +839,24 @@ function prepare(original: GenerationRequest) {
   if (access.dropped.length) plan = { ...plan, loras: access.loras, prompt: withoutTriggers(plan.prompt, plan.loras.filter((l) => !access.loras.some((k) => k.file === l.file)), access.loras) };
   else if (access.loras.some((l, i) => l !== plan.loras[i])) plan = { ...plan, loras: access.loras };
   // A preset can route to another model than the one asked for: its routes that are on (or the switch that's off).
-  const { route, demo } = chooseRoute(triedRoutes(plan.model, offeredRoutes(plan.model, routesFor(plan.model, plan.op))), req.inputs?.images?.length ?? 0, plan.loras, seconds, !!worded.demo);
+  const { route, demo } = chooseRoute(triedRoutes(plan.model, offeredRoutes(plan.model, routesFor(plan.model, plan.op, plan.params))), req.inputs?.images?.length ?? 0, plan.loras, seconds, !!worded.demo);
   // Qwen-Image 2.1's Options → Speed loads its speed's LoRA in the graph: that LoRA switched off holds the speed.
   const tier = route.provider === "comfyui" ? speedLora(route.endpoint, plan.params.extra) : undefined;
   if (tier && offeredLoras([{ file: tier.file }]).dropped.length) {
     const speed = QWEN21_SPEED.labels?.[tier.speed] ?? tier.speed;
     throw new Error(
       tenantAccount() ? `${speed} isn't available here. Pick another speed` : `${speed} runs with the LoRA “${loraName({ file: tier.file })}”, which is switched off in ${ACCESS_PLACE}. Pick another speed, or turn it back on there`,
+    );
+  }
+  // Pika H3 Flex (MiniMax H3's Fast · Pika Flex, References and Talk from a voice clip) loads Pika's adapter in the graph:
+  // that adapter switched off holds the run.
+  const flexOff = route.provider === "comfyui" ? offeredLoras(pikaFlexGraphLoras(route.endpoint, plan.params.extra)).dropped[0] : undefined;
+  if (flexOff) {
+    const refs = route.endpoint === PIKA_FLEX_REF_WORKFLOW;
+    const what = refs ? (plan.op === "avatar" ? "Talk from a voice clip" : "References") : "Fast · Pika Flex";
+    const instead = refs ? "Use one start frame, or pick another model" : "Pick Standard or Sharper";
+    throw new Error(
+      tenantAccount() ? `${what} isn't available here. ${instead}` : `${what} runs with “${loraName(flexOff)}”, which is switched off in ${ACCESS_PLACE}. ${instead}, or turn it back on there`,
     );
   }
   // "Fast · writes the details" edits with at most 3 pictures (its LoRA's card).
@@ -871,7 +933,12 @@ function prepare(original: GenerationRequest) {
 }
 
 /** The LoRA files a graph loads itself (not injected), so a run downloads the ones ComfyUI lacks before it starts. */
-const graphLoras = (endpoint: string, extra: Record<string, unknown> | undefined) => [...h3GraphLoras(endpoint, extra), ...restoreGraphLoras(endpoint, extra), ...regenerateGraphLoras(endpoint)];
+const graphLoras = (endpoint: string, extra: Record<string, unknown> | undefined) => [
+  ...h3GraphLoras(endpoint, extra),
+  ...restoreGraphLoras(endpoint, extra),
+  ...regenerateGraphLoras(endpoint, extra),
+  ...pikaFlexGraphLoras(endpoint, extra),
+];
 
 /** Operations whose clip length is the duration picked (made, or added by extend), not an input video's. */
 const MADE_LENGTH_OPS = new Set<Operation>(["t2v", "i2v", "flf2v", "ref2v", "extend", "keyframes"]);
@@ -880,6 +947,9 @@ const MADE_LENGTH_OPS = new Set<Operation>(["t2v", "i2v", "flf2v", "ref2v", "ext
 /** What a request would run as — model, operation, job count and cost — without starting it. */
 export function previewGeneration(asked: GenerationRequest) {
   const moved = currentRequest(asked);
+  // Open-H3 Regenerate while it is held (REGEN_OFFERED), and MiniMax H3's 2K on your GPU that finishes with it: priced as refused.
+  const held = regenHeld(moved.request);
+  if (held) throw new Error(held);
   const prepared = prepare(moved.request);
   const { plan, route, demo, providerId, cost, asked: askedLoras, unreachable, switchedOff, gpu, h3 } = prepared;
   const notes = moved.note ? [moved.note, ...prepared.notes] : prepared.notes;
@@ -889,7 +959,15 @@ export function previewGeneration(asked: GenerationRequest) {
     dropped: [...switchedOff, ...unreachable.map((l) => ({ file: l.file, reason: "it downloads from civitai, which needs your civitai key (Settings → LoRAs)" })), ...fitted.dropped],
   };
   // PixeletedFace pixelates each picture's faces afterwards (createMosaicRun): fal's SAM 3.1 per picture in the cloud.
-  const post = demo || moved.request.postMade ? 0 : postStepCost(plan.model.id, moved.request.presetId, plan.model.engine, plan.jobs * plan.perJobOutputs, getModel);
+  let post = demo || moved.request.postMade ? 0 : postStepCost(plan.model.id, moved.request.presetId, plan.model.engine, plan.jobs * plan.perJobOutputs, getModel);
+  // MiniMax H3 at 2K on your GPU: each take's Open-H3 Regenerate finish is planned and priced beside its draft.
+  const twoK = h3TwoKExtra(moved.request, plan.model, plan.op);
+  if (twoK) {
+    if (twoK.costUsd !== null) post += twoK.costUsd;
+    notes.push(...twoK.notes);
+  }
+  // A finish whose price isn't known leaves the run's price unknown too, never the main step's alone.
+  const priceUnknown = cost === null || twoK?.costUsd === null;
   return {
     model: plan.model,
     op: plan.op,
@@ -897,7 +975,9 @@ export function previewGeneration(asked: GenerationRequest) {
     outputs: plan.jobs * plan.perJobOutputs,
     demo,
     providerId,
-    costUsd: cost === null ? null : post ? Math.round((cost * plan.jobs + post) * 1000) / 1000 : cost * plan.jobs,
+    costUsd: priceUnknown || cost === null ? null : post ? Math.round((cost * plan.jobs + post) * 1000) / 1000 : cost * plan.jobs,
+    // The other steps the run makes beside its own model (a 2K take's finish), so a policy and a price see them all.
+    ...(twoK?.steps.length && { steps: twoK.steps }),
     // The engine it runs on (a Fuobe Original picks one per request).
     engine: plan.model.engine,
     // What the route runs (the evaluation harness records it): the provider endpoint, the final prompt and the LoRAs it loads.
@@ -910,6 +990,24 @@ export function previewGeneration(asked: GenerationRequest) {
     // MiniMax H3's GPU tier and the card's file as decided for this run: the GPU pre-flight checks the graph and file it picks.
     ...(h3 && { h3 }),
     plan: { end: plan.end },
+  };
+}
+
+/**
+ * The finishes MiniMax H3's 2K tier adds on your GPU (createH3TwoKRun): one Open-H3 Regenerate pass per take, checked
+ * (the refiner LoRA's switch, the finish's own plan) and priced as the run makes them.
+ */
+function h3TwoKExtra(req: GenerationRequest, model: ModelDef, op: Operation): { costUsd: number | null; notes: string[]; steps: { model: string; op: string }[] } | null {
+  if (!wantsH3TwoK(model.id, req.params?.resolution)) return null;
+  const off = regenSwitchedOff();
+  if (off) throw new Error(off);
+  const takes = Math.max(1, Math.min(4, Math.round(req.params?.numOutputs ?? 1)));
+  const { finish } = h3TwoKRequests(req, op, { keepLatent: keepsH3Latent() });
+  const p = previewChained(finish, 1);
+  return {
+    costUsd: p.costUsd === null ? null : Math.round(p.costUsd * takes * 10000) / 10000,
+    notes: [H3_2K_STEPS_NOTE],
+    steps: Array.from({ length: takes }, () => ({ model: p.model.id, op: p.op })),
   };
 }
 
@@ -964,7 +1062,11 @@ export function createGenerations(sent: GenerationRequest, opts: CreateOptions =
   const asked = stampTenant(given, opts);
   // A retired model or operation (a retry, an old script, a saved project) runs on what replaced it, and says so.
   const moved = currentRequest(asked);
-  const original = moved.request;
+  const original = withFinishOf(moved.request, opts.dependsOn);
+  // Open-H3 Regenerate is held until it has run on a card that fits it (REGEN_OFFERED): a run of it, or of MiniMax H3's 2K on
+  // your GPU that finishes with it, is refused here before any step is made, whichever way it was asked for.
+  const held = regenHeld(original);
+  if (held) throw new Error(held);
   // Open models make multi-shot films shot by shot, then join the clips. A Fuobe Original is taken on the engine it runs
   // on (Fuobe DoP's Frames mode is a GPU chain).
   // A model (or an Original's engine asked for) switched off in Settings → Models & licences is refused here, before a
@@ -972,9 +1074,9 @@ export function createGenerations(sent: GenerationRequest, opts: CreateOptions =
   const catalogModel = getModel(original.modelId);
   const found = catalogModel && offeredFor(catalogModel, original.engine);
   const shotModel = found && dualEngine(found) ? onEngine(found, engineFor(found, original.engine)) : found;
-  // An account's 3D model would be finished on this server, outside its own limits: not yet (the route refuses first).
+  // An account's 3D model is finished on this server under its own limits (model3d-finish.ts); on this install's GPUs it isn't offered yet.
   // Any Angle's 3D view is the exception: a splat and its turntable, nothing to finish here.
-  if (original.account && shotModel?.kind === "model3d" && shotModel.id !== ANY_ANGLE.buildModel) throw new Error(OWN_GPU_TOOL_MESSAGE);
+  if (original.account && original.place === "pool" && shotModel?.kind === "model3d" && shotModel.id !== ANY_ANGLE.buildModel) throw new Error(OWN_GPU_TOOL_MESSAGE);
   if (!opts.dependsOn && shotModel?.options.multiShot?.mode === "concat" && (original.params?.shots?.filter((x) => x.prompt.trim()).length ?? 0) > 1) {
     return createShotFilm(original, shotModel);
   }
@@ -986,6 +1088,11 @@ export function createGenerations(sent: GenerationRequest, opts: CreateOptions =
   // Its frames can come from earlier steps (framesWait): each clip then waits for the frames it starts and ends on.
   if (filmRoute && inferOperation(shotModel, original) === "keyframes" && (!opts.dependsOn || framesWait(original))) {
     return createKeyframeFilm(original, shotModel, filmRoute, { batchId: opts.batchId, dependsOn: opts.dependsOn });
+  }
+  // Image to 3D's "Refine detail" (open engine): the model, then Hi3D's refine of its mesh with the same photo.
+  // Its photo may come from an earlier step (a Canvas image node, an Assist plan's still): the refine then waits for it too.
+  if (shotModel && shotModel.kind === "model3d" && original.op !== "refine-3d" && chainedRefine(original) !== null) {
+    return createRefinedModel(original, shotModel, { batchId: opts.batchId, dependsOn: opts.dependsOn });
   }
   // Text to 3D on the open engine: a still first, then the 3D model of it. The operation is read as the planner
   // reads it (Assist, MCP and API clients usually leave op out).
@@ -1006,6 +1113,10 @@ export function createGenerations(sent: GenerationRequest, opts: CreateOptions =
   if (shotModel?.id === REGEN_MODEL) {
     const run = createRegenerateRun(original, shotModel, opts, createGenerations, joinClips, (id) => void cancelGeneration(id));
     if (run) return run;
+  }
+  // MiniMax H3 at 2K on your GPU (n7-10): a 768p draft, then Open-H3 Regenerate at 2K from it (from its latent for text to video).
+  if (shotModel && wantsH3TwoK(shotModel.id, original.params?.resolution)) {
+    return createH3TwoKRun(original, inferOperation(shotModel, original), opts, createGenerations, (id) => void cancelGeneration(id));
   }
   const deps = opts.dependsOn === undefined ? [] : Array.isArray(opts.dependsOn) ? opts.dependsOn : [opts.dependsOn];
   const waits = deps.length > 0;
@@ -1433,7 +1544,8 @@ async function advanceDependents(): Promise<void> {
       if (model?.routes.some((x) => x.provider === "llm")) await probeLocal();
       // Filled with the slots that have an input; stored with its whole chain (and what was skipped) for a retry.
       const filled = withChainInputs({ ...request, chain: slots }, values as string[]);
-      const original: GenerationRequest = { ...filled, chain: request.chain, chainFilled: true };
+      // A 2K finish names the draft it waits for as the latent to load (never an id stored before: a retried draft is new).
+      const original: GenerationRequest = latentFromDependency({ ...filled, chain: request.chain, chainFilled: true }, allIds.filter(keep), slots, deps);
       const prepared = asRun(() => prepare(original));
       const mode = chainMode(prepared, deps as Pick<Row, "provider">[], original);
       if (mode.error) throw new Error(mode.error);
@@ -1457,6 +1569,65 @@ async function advanceDependents(): Promise<void> {
       if (!handedOff) submitting().delete(r.id);
     }
   }
+}
+
+/** A chained 2K finish finishes the run its clip comes from (a retried draft is a new run: read again when it is created). */
+function withFinishOf(req: GenerationRequest, dependsOn: string | string[] | undefined): GenerationRequest {
+  if (!req.finishOf || dependsOn === undefined) return req;
+  const deps = Array.isArray(dependsOn) ? dependsOn : [dependsOn];
+  const at = slotsFor(req, deps.length).findIndex((s) => s.slot === "video");
+  return at >= 0 && deps[at] !== req.finishOf ? { ...req, finishOf: deps[at] } : req;
+}
+
+/**
+ * MiniMax H3's 2K finish (Open-H3 Regenerate chained after its 768p draft): the draft it waits for, when that draft kept
+ * its latent, is the latent it may load (latentHandOff checks it again when it starts). Any other latentFrom is dropped.
+ */
+function latentFromDependency(req: GenerationRequest, ids: string[], slots: ChainSlot[], deps: (Pick<Row, "request_json"> | undefined)[]): GenerationRequest {
+  if (req.modelId !== REGEN_MODEL) return req;
+  const at = slots.findIndex((s) => s.slot === "video");
+  let draft: GenerationRequest | undefined;
+  try {
+    draft = at >= 0 && deps[at] ? (JSON.parse(deps[at]!.request_json) as GenerationRequest) : undefined;
+  } catch {}
+  const { latentFrom: _stored, ...extra } = req.params?.extra ?? {};
+  void _stored;
+  const latentFrom = draft?.params?.extra?.latentDraft === true ? ids[at] : undefined;
+  if (!latentFrom && _stored === undefined) return req;
+  return { ...req, params: { ...req.params, extra: { ...extra, ...(latentFrom && { latentFrom }) } } };
+}
+
+/**
+ * The 2K hand-off as the run starts, on the ComfyUI it runs on (never trusted from the request; package n7-10). A draft
+ * keeps its latent only where one stays between jobs (not the owner's workers) and while its Turbo 4-step LoRA is on. A
+ * finish loads a latent only from a run of the same account (or the owner's own) that kept one on this same ComfyUI,
+ * and that no earlier finish found gone; otherwise it redraws its clip.
+ */
+export function latentHandOff(extra: Record<string, unknown> | undefined, account: string | undefined): Record<string, unknown> | undefined {
+  if (!extra || (extra.latentDraft === undefined && extra.latentFrom === undefined)) return extra;
+  const out = { ...extra };
+  const place = comfyPlace();
+  if (out.latentDraft !== undefined && !(out.latentDraft === true && place && keepsH3Latent())) delete out.latentDraft;
+  if (out.latentFrom !== undefined && !(typeof out.latentFrom === "string" && place && keptLatent(out.latentFrom, account, place))) delete out.latentFrom;
+  return out;
+}
+
+/** Whether run `id` kept its 768p latent on `place` for this account (the owner: undefined), and it is still there. */
+function keptLatent(id: string, account: string | undefined, place: string): boolean {
+  const row = db().prepare("SELECT status, request_json, external_meta_json FROM generations WHERE id = ?").get(id) as Pick<Row, "status" | "request_json" | "external_meta_json"> | undefined;
+  if (!row || row.status !== "succeeded" || accountOf(row) !== account) return false;
+  try {
+    const req = JSON.parse(row.request_json) as GenerationRequest;
+    const meta = JSON.parse(row.external_meta_json ?? "{}") as { latentAt?: unknown };
+    if (req.params?.extra?.latentDraft !== true || meta.latentAt !== place) return false;
+  } catch {
+    return false;
+  }
+  // A finish that found it gone (someone's computer reports that after the fact): the next one redraws the clip.
+  const gone = db()
+    .prepare("SELECT 1 FROM generations WHERE status = 'failed' AND error = ? AND json_extract(request_json, '$.params.extra.latentFrom') = ? LIMIT 1")
+    .get(REGEN_COPY.latentGone, id);
+  return !gone;
 }
 
 const statusOf = (id: string) => (db().prepare("SELECT status FROM generations WHERE id = ?").get(id) as Pick<Row, "status"> | undefined)?.status;
@@ -1659,6 +1830,320 @@ async function submitNow(
   index: number,
 ): Promise<void> {
   submitting().add(id);
+  // MiniMax H3's 2K hand-off, decided here, on the ComfyUI this run goes to.
+  if (providerId === "comfyui") {
+    const extra = latentHandOff(plan.params.extra, req.account);
+    if (extra !== plan.params.extra) plan = { ...plan, params: { ...plan.params, extra } };
+  }
+  // An account's run on its own GPU or key (not on this install's GPUs): a passing problem (a GPU that is off or starting
+  // up, a busy or down provider) is waited out within a budget, the tile saying what it waits for; anything else fails
+  // in plain words, with what helps (src/lib/diagnose.ts). The owner's runs and runs on this install's GPUs fail at once,
+  // in their own words, as before.
+  const account = req.account && req.place !== "pool" ? req.account : undefined;
+  const link = account && providerId === "comfyui" ? gpuLink(accountGpu(account)) : null;
+  const started = Date.now();
+  let tries = 0;
+  let rechecked = false;
+  try {
+    for (;;) {
+      let error: unknown;
+      // The first try reads the GPU's last status check (never asked again here): one that is off waits at once,
+      // instead of sending files to an address that answers nothing.
+      const known = link && tries === 0 ? cachedGpuState(account!, link.url) : undefined;
+      if (known && !known.online && known.trouble?.retryable) error = troubleError(known.trouble);
+      else {
+        try {
+          await handOver(id, route, providerId, plan, req, index);
+          if (link && statusOf(id) !== "failed") noteHandedOver(account!, link.url);
+          return;
+        } catch (e) {
+          error = e;
+        }
+      }
+      const status = statusOf(id);
+      // A cancel during the hand-over stays a cancel.
+      if (!status || status === "canceled") return;
+      let trouble = account ? accountTrouble(error, account, providerId, "submit", req) : undefined;
+      const heal = trouble?.retryable ? retryPlan(trouble.cause) : null;
+      if (heal && trouble) {
+        tries++;
+        const wait = backoffMs(tries, heal, trouble.retryAfterMs) * SELF_HEAL.scale;
+        if (Date.now() - started + wait <= heal.budgetMs * SELF_HEAL.scale) {
+          if (link) noteGpuState(account!, link.url, false, { trouble: asStatus(error, trouble, link) });
+          update(id, { status: "queued", message: waitingWords(trouble, isCloudProvider(providerId) ? providerId : undefined) });
+          if (!(await pause(id, wait))) return;
+          // The account moved its GPU meanwhile (another address, or this computer): this run was planned for the old one.
+          if (link && gpuLink(accountGpu(account!))?.url !== link.url) {
+            failRun(id, error, diagnoseGpuJob({ kind: "moved" }, { kind: "link", url: link.url }), req.account);
+            return;
+          }
+          continue;
+        }
+        // Out of time: a GPU that seemed off is asked once more before the run fails (it may be back by now).
+        if (link && !rechecked) {
+          rechecked = true;
+          const again = await recheckGpu(account!, link);
+          if (again === "online") continue;
+          trouble = { ...again, actions: withKeyOffer(again.actions, account!, req) };
+        }
+      }
+      failRun(id, error, trouble, req.account);
+      return;
+    }
+  } finally {
+    submitting().delete(id);
+  }
+}
+
+/** Self-healing's clock: tests make it faster (0.001: a 30-minute wait takes 1.8 s). */
+export const SELF_HEAL = { scale: 1 };
+
+/** Wait `ms`, looking every second whether the run was cancelled (false: it was, or it was deleted). */
+async function pause(id: string, ms: number): Promise<boolean> {
+  const end = Date.now() + ms;
+  for (;;) {
+    const left = end - Date.now();
+    if (left <= 0) return true;
+    await new Promise((r) => setTimeout(r, Math.min(1000, left)));
+    const s = statusOf(id);
+    if (!s || s === "canceled") return false;
+  }
+}
+
+/** A failed run in its words: an account's plain sentence (the owner's own detail as before), with what helps and "Fix it". */
+function failRun(id: string, e: unknown, trouble: Diagnosis | undefined, account: string | undefined): void {
+  const fix = (e as { fix?: GenerationFix }).fix;
+  const kept = keptFix(fix, trouble);
+  // What the GPU was missing (a model, a node class) is kept, so the tile offers "Fix it", and its GPU check counts as stale.
+  update(id, { status: "failed", error: trouble?.words ?? (e as Error).message, completed_at: Date.now(), message: null, ...(kept && { fix_json: kept }) });
+  if (fix) markStale(account ? `acct:${account}` : "install");
+}
+
+/** generations.fix_json: what the GPU was missing (GenerationFix) and, for an account, what its GPU or key ran into. */
+const keptFix = (fix: GenerationFix | undefined, trouble: Diagnosis | undefined): string | undefined =>
+  fix || trouble ? JSON.stringify({ ...(fix ?? {}), ...(trouble && { trouble: troubleOf(trouble) }) }) : undefined;
+
+/** A network failure (no answer at all) as its words, or undefined for any other error. */
+function networkReason(e: unknown): string | undefined {
+  const err = e as { message?: unknown; cause?: { code?: unknown } } | null;
+  const code = typeof err?.cause?.code === "string" ? err.cause.code : undefined;
+  const msg = String(err?.message ?? "");
+  if (!code && !/fetch failed|ECONNREFUSED|ENOTFOUND|ECONNRESET|ETIMEDOUT|EAI_AGAIN|socket hang up|UND_ERR/i.test(msg)) return undefined;
+  return [msg, code && !msg.includes(code) ? code : undefined].filter(Boolean).join(" ");
+}
+
+/** Another key of the account that runs the same model (Replicate for fal.ai, or the other way round). */
+function otherKeyFor(account: string, p: CloudProvider, modelId: string | undefined): CloudProvider | undefined {
+  const m = modelId ? getModel(modelId) : undefined;
+  return m ? accountProviders(account).find((k) => k !== p && m.routes.some((r) => r.provider === k)) : undefined;
+}
+
+/**
+ * The cloud version of a run on the account's GPU that one of its keys runs: a preset's first cloud route, or the same
+ * Fuobe Original on the cloud engine. Null without a key that serves it, or when the studio is open-source only.
+ */
+export function cloudTwin(req: Pick<GenerationRequest, "presetId" | "modelId">, account: string): { modelId: string; provider: CloudProvider; op?: string } | null {
+  if (!paidAllowed()) return null;
+  const keys = accountProviders(account);
+  if (!keys.length) return null;
+  const has = (id: string) => !!getModel(id);
+  const preset = req.presetId ? getPreset(req.presetId) : undefined;
+  const asked = getModel(req.modelId);
+  const routes: { modelId: string; op?: string }[] = preset ? presetRoutes(preset as Parameters<typeof presetRoutes>[0], "cloud", has) : asked && dualEngine(asked) ? [{ modelId: asked.id }] : [];
+  for (const { modelId: id, op } of routes) {
+    const m = getModel(id);
+    if (!m) continue;
+    const cloud = dualEngine(m) ? onEngine(m, "cloud") : m;
+    if (cloud.engine === "open") continue;
+    const p = CLOUD_PROVIDERS.find((k) => keys.includes(k) && cloud.routes.some((r) => r.provider === k));
+    // Another model: its operation there goes with it (the same model keeps the run's own).
+    if (p) return { modelId: id, provider: p, ...(op && id !== req.modelId && { op }) };
+  }
+  return null;
+}
+
+/** A GPU trouble's buttons, with "Run with your … key" when one of the account's keys runs this tool's cloud version. */
+function withKeyOffer(actions: TroubleAction[], account: string, req: Pick<GenerationRequest, "presetId" | "modelId">): TroubleAction[] {
+  if (actions.some((a) => a.kind === "run-with-key")) return actions;
+  const twin = cloudTwin(req, account);
+  return twin ? [...actions, withKeyAction(twin.provider, twin.modelId, twin.op)] : actions;
+}
+
+/**
+ * What an account's run ran into, as diagnose.ts reads it: its own GPU's words (comfyui.ts troubleError), or its key's
+ * provider's status and words. Undefined for anything else (a request's own problem, already in plain words).
+ */
+function accountTrouble(e: unknown, account: string, providerId: string, stage: KeyStage, req?: Pick<GenerationRequest, "presetId" | "modelId">): Diagnosis | undefined {
+  const own = (e as { trouble?: Diagnosis } | null)?.trouble;
+  if (own) return providerId === "comfyui" && req && own.cause.startsWith("gpu-") ? { ...own, actions: withKeyOffer(own.actions, account, req) } : own;
+  if (!isCloudProvider(providerId)) return undefined;
+  const ctx = { provider: providerId, other: otherKeyFor(account, providerId, req?.modelId) };
+  const message = String((e as Error | null)?.message ?? "");
+  // No key to send (removed, or one this server can't open any more): its own words, and where to add one.
+  if (message === addKeyMessage(providerId) || message === keyRemovedMessage(providerId)) {
+    return { cause: "key-rejected", words: message, actions: [{ kind: "key-settings", label: "Add your key", target: "/settings#your-keys" }], retryable: false };
+  }
+  const status = (e as { status?: unknown } | null)?.status;
+  // The provider's own words (provider-keys.ts accountKeyError keeps them, without the key) tell a refused key from a
+  // model the key may not run.
+  const said = (e as { said?: unknown } | null)?.said;
+  if (typeof status === "number" && status > 0) return diagnoseKey({ stage, status, text: typeof said === "string" ? said : message }, ctx);
+  const net = networkReason(e);
+  return net ? diagnoseKey({ stage, error: net }, ctx) : undefined;
+}
+
+/** A short, stable name for the address a run was sent to (kept with the run, never the address itself). */
+const addressKey = (url: string) => crypto.createHash("sha256").update(url.replace(/\/+$/, "")).digest("hex").slice(0, 16);
+
+/** A run reached the account's GPU: the status strip and the next run take it as online (without asking it). */
+function noteHandedOver(account: string, url: string): void {
+  const known = cachedGpuState(account, url);
+  if (known && !known.online) noteGpuState(account, url, true);
+}
+
+/** The account's GPU asked once more, before a run that couldn't reach it fails: "online", or why not (the run's words). */
+async function recheckGpu(account: string, link: { url: string; token?: string }): Promise<"online" | Diagnosis> {
+  const place = { kind: "link" as const, url: link.url, hasToken: !!link.token };
+  try {
+    const { url: _moved, ...info } = await testGpu(link, { timeoutMs: 8000, stage: "status" });
+    void _moved;
+    noteGpuState(account, link.url, true, { info });
+    return "online";
+  } catch (e) {
+    // The status strip keeps the check's words; the run says the same in a run's words.
+    const f: GpuFailure = (e instanceof GpuError && e.failure) || { stage: "status", error: (e as Error).message };
+    noteGpuState(account, link.url, false, { trouble: e instanceof GpuError && !e.failure ? e.trouble : diagnoseGpu(f, place) });
+    return e instanceof GpuError && !e.failure ? e.trouble : diagnoseGpu({ ...f, stage: "poll" }, place);
+  }
+}
+
+/** A run's GPU trouble as the status strip says it (in a check's words) when what came back is known; else as it is. */
+function asStatus(error: unknown, trouble: Diagnosis, link: { url: string; token?: string }): Diagnosis {
+  const f = (error as { failure?: GpuFailure } | null)?.failure;
+  return f ? diagnoseGpu({ ...f, stage: "status" }, { kind: "link", url: link.url, hasToken: !!link.token }) : trouble;
+}
+
+declare global {
+  /** Account runs whose polls keep failing: since when, how many in a row, and when to ask again (self-healing). */
+  var __fuobePollHeals: Map<string, { first: number; n: number; next: number }> | undefined;
+  /** Account runs already sent again once after their GPU restarted and lost them. */
+  var __fuobeResent: Set<string> | undefined;
+}
+const pollHeals = () => (globalThis.__fuobePollHeals ??= new Map());
+/** A run its GPU lost, sent again (diagnose.ts diagnoseGpuJob "lost"). */
+const RESENT_WORDS = "Your GPU restarted, so we sent this run again";
+const resentRuns = () => (globalThis.__fuobeResent ??= new Set());
+
+/** What a poll can't wait out: a key refused, credit gone, no access; a GPU that wants a password or a sign-in. */
+const FINAL_AT_POLL: ReadonlySet<string> = new Set(["key-rejected", "key-balance", "key-permission", "gpu-password", "gpu-password-wrong", "gpu-sign-in", "address-local"]);
+
+/** How long an account's run's polls may keep failing before it stops: its own GPU, or its key's provider. */
+const POLL_HEAL_MS = { comfyui: 15 * 60_000, cloud: 10 * 60_000 };
+/** Polls that fail in a row before the tile says it is waiting. */
+const POLL_MISSES_SAID = 3;
+
+/**
+ * A run its GPU lost (ComfyUI restarted): sent again once, planned as it was (inputs uploaded again). False when it
+ * can't be (sent again before, or its plan doesn't go to the same place any more).
+ */
+function resend(r: Row, account: string, words: string): boolean {
+  if (resentRuns().has(r.id)) return false;
+  try {
+    const stored = JSON.parse(r.request_json) as GenerationRequest;
+    const p = asAccount(account, () => prepare(stored));
+    if (p.providerId !== r.provider) return false;
+    resentRuns().add(r.id);
+    if (resentRuns().size > 5000) resentRuns().delete(resentRuns().values().next().value!);
+    db().transaction(() => {
+      update(r.id, { external_id: null, external_meta_json: null, status: "queued", progress: null, message: words });
+      db().prepare("DELETE FROM generation_runs WHERE id = ?").run(r.id);
+    })();
+    submitting().add(r.id);
+    void submit(r.id, p.route, p.providerId, p.plan, p.req, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * An account's poll that failed: a key that won't work (refused, no credit, no access) fails the run at once; a passing
+ * problem (its GPU off, its provider busy) is asked again with a growing wait, the tile saying so, until the budget is
+ * spent: then its GPU is asked once more, and the run fails in plain words. True when the poll was handled here.
+ */
+async function healPoll(r: Row, ctx: PollContext, account: string, pollError: unknown): Promise<boolean> {
+  const stored = JSON.parse(r.request_json) as GenerationRequest;
+  const d = accountTrouble(pollError, account, r.provider, "poll", stored);
+  const cancel = () =>
+    adapterFor(r.provider, account)
+      .cancel?.(ctx)
+      .catch(() => {});
+  if (d && !d.retryable && FINAL_AT_POLL.has(d.cause)) {
+    await cancel();
+    pollHeals().delete(r.id);
+    failRun(r.id, pollError, d, account);
+    return true;
+  }
+  if (!d) return false;
+  const now = Date.now();
+  const h = pollHeals().get(r.id) ?? { first: now, n: 0, next: 0 };
+  h.n++;
+  h.next = now + backoffMs(h.n, { budgetMs: 0, firstMs: 5_000, maxMs: 60_000 }, d.retryAfterMs) * SELF_HEAL.scale;
+  pollHeals().set(r.id, h);
+  const budget = (r.provider === "comfyui" ? POLL_HEAL_MS.comfyui : POLL_HEAL_MS.cloud) * SELF_HEAL.scale;
+  if (now - h.first >= budget) {
+    const link = r.provider === "comfyui" ? gpuLink(accountGpu(account)) : null;
+    // Its GPU asked once more: back, it is polled again at once (and collected, or found lost and sent again).
+    if (link && (await recheckGpu(account, link)) === "online") {
+      pollHeals().delete(r.id);
+      return true;
+    }
+    await cancel();
+    pollHeals().delete(r.id);
+    const minutes = Math.max(1, Math.round((now - h.first) / 60_000));
+    const end = link ? diagnoseGpuJob({ kind: "gone", minutes }, { kind: "link", url: link.url }) : d;
+    failRun(r.id, pollError, { ...end, actions: link ? withKeyOffer(end.actions, account, stored) : end.actions }, account);
+    return true;
+  }
+  if (h.n >= POLL_MISSES_SAID) {
+    const words = r.provider === "comfyui" ? "Your GPU stopped answering. Waiting for it to come back" : waitingWords(d, isCloudProvider(r.provider) ? r.provider : undefined);
+    if (r.message !== words) update(r.id, { message: words });
+  }
+  return true;
+}
+
+/** Copy one result of an account's run, trying again a few times when the copy breaks off (a passing network problem). */
+async function persistWithRetry(o: RichOutput, id: string): Promise<OutputFile> {
+  for (let n = 1; ; n++) {
+    try {
+      return await persistOutput(o, id);
+    } catch (e) {
+      const msg = (e as Error).message ?? "";
+      const passing =
+        !(e instanceof AccountFilesFull) && !/^The answer was over/.test(msg) && msg !== ACCOUNT_MESSAGES.diskLow && (/^download (5\d\d|429|408)$/.test(msg) || e instanceof RemoteFetchError || !!networkReason(e));
+      if (!passing || n >= 3) throw e;
+      await new Promise((r) => setTimeout(r, [2_000, 5_000][n - 1] * SELF_HEAL.scale));
+    }
+  }
+}
+
+/** Why an account's result couldn't be saved, in its words: too big, an expired link, or a GPU that stopped answering. */
+function saveTrouble(e: unknown, provider: string): Diagnosis | undefined {
+  const msg = (e as Error).message ?? "";
+  if (msg === ACCOUNT_MESSAGES.diskLow) return undefined;
+  // (An account's saved address is in scope for its runs on its keys too: only a run on its GPU was copied from there.)
+  const link = provider === "comfyui" ? ownLink() : null;
+  const over = /^The answer was over (.+)$/.exec(msg)?.[1];
+  if (link) return diagnoseGpuJob({ kind: "save", ...(over && { over }) }, link);
+  if (isCloudProvider(provider) && /^download (403|404|410)$/.test(msg)) return resultExpired();
+  return undefined;
+}
+
+/**
+ * Hand a run over to its provider once: its files, then the job. Throws what went wrong (submitNow decides whether to wait
+ * and try again, or to fail the run).
+ */
+async function handOver(id: string, route: ModelRoute, providerId: ProviderId, plan: ReturnType<typeof planGeneration>, req: GenerationRequest, index: number): Promise<void> {
   /** Why the run failed, once it has: its files still waiting to be sent are not sent. */
   let failed: { error: unknown } | undefined;
   try {
@@ -1799,8 +2284,28 @@ async function submitNow(
         update(id, { prompt });
       }
     }
+    // H3 with references (Pika H3 Flex Ref2VA): the studio's names (Image 1, Clip 1, Voice 1) become H3's tags (<Picture 1>,
+    // <Video 1>, <Audio 1>) in the same layout, with no alignment line (src/lib/h3-references.ts).
+    // Talk from a voice clip (avatar on H3): the portrait speaks the voice clip, with the words saying how.
+    if (plan.model.options.promptFormat === "minimax-h3" && plan.op === "avatar" && !inH3Layout(prompt ?? "")) {
+      const wrapped = h3Prompt(h3TalkPrompt(prompt ?? ""), "t2v", h3Frames(plan.params.duration ?? plan.model.defaults?.duration ?? 5), plan.sound?.soundscape ?? "Only the voice of <Audio 1>, clear and close.", plan.sound?.music);
+      prompt = wrapped;
+      update(id, { prompt });
+    } else if (plan.model.options.promptFormat === "minimax-h3" && plan.op === "ref2v" && prompt) {
+      const wrapped = h3Prompt(h3ReferenceTags(prompt), "t2v", h3Frames(plan.params.duration ?? plan.model.defaults?.duration ?? 5), plan.sound?.soundscape, plan.sound?.music);
+      if (wrapped !== prompt) {
+        prompt = wrapped;
+        update(id, { prompt });
+      }
+    }
+    // Kandinsky 6.0 (both engines) reads spoken lines and the sound in tags of its own (src/lib/kandinsky-prompt.ts): quoted
+    // words and a "Sound:" line become them for this run; the run keeps the words as typed, so Reuse shows them.
+    if (plan.model.options.promptFormat === "kandinsky6" && prompt) prompt = kandinskyPrompt(prompt);
     const input: GenInput = {
       ...plan.params,
+      // The clip's size is only ever its header's (below): a size the request states (params.sourceSize) prices the run
+      // before it starts, never what an upscaler's factor is made from.
+      sourceSize: undefined,
       prompt,
       negativePrompt: req.negativePrompt,
       images: (await Promise.all((req.inputs?.images ?? []).map((ref, i) => (i === 0 ? prepCropped(ref) : prep(ref))))).filter(Boolean) as string[],
@@ -1896,6 +2401,15 @@ async function submitNow(
     }
     // An upscale that wouldn't enlarge the clip (a 1080p clip at a default 1080p; a 4K clip would even shrink):
     // a tier the model only defaulted to moves up to the next one it offers, one the caller picked is refused.
+    // A clip longer than the model takes (Kandinsky VSR: about 5 s) is refused, never cut short; one billed per output frame is
+    // priced again on its size and length.
+    if (plan.op === "upscale-video") {
+      const long = sourceLengthProblem(plan.model, input.sourceDuration);
+      if (long) throw new Error(long);
+      if (plan.model.pricing?.outputFrames && input.sourceSize && providerId !== "mock" && plan.model.engine !== "open") {
+        update(id, { cost_usd: estimateCost(plan.model, { ...plan.params, sourceSize: input.sourceSize, sourceDuration: input.sourceDuration }, 1, plan.op) });
+      }
+    }
     if (plan.op === "upscale-video" && input.sourceSize) {
       const tier = upscaleTier(input.resolution, plan.model.options.resolutions, input.sourceSize, req.params?.resolution !== undefined);
       if ("error" in tier) throw new Error(tier.error);
@@ -1903,6 +2417,8 @@ async function submitNow(
         input.resolution = tier.resolution;
         if (providerId !== "mock" && plan.model.engine !== "open") update(id, { cost_usd: estimateCost(plan.model, { ...plan.params, resolution: tier.resolution }, 1, plan.op) });
       }
+      const sides = sideMultipleProblem(plan.model.name, plan.model.options.sideMultiple, plan.model.options.resolutions, input.resolution, input.sourceSize);
+      if (sides) throw new Error(sides);
     }
     // LoRA files: ComfyUI gets the ones it lacks downloaded into its loras folder; a cloud run gets a civitai
     // file mirrored once to the provider's storage (the civitai key never leaves this server).
@@ -1925,24 +2441,22 @@ async function submitNow(
       if (status) update(id, { external_id: res.externalId, external_meta_json: JSON.stringify(res.meta ?? {}), message: null });
       return;
     }
+    // An account's link: which address the job went to (its name, never the address), so a run whose account moved to
+    // another address meanwhile says so instead of asking the new one about it.
+    const sentTo = req.account && req.place !== "pool" && providerId === "comfyui" ? ownLink()?.url : undefined;
     db().transaction(() => {
       update(id, {
         external_id: res.externalId,
-        external_meta_json: JSON.stringify(res.meta ?? {}),
+        external_meta_json: JSON.stringify({ ...(res.meta ?? {}), ...(sentTo && { sentTo: addressKey(sentTo) }) }),
         provider_input_json: res.payload ? JSON.stringify(res.payload).slice(0, 200_000) : null,
-        message: "Queued",
+        // A run sent again after its GPU lost it says so until its GPU reports on it.
+        message: resentRuns().has(id) ? RESENT_WORDS : "Queued",
       });
       recordSubmission(id, now);
     })();
   } catch (e) {
     failed ??= { error: e };
-    // A cancel during the hand-over stays a cancel. What the GPU was missing (a model, a node class) is kept, so the
-    // tile offers "Fix it", and the account's GPU check counts as stale.
-    const fix = (e as { fix?: GenerationFix }).fix;
-    if (statusOf(id) !== "canceled") update(id, { status: "failed", error: (e as Error).message, completed_at: Date.now(), message: null, ...(fix && { fix_json: JSON.stringify(fix) }) });
-    if (fix) markStale(req.account ? `acct:${req.account}` : "install");
-  } finally {
-    submitting().delete(id);
+    throw e;
   }
 }
 
@@ -1954,6 +2468,8 @@ const POLL_MS = 1500;
 const FAST_POLL_MS = 500;
 /** How long a job may run once its provider has started it… */
 const TIMEOUT_MS = 45 * 60 * 1000;
+/** …except on the WorldCast worker (N7-9): 50 steps at CFG 5 on a 14B model, tens of minutes a clip (its time is unpublished). */
+const WORLDCAST_TIMEOUT_MS = 3 * 60 * 60 * 1000;
 /** …and how long it may wait in the provider's queue first (a busy local GPU works through jobs one by one). */
 const QUEUE_TIMEOUT_MS = 4 * 60 * 60 * 1000;
 /** A row this old with no external id, that no submit in this process is working on, was cut off by a restart. */
@@ -1975,12 +2491,12 @@ declare global {
 }
 
 /**
- * Run `fn` as the owner's background work: outside any account's run (its tenant, its ComfyUI, the open-engine settings
+ * Run `fn` as the owner's background work: outside a skill check's demo scope and any account's run (its tenant, its ComfyUI, the open-engine settings
  * it runs with). Timers started inside inherit where they were started, so the runner, often first started by a run, is
  * started this way: every tick then polls each row in that row's own context.
  */
 export function outsideRuns<T>(fn: () => T): T {
-  return outsideTenant(() => outsideOwnGpu(() => withoutCandidates(fn)));
+  return outsideDemo(() => outsideTenant(() => outsideOwnGpu(() => withoutCandidates(fn))));
 }
 
 /**
@@ -2154,11 +2670,27 @@ async function pollOne(r: Row): Promise<void> {
   let res: PollResult | undefined;
   let pollError: unknown;
   const account = accountOf(r);
+  // An account's own GPU or key (not this install's GPUs): its polls heal (healPoll), and its failures say what helps.
+  const own = account && !poolOf(r) ? account : undefined;
+  if (own && r.provider === "comfyui" && typeof ctx.meta.sentTo === "string") {
+    // Sent to a link the account has since replaced with another: the new one knows nothing of it.
+    const now = gpuLink(accountGpu(own));
+    if (now && addressKey(now.url) !== ctx.meta.sentTo) {
+      pollHeals().delete(r.id);
+      return failRun(r.id, new Error("moved"), diagnoseGpuJob({ kind: "moved" }, { kind: "link", url: now.url }), own);
+    }
+  }
+  // A poll that failed a moment ago waits its turn (a growing wait), instead of asking every 1.5 s.
+  const healing = own ? pollHeals().get(r.id) : undefined;
+  if (healing && Date.now() < healing.next) return;
   try {
     res = await adapterFor(r.provider, account).poll(ctx);
   } catch (e) {
     pollError = e;
   }
+  if (own && pollError && (await healPoll(r, ctx, own, pollError))) {
+    if (statusOf(r.id) !== "queued" && statusOf(r.id) !== "running") return;
+  } else if (own && !pollError) pollHeals().delete(r.id);
   // An account's job waits at most 30 minutes in its own ComfyUI's queue (or its provider's).
   const stored = JSON.parse(r.request_json) as GenerationRequest;
   const onPool = !!account && stored.place === "pool";
@@ -2173,7 +2705,8 @@ async function pollOne(r: Row): Promise<void> {
     }
     // A job that has just left the queue gets its full running time from now.
     const startsNow = res?.state === "running" && !run.started_at;
-    const overdue = run.started_at ? now - run.started_at > TIMEOUT_MS : !startsNow && now - run.submitted_at > queueMs;
+    const runMs = r.provider === "worldcast" ? WORLDCAST_TIMEOUT_MS : TIMEOUT_MS;
+    const overdue = run.started_at ? now - run.started_at > runMs : !startsNow && now - run.submitted_at > queueMs;
     if (overdue) {
       // Stop the provider's job too, so it doesn't keep rendering (or billing) for nothing.
       await adapterFor(r.provider, account)
@@ -2182,7 +2715,7 @@ async function pollOne(r: Row): Promise<void> {
       update(r.id, {
         status: "failed",
         error: run.started_at
-          ? `Timed out after ${TIMEOUT_MS / 60_000} minutes`
+          ? `Timed out after ${runMs / 60_000} minutes`
           : res?.state === "queued" && res.timeoutError
             ? res.timeoutError
             : onPool
@@ -2195,14 +2728,31 @@ async function pollOne(r: Row): Promise<void> {
       });
       return;
     }
-    if (!res) throw pollError;
+    if (!res) {
+      // An account's poll that healPoll took (waiting with a growing wait): nothing more to do this turn.
+      if (own && pollHeals().has(r.id)) return;
+      throw pollError;
+    }
     if (startsNow) db().prepare("UPDATE generation_runs SET started_at = ? WHERE id = ?").run(Date.now(), r.id);
     update(r.id, { status: res.state, progress: res.progress ?? r.progress, message: res.message ?? null });
     return;
   }
   if (res.state === "failed") {
+    // Its GPU restarted and lost the job: an account's run is sent again once, as a computer's tab does.
+    if (own && res.lost && resend(r, own, RESENT_WORDS)) return;
+    // An account's run: its own GPU's words (comfyui.ts), or its key's provider's read plainly; the provider's own words
+    // go in the details line. The owner's runs keep the provider's words.
+    const trouble =
+      res.trouble ??
+      (own && isCloudProvider(r.provider)
+        ? diagnoseKey(
+            { stage: "poll", failed: true, text: res.error, canceled: r.provider === "replicate" && /^(canceled|aborted)$/i.test(res.error.trim()) },
+            { provider: r.provider, other: otherKeyFor(own, r.provider, r.model_id) },
+          )
+        : undefined);
     // What the GPU was missing (a model, a node class): the tile offers "Fix it", and the GPU's check counts as stale.
-    update(r.id, { status: "failed", error: res.error, completed_at: Date.now(), message: null, ...(res.fix && { fix_json: JSON.stringify(res.fix) }) });
+    const kept = keptFix(res.fix, own ? trouble : undefined);
+    update(r.id, { status: "failed", error: (own && trouble?.words) || res.error, completed_at: Date.now(), message: null, ...(kept && { fix_json: kept }) });
     if (res.fix) markStale(account ? `acct:${account}` : "install");
     return;
   }
@@ -2249,7 +2799,8 @@ async function pollOne(r: Row): Promise<void> {
   } else {
     for (const o of keepMatte(res.outputs as RichOutput[], matte)) {
       try {
-        outputs.push(await persistOutput(o, r.id));
+        // An account's own GPU or key: a copy that breaks off is tried again a few times (the result is made, and paid).
+        outputs.push(await (own ? persistWithRetry(o, r.id) : persistOutput(o, r.id)));
       } catch (e) {
         if (account) {
           for (const kept of outputs) if (kept.assetId) deleteAsset(kept.assetId);
@@ -2258,8 +2809,11 @@ async function pollOne(r: Row): Promise<void> {
             const left = rest.url ? scratchOutputFile(rest.url) : null;
             if (left) fs.rmSync(left, { force: true });
           }
-          const why = e instanceof AccountFilesFull ? e.message : "We couldn't save this result. Press Retry.";
-          update(r.id, { status: "failed", error: why, completed_at: Date.now(), message: null });
+          // Its own GPU or key: why, and what helps (a file over the cap, an expired link, a GPU that went away).
+          const trouble = own && !(e instanceof AccountFilesFull) ? saveTrouble(e, r.provider) : undefined;
+          const why = e instanceof AccountFilesFull ? e.message : (trouble?.words ?? "We couldn't save this result. Press Retry.");
+          const kept = keptFix(undefined, trouble);
+          update(r.id, { status: "failed", error: why, completed_at: Date.now(), message: null, ...(kept && { fix_json: kept }) });
           return;
         }
         outputs.push({ url: o.url, kind: o.kind ?? r.kind, ...inlineText(o.text, o.meta), ...(o.draftId ? { draftId: o.draftId } : {}) });

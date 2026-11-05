@@ -569,15 +569,16 @@ export function RelightTool({ app }: { app?: { name: string; description: string
       setSaving(null);
     }
   };
-  /** Keeps the blend: the owner's Library (a local result), an account's own uploads. Returns its file. */
+  /** Keeps the blend as a result made here: in the owner's Library, or as one of an account's own runs. Returns its file. */
   const keep = async (): Promise<string | null> => {
     if (keptNow) return keptNow;
     const at = blendAt;
     setSaving("keep");
     try {
       const file = new File([await renderFull()], `relight-${stamp()}.png`, { type: "image/png" });
-      const asset = await uploadFile(file);
-      if (owner) {
+      // Rendered here (no model made it), so any account may upload it.
+      const asset = await uploadFile(file, { kinetic: account });
+      if (owner || account) {
         // Its input is the photo it lit (stored first when it is the sample), so Relight on it opens that photo.
         const original = await ensureServerPhoto();
         const res = await fetch("/api/generations/local", {
@@ -597,7 +598,7 @@ export function RelightTool({ app }: { app?: { name: string; description: string
         if (!res.ok) throw responseError(res, ((await res.json().catch(() => ({}))) as { error?: string }).error ?? "Couldn't save");
       }
       setResults((m) => (current ? new Map(m).set(key, { ...current, kept: { url: asset.url, at } }) : m));
-      toast.success(owner ? "Saved to your Library" : "Saved to your uploads");
+      toast.success(owner ? "Saved to your Library" : "Saved to your runs");
       return asset.url;
     } catch (e) {
       toastError(e);

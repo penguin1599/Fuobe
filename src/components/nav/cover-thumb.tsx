@@ -23,9 +23,11 @@ interface SizeSpec {
   h: number;
   /**
    * Which copy to load: the 96 px mini for the smallest boxes (the 320 px thumb where a cover has no mini), the 320 px
-   * thumb for small boxes; fluid boxes pick between thumb and poster by `sizes`.
+   * thumb for small boxes; fluid boxes pick by `sizes` between thumb and poster, or among the cover's larger copies
+   * when it has them (MegaCover.hd).
    */
   src: "mini" | "thumb" | "both";
+  /** The box's width for the srcset (a caller whose box is another width gives its own: CoverThumb's `sizes`). */
   sizes: string;
 }
 
@@ -46,8 +48,8 @@ export const COVER_SIZES: Record<CoverSize, SizeSpec> = {
   pill: { box: "size-10 rounded-[10px]", w: 40, h: 40, src: "thumb", sizes: "40px" },
   /** 16:9, full width: the "next to try" card. */
   wide: { box: "aspect-video w-full rounded-[10px]", w: 512, h: 288, src: "both", sizes: "300px" },
-  /** 16:9, full width: a menu's ready-board tile (Canvas), about 200 px wide. */
-  tile16: { box: "aspect-video w-full rounded-[10px]", w: 320, h: 180, src: "thumb", sizes: "200px" },
+  /** 16:9, full width: a ready-board tile (the Canvas menu's, 222 to 262 px; the phone sheet's): its caller gives `sizes`. */
+  tile16: { box: "aspect-video w-full rounded-[10px]", w: 320, h: 180, src: "both", sizes: "262px" },
 };
 
 export function CoverThumb({
@@ -56,6 +58,7 @@ export function CoverThumb({
   size,
   icon,
   eager,
+  sizes: boxSizes,
   className,
 }: {
   /** A preset id with a real cover (NavEntry.cover, a goal tap's preset); undefined shows the fallback. */
@@ -67,20 +70,26 @@ export function CoverThumb({
   icon?: NavIconName;
   /** Load at once (a panel about to open) instead of when it comes near the screen. */
   eager?: boolean;
+  /** A fluid box's width for the srcset, when it isn't its size's usual one (a lead card two tracks wide, a phone's tile). */
+  sizes?: string;
   className?: string;
 }) {
   const nav = useNavCover(given ? undefined : id);
-  const cover = given ?? nav;
+  const cover: MegaCover | undefined = given ?? nav;
   const s = COVER_SIZES[size];
   const small = s.src === "mini" ? (cover?.mini ?? cover?.thumb) : cover?.thumb;
+  const sizes = s.src === "both" ? (boxSizes ?? s.sizes) : undefined;
+  // Its larger copies, where it has them (the Canvas menu's covers): AVIF first, else JPEG, the narrowest at least as
+  // wide as the box on this screen, so a 2x or 3x screen never shows a copy stretched past its own pixels.
+  const hd = sizes ? cover?.hd : undefined;
   // How the cover sits in a box of another shape (cover-framing.ts): a square keeps its top part by default, where faces are.
   const whole = cover?.framing?.fit === "whole";
-  const img = cover && (
+  const still = cover && (
     // eslint-disable-next-line @next/next/no-img-element -- versioned static covers, sized by the box (no optimizer round trip)
     <img
       src={small}
-      srcSet={s.src === "both" ? `${cover.thumb} 320w, ${cover.poster} 512w` : undefined}
-      sizes={s.src === "both" ? s.sizes : undefined}
+      srcSet={hd ? hd.jpeg : sizes ? `${cover.thumb} 320w, ${cover.poster} 512w` : undefined}
+      sizes={sizes}
       width={s.w}
       height={s.h}
       alt=""
@@ -90,6 +99,14 @@ export function CoverThumb({
       className="absolute inset-0 size-full object-cover"
       style={{ objectPosition: cover.framing?.focus ?? "50% 25%" }}
     />
+  );
+  const img = hd ? (
+    <picture>
+      <source type="image/avif" srcSet={hd.avif} sizes={sizes} />
+      {still}
+    </picture>
+  ) : (
+    still
   );
   return (
     <span aria-hidden data-cover={cover ? (id ?? "") : undefined} className={cn("relative block shrink-0 overflow-hidden bg-muted", s.box, className)}>

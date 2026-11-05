@@ -273,6 +273,14 @@ interface RunnerRow {
 
 const runnerOf = (principal: Principal) => rdb().prepare("SELECT * FROM relay_runners WHERE principal = ?").get(principal) as RunnerRow | undefined;
 
+/**
+ * The principal's runner is a ComfyUI paired with a code (Fuobe Connect runs inside ComfyUI, device "connect-…"), not
+ * a Fuobe tab: a run waiting for it needs that ComfyUI started, not a tab opened.
+ */
+export function pairedRunner(principal: Principal): boolean {
+  return !!runnerOf(principal)?.device.startsWith("connect-");
+}
+
 /** Is a computer of this principal's online: it beat in the last 30 s, and its ComfyUI answered? */
 export function runnerOnline(principal: Principal, now = Date.now()): boolean {
   const r = runnerOf(principal);

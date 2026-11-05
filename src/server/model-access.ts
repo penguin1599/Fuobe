@@ -1,7 +1,8 @@
 import "server-only";
 import { MODELS } from "@/lib/catalog";
 import { characterLora } from "@/lib/catalog/character-swap";
-import { REGEN_LORA } from "@/lib/catalog/regenerate";
+import { PIKA_FLEX_LORAS } from "@/lib/catalog/pika-flex";
+import { H3_TURBO_4STEP_LORA, REGEN_LORA } from "@/lib/catalog/regenerate";
 import { onEngine, providerEngine } from "@/lib/catalog/engines";
 import { LORA_LIBRARY } from "@/lib/catalog/lora-library.generated";
 import { libraryEntry, loraName } from "@/lib/catalog/loras";
@@ -15,6 +16,7 @@ import {
   LICENCE_CLASSES,
   llmLicence,
   licenceInfo,
+  UNKNOWN_LICENCE,
   loraLicenceInfo,
   mergeLicences,
   NODE_PACKS,
@@ -44,7 +46,7 @@ import {
 import { db } from "./db";
 import { localModelInUse } from "./llm";
 import { loadManifest } from "./providers/comfyui";
-import { characterLoraLicence, loraLicenceRows, regenLoraLicence } from "@/lib/lora-licences";
+import { characterLoraLicence, loraLicenceRows, regenLoraLicence, turbo4StepLicence } from "@/lib/lora-licences";
 
 /**
  * Settings → Models & licences on the server: the switches (one settings row, JSON), each route's licence and
@@ -120,8 +122,10 @@ function comfyFacts(endpoint: string): { licence: LicenceInfo; packs: string[]; 
 }
 
 /** A route's licence: the weights' for ComfyUI, the provider's terms for a paid API, Fuobe's own code in the browser. */
-export function routeLicence(route: ModelRoute, model: Pick<ModelDef, "vendor">): LicenceInfo {
+export function routeLicence(route: ModelRoute, model: Pick<ModelDef, "vendor" | "licence">): LicenceInfo {
   if (route.provider === "comfyui") return comfyFacts(route.endpoint).licence;
+  // The WorldCast worker (N7-9): the weights it runs, as the catalog records them (ModelDef.licence).
+  if (route.provider === "worldcast") return model.licence ? weightsLicence(model.licence) : licenceInfo(UNKNOWN_LICENCE);
   if (route.provider === "local") return BROWSER_LICENCE;
   if (route.provider === "llm") {
     const local = localModelInUse();
@@ -249,6 +253,7 @@ export function loraLicence(l: Pick<LoraRef, "file" | "url" | "licence">): Licen
   const h3 = characterLora(l.file);
   if (h3) return characterLoraLicence(h3);
   if (l.file === REGEN_LORA.file) return regenLoraLicence();
+  if (l.file === H3_TURBO_4STEP_LORA.file) return turbo4StepLicence();
   const e = libraryEntry(l);
   return loraLicenceInfo(l.licence ?? e?.licence, e?.page);
 }
@@ -319,7 +324,7 @@ export function knownSwitch(kind: "model" | "provider" | "pack" | "lora", id: st
     case "pack":
       return NODE_PACKS.some((p) => p.name === id);
     case "lora":
-      return LORA_LIBRARY.some((e) => e.file === id) || Object.values(OSS_LORAS).some((refs) => refs.some((r) => r.file === id)) || !!characterLora(id) || id === REGEN_LORA.file;
+      return LORA_LIBRARY.some((e) => e.file === id) || Object.values(OSS_LORAS).some((refs) => refs.some((r) => r.file === id)) || !!characterLora(id) || id === REGEN_LORA.file || PIKA_FLEX_LORAS.some((l) => l.file === id) || id === H3_TURBO_4STEP_LORA.file;
   }
 }
 

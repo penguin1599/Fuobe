@@ -6,7 +6,7 @@
  *   node scripts/gen-clean-voice-demo.mjs --room room.png --quiet quiet.png --noisy noisy.wav --clean clean.wav
  *     [--start 0] [--out public/samples/clean-voice]
  *
- * --room   the brasserie photo (4:3); --quiet the same photo with the room softened and dimmed around her.
+ * --room   the restaurant photo (4:3); --quiet the same photo with the room softened and dimmed around her.
  *          Both become 1280x960 WebP (room.webp, quiet.webp).
  * --noisy  the recording with the room in it; --clean her voice alone. Same moment, same length: the demo plays both
  *          from one clock and switches between them. Both are cut to the same 8 s from --start, made 48 kHz mono, and

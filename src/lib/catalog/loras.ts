@@ -40,6 +40,28 @@ export interface LoraEntry extends LoraRef {
   notes?: string;
 }
 
+/**
+ * One of Fuobe's own LoRAs before it is trained (research §6 and the Wan 2.2 motion LoRAs; scripts/train/): what it
+ * will be and where its job spec and data-licence log live. No preset uses one until its file is published.
+ */
+export interface PlannedLora {
+  key: string;
+  base: string;
+  group: "look" | "motion" | "effect";
+  kind: string;
+  /** The presets it is meant for (generic words). */
+  presets: string[];
+  /** The local file name it will have. */
+  file: string;
+  status: "planned";
+  /** The research's trainer line (hosted trainer and the AI-Toolkit route). */
+  trainer: string;
+  /** Its job spec and data-licence log in the repo. */
+  spec: string;
+  dataLog: string;
+  licence: LoraLicence;
+}
+
 export interface MotionEffectLoras {
   kind: "motion" | "effect";
   /** Preset names (generic words) this row covers. */

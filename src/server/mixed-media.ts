@@ -29,7 +29,8 @@ import {
 import { mixedLoras } from "@/lib/catalog/mixed-media-looks";
 import { clipLengthProblem, originalSegmentProblem, planSegments, type PlanStep } from "@/lib/catalog/shorts";
 import { sourceSeconds, takesImage } from "@/lib/catalog/shorts-models";
-import type { Engine, Generation, ProviderId } from "@/lib/catalog/types";
+import type { Engine, Generation, GenerationRequest, ProviderId } from "@/lib/catalog/types";
+import { generationAccount } from "./account-library";
 import { createPipeline } from "./chains";
 import { db } from "./db";
 import { ConnectComfyError, DROPPED_UNUSED, getGeneration, previewChained, unfilledRequest, waitedOnFailure } from "./generations";
@@ -37,6 +38,7 @@ import { withoutMissingOnComfy, withoutUnreachableCivitai } from "./loras";
 import { comfyLoraFiles, probeComfy } from "./providers/comfyui";
 import { engineMode, getSetting } from "./settings";
 import { probeSource, ShortsError } from "./shorts";
+import { tenantAccount } from "./tenant";
 
 /**
  * Mixed Media renders and preview frames. No table of its own: every render is a pipeline of
@@ -171,7 +173,9 @@ async function planInput(body: MixedBody, opts: { probe: boolean }): Promise<{ i
   let reach = original && mode !== "fast" ? withoutUnreachableCivitai(mixedLoras(preset.id), body.engine === "open" ? "comfyui" : "fal") : undefined;
   // On your GPU without a LoRA folder (Settings → LoRAs) Fuobe can't download one, so ComfyUI must have it already: a LoRA
   // it doesn't list is left out and said here, rather than the render failing once it's handed over.
-  if (reach?.loras.length && body.engine === "open" && !getSetting("comfyLorasDir") && (await probeComfy())) {
+  // An account's own ComfyUI is asked when its run is checked (account-tool-run.ts: the LoRAs it lacks, before anything
+  // is queued), never on a price check.
+  if (reach?.loras.length && body.engine === "open" && !tenantAccount() && !getSetting("comfyLorasDir") && (await probeComfy())) {
     const onComfy = withoutMissingOnComfy(reach.loras, await comfyLoraFiles());
     reach = { loras: onComfy.loras, notes: [...reach.notes, ...onComfy.notes] };
   }
@@ -275,13 +279,43 @@ function run(steps: PlanStep[], opts: { existing?: Record<string, string> } = {}
 /** What the page follows of a render: every step but the per-frame edits (their count instead). */
 const followed = (p: { items: Generation[] }) => ({ items: p.items.filter((g) => g.feature !== MIXED_FRAME_FEATURE), frames: p.items.filter((g) => g.feature === MIXED_FRAME_FEATURE).length });
 
-/** Start the full render; returns the finished video's generation (the others wait for it). */
-export async function createMixed(body: MixedBody): Promise<{ final: Generation; items: Generation[]; frames: number }> {
+/** A planned render (or retry, or preview frame): its steps and the finished video's key. Nothing is created yet. */
+export interface MixedRun {
+  steps: PlanStep[];
+  final: string;
+  /** A retry: the steps it keeps (their ids), and the waiting steps it stops once the new ones are made. */
+  existing?: Record<string, string>;
+  stop?: string[];
+}
+
+/** A planned run's steps as the requests they make, with how many earlier steps each waits for (account-tool-run.ts). */
+export const mixedSteps = (r: MixedRun): { request: GenerationRequest; deps: number }[] => r.steps.map((s) => ({ request: withChain(s), deps: s.after?.length ?? 0 }));
+
+/** Start a planned render or retry; returns the finished video's generation, the steps the page follows and the frame count. */
+export function startMixed(r: MixedRun): { final: Generation; items: Generation[]; frames: number } {
+  const p = run(r.steps, r.existing ? { existing: r.existing } : {});
+  // Old steps that would only fail after the ones they wait for: stop them (nothing was spent on them yet).
+  for (const id of r.stop ?? []) cancelWaiting(id);
+  return { final: p.byKey[r.final], ...followed(p) };
+}
+
+/** Plan the full render (the clip's header is read; nothing is created). */
+export async function planMixedRun(body: MixedBody): Promise<MixedRun> {
   const { input } = await planInput(body, { probe: true });
   const plan = planMixed(input);
-  const p = run(plan.steps);
-  return { final: p.byKey[plan.final], ...followed(p) };
+  return { steps: plan.steps, final: plan.final };
 }
+
+/** Start the full render; returns the finished video's generation (the others wait for it). */
+export async function createMixed(body: MixedBody): Promise<{ final: Generation; items: Generation[]; frames: number }> {
+  return startMixed(await planMixedRun(body));
+}
+
+/**
+ * Whether this render is the asker's own: an account's own run, or the owner's when the owner asks (an account's render
+ * reads as gone to anyone else).
+ */
+const ownRender = (id: string) => (generationAccount(id) ?? null) === (tenantAccount() ?? null);
 
 interface StepRow {
   id: string;
@@ -324,8 +358,13 @@ function renderSteps(finalId: string): StepRow[] | null {
  * running, which aren't made or paid for again. A render with nothing failed is made again from its first step.
  */
 export function retryMixed(id: string): { final: Generation; items: Generation[]; frames: number } {
+  return startMixed(planMixedRetry(id));
+}
+
+/** Plan a retry (nothing is created): the steps made anew, the ones kept and the waiting ones to stop. */
+export function planMixedRetry(id: string): MixedRun {
   const final = getGeneration(id);
-  if (!final || final.feature !== MIXED_FEATURE) throw new ShortsError("This render no longer exists", 404);
+  if (!final || final.feature !== MIXED_FEATURE || !ownRender(id)) throw new ShortsError("This render no longer exists", 404);
   const mode = engineMode();
   if (mode !== "both" && mode !== final.engine) {
     throw new ShortsError(mode === "open" ? "This install runs open-source models only (Settings → Engine mode)" : "This install runs cloud models only (Settings → Engine mode)", 422);
@@ -347,10 +386,7 @@ export function retryMixed(id: string): { final: Generation; items: Generation[]
     for (const c of chain ?? []) if (c.slot !== "images" && c.slot !== "videos" && c.slot !== "audios" && c.slot !== "prompt") delete inputs[c.slot];
     return { key: r.id, request: { ...request, inputs: Object.keys(inputs).length ? inputs : undefined }, ...(after.length ? { after, chain } : {}) };
   });
-  const p = run(steps, { existing });
-  // Old steps that would only fail after the ones they wait for: stop them (nothing was spent on them yet).
-  for (const r of again) if (r.status === "queued" && r.depends_on) cancelWaiting(r.id);
-  return { final: p.byKey[id], ...followed(p) };
+  return { steps, final: id, existing, stop: again.filter((r) => r.status === "queued" && r.depends_on).map((r) => r.id) };
 }
 
 /** Stop a step still waiting for its inputs (nothing spent yet). */
@@ -374,6 +410,9 @@ export interface FramesProgress {
 
 /** A per-frame render's frame edits at a glance (the page follows the main steps, not hundreds of frames), by its finished video's id. */
 export function framesProgress(finalId: string): FramesProgress | null {
+  // Another's render reads as gone (an account's to the owner, the owner's or another account's to an account),
+  // in the Trash too: the steps are read from the table itself, so the check can't lean on the Library's view.
+  if (!ownRender(finalId)) return null;
   const rows = renderSteps(finalId);
   if (!rows) return getGeneration(finalId) ? { total: 0, done: 0, running: 0 } : null;
   const frames = rows.filter((r) => r.feature === MIXED_FRAME_FEATURE);
@@ -391,10 +430,15 @@ export function framesProgress(finalId: string): FramesProgress | null {
   return out;
 }
 
-/** One frame with the current settings. */
-export async function createMixedPreview(body: MixedBody): Promise<Generation> {
+/** Plan one frame with the current settings (nothing is created). */
+export async function planMixedPreviewRun(body: MixedBody): Promise<MixedRun> {
   const { input } = await planInput(body, { probe: true });
   if (input.engine === "cloud" && !body.frameUrl?.startsWith("/api/files/")) throw new ShortsError("Couldn't grab a frame from this clip in the browser — generate the full video instead");
-  const step = planMixedPreview({ ...input, frameUrl: body.frameUrl });
-  return run([step]).byKey.preview;
+  return { steps: [planMixedPreview({ ...input, frameUrl: body.frameUrl })], final: "preview" };
+}
+
+/** One frame with the current settings. */
+export async function createMixedPreview(body: MixedBody): Promise<Generation> {
+  const r = await planMixedPreviewRun(body);
+  return run(r.steps).byKey[r.final];
 }

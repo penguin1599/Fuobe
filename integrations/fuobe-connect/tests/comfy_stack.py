@@ -6,7 +6,8 @@ torch are needed). Without it, a copy of ComfyUI 0.42's origin check is used. Ei
 ComfyUI's PromptServer builds it: [cache_control, deprecation_warning] then the CORS middleware when started with
 --enable-cors-header, else the origin check. Fuobe Connect then goes in front, as in ComfyUI.
 
-The routes answer like ComfyUI's, with fixed values: enough to see who gets in.
+The routes answer like ComfyUI's, from a small in-memory queue and history (Comfy): enough to see who gets in and what
+they see.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ import os
 import socket
 import urllib
 import urllib.parse
+import uuid
 
 from aiohttp import web
 
@@ -107,11 +109,54 @@ def comfy_middleware() -> dict:
     return _from_comfyui(folder) if folder else _copy()
 
 
-def build_app(cors_flag: str | None = None, fuobe_connect=None, extra_routes=None) -> tuple[web.Application, str]:
+class Comfy:
+    """What the stand-in ComfyUI keeps: its queue, its history, and what it was sent. It also answers like ComfyUI's
+    PromptQueue (get_history, get_current_queue_volatile), the way Fuobe Connect reads it inside ComfyUI."""
+
+    def __init__(self, mint_ids: bool = False):
+        self.mint_ids = mint_ids
+        self.history: dict = {}
+        self.queue_running: list = []
+        self.queue_pending: list = []
+        self.posts: list = []
+        self.uploads: list = []
+        self.number = 0
+        # A /prompt answer of ComfyUI's own (status, body) instead of taking the prompt, for example a 400.
+        self.refuse: tuple | None = None
+
+    def get_history(self, prompt_id=None, max_items=None, offset=-1, map_function=None):
+        if prompt_id is None:
+            return dict(self.history)
+        if prompt_id not in self.history:
+            return {}
+        e = self.history[prompt_id]
+        return {prompt_id: map_function(e) if map_function else json.loads(json.dumps(e))}
+
+    def get_current_queue_volatile(self):
+        return list(self.queue_running), list(self.queue_pending)
+
+    def entry(self, pid: str, prompt: dict, files: list | None = None) -> dict:
+        self.number += 1
+        e = {
+            "prompt": [self.number, pid, prompt, {"client_id": "x"}, ["9"]],
+            "outputs": {"9": {"images": files if files is not None else [{"filename": f"{pid[:8]}_00001_.png", "subfolder": "fuobe", "type": "output"}]}},
+            "status": {"status_str": "success", "completed": True, "messages": []},
+        }
+        self.history[pid] = e
+        return e
+
+
+# Where build_app keeps the stand-in's Comfy on the app.
+COMFY = web.AppKey("comfy", Comfy) if hasattr(web, "AppKey") else "comfy"
+
+
+def build_app(cors_flag: str | None = None, fuobe_connect=None, extra_routes=None, comfy: Comfy | None = None) -> tuple[web.Application, str]:
     ns = comfy_middleware()
     middlewares = [ns["cache_control"], ns["deprecation_warning"]]
     middlewares.append(ns["create_cors_middleware"](cors_flag) if cors_flag else ns["create_origin_only_middleware"]())
     app = web.Application(middlewares=middlewares)
+    c = comfy or Comfy()
+    app[COMFY] = c
     routes = web.RouteTableDef()
 
     @routes.get("/system_stats")
@@ -121,11 +166,77 @@ def build_app(cors_flag: str | None = None, fuobe_connect=None, extra_routes=Non
     @routes.post("/prompt")
     async def prompt(request):
         body = await request.json()
-        return web.json_response({"prompt_id": body.get("prompt_id"), "number": 1})
+        if c.refuse is not None:
+            return web.json_response(c.refuse[1], status=c.refuse[0])
+        pid = str(uuid.uuid4()) if c.mint_ids or not body.get("prompt_id") else body.get("prompt_id")
+        c.posts.append(body)
+        if isinstance(body.get("prompt"), dict):
+            c.entry(pid, body["prompt"])
+        return web.json_response({"prompt_id": pid, "number": 1})
+
+    @routes.get("/history")
+    async def history(request):
+        return web.json_response(c.history)
+
+    @routes.get("/history/{pid}")
+    async def history_one(request):
+        pid = request.match_info["pid"]
+        return web.json_response({pid: c.history[pid]} if pid in c.history else {})
+
+    @routes.post("/history")
+    async def history_post(request):
+        c.posts.append(("history", await request.json()))
+        return web.json_response({})
+
+    @routes.get("/queue")
+    async def queue(request):
+        return web.json_response({"queue_running": c.queue_running, "queue_pending": c.queue_pending})
+
+    @routes.post("/queue")
+    async def queue_post(request):
+        c.posts.append(("queue", await request.json()))
+        return web.json_response({})
+
+    @routes.post("/interrupt")
+    async def interrupt(request):
+        c.posts.append(("interrupt", await request.read()))
+        return web.json_response({})
+
+    @routes.get("/api/jobs")
+    async def jobs(request):
+        return web.json_response({"jobs": [{"id": pid, "status": "completed"} for pid in c.history], "has_more": False})
+
+    @routes.get("/api/jobs/{pid}")
+    async def job(request):
+        pid = request.match_info["pid"]
+        return web.json_response({"id": pid, "status": "completed"}) if pid in c.history else web.json_response({"error": "not found"}, status=404)
+
+    @routes.post("/api/jobs/{pid}/cancel")
+    async def cancel(request):
+        c.posts.append(("cancel", request.match_info["pid"]))
+        return web.json_response({"cancelled": True})
+
+    @routes.post("/upload/image")
+    async def upload(request):
+        post = await request.post()
+        image = post.get("image")
+        data = image.file.read() if hasattr(image, "file") else b""
+        c.uploads.append({"name": getattr(image, "filename", None), "type": post.get("type"), "subfolder": post.get("subfolder"), "bytes": len(data)})
+        return web.json_response({"name": getattr(image, "filename", None), "subfolder": "", "type": post.get("type", "input")})
+
+    @routes.get("/object_info")
+    async def object_info(request):
+        return web.json_response(
+            {
+                "LoadImage": {"input": {"required": {"image": [["holiday.png", "fuobe_abcdefgh12.png", "sub/me.jpg"], {"image_upload": True}]}}},
+                "LoadAudio": {"input": {"required": {"audio": ["COMBO", {"options": ["voice memo.wav", "fuobe_abcdefgh12.wav"], "audio_upload": True}]}}},
+                "CheckpointLoaderSimple": {"input": {"required": {"ckpt_name": [["model.safetensors"], {}]}}},
+            }
+        )
 
     @routes.get("/view")
     async def view(request):
-        return web.Response(body=b"\x89PNG\r\n\x1a\nfake", content_type="image/png")
+        return web.Response(body=bytes([137]) + b"PNG fake", content_type="image/png")
 
     @routes.get("/userdata/{file}")
     async def userdata(request):
@@ -149,7 +260,8 @@ def build_app(cors_flag: str | None = None, fuobe_connect=None, extra_routes=Non
     # ComfyUI answers every route under /api too.
     api = web.RouteTableDef()
     for r in routes:
-        api.route(r.method, "/api" + r.path)(r.handler)
+        if not r.path.startswith("/api/"):
+            api.route(r.method, "/api" + r.path)(r.handler)
     app.add_routes(api)
     app.add_routes(routes)
     if fuobe_connect is not None:

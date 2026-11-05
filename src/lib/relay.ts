@@ -215,6 +215,12 @@ export const RELAY_TIMES = {
  */
 export const RELAY_LIMITS = { partBytes: 16 * 2 ** 20, reportBytes: 8 * 2 ** 20, refusalBytes: 256 * 1024, smallReportBytes: 8 * 1024, keptRefusalBytes: 16 * 1024, inputReads: 6 };
 
+/**
+ * How many recent ComfyUI /history entries are read for a meta-batch job's passes: an EXR export saves frames in every
+ * pass, so all of them are needed (1,800 frames is 57 passes of 32).
+ */
+export const META_BATCH_HISTORY = 512;
+
 /** A ComfyUI prompt id the server mints, and what the tab may name in a URL. */
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -331,6 +337,9 @@ export const RELAY_WORDS = {
   disconnected: "You disconnected your computer, so this run stopped. Press Retry.",
   /** A run sent to the computer whose Fuobe tab stopped answering (closed, asleep): it goes on once that tab is back. */
   computerAway: "Waiting for your computer. Open Fuobe there to finish this run.",
+  /** A run waiting for a ComfyUI paired with a code (Fuobe Connect runs inside it, no tab needed) that is off. */
+  pairedAway: "Waiting for your paired ComfyUI. Start ComfyUI there (or start your pod), and this run goes on by itself.",
+  pairedWaitedTooLong: (ms: number) => `Your paired ComfyUI didn't come online for ${duration(ms)}. Start it, then press Retry.`,
 } as const;
 
 /** A script's open-source run (an API token) while the owner's ComfyUI is on the owner's computer. */

@@ -13,7 +13,8 @@ describe("hub paths", () => {
     expect(hubOfPath("/video-tools/trim")).toBe("video-tools");
     expect(hubOfPath("/audiobook")).toBeUndefined();
     expect(hubOfPath("/image")).toBeUndefined();
-    expect(modeOfPath("audio", "/audio")).toBe("speech");
+    expect(modeOfPath("audio", "/audio")).toBe("clean");
+    expect(modeOfPath("audio", "/audio/speech")).toBe("speech");
     expect(modeOfPath("audio", "/audio/music")).toBe("music");
     expect(modeOfPath("audio", "/audio/nope")).toBeUndefined();
     expect(modeOfPath("audio", "/audio/music/more")).toBeUndefined();

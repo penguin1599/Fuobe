@@ -53,8 +53,10 @@ interface BuilderProps {
   folderId: string | null;
   engine: Engine;
   settings: DirectorSettings;
-  context: { cloudAllowed: boolean; civitai?: boolean };
+  context: { cloudAllowed: boolean; civitai?: boolean; worldcast?: boolean };
   brief: string;
+  /** Saving the pick as an element (the studio's library: the owner's). Without it the pictures stay as the project's takes. */
+  canSave?: boolean;
 }
 
 /** "${v}M" → "$250M", "{v}s" → "2020s", "{v}yo" → "35yo". */
@@ -246,7 +248,7 @@ export function SoulCastDialog(props: BuilderProps) {
   );
 }
 
-function SoulCast({ projectId, folderId, engine, context, brief, onOpenChange }: BuilderProps) {
+function SoulCast({ projectId, folderId, engine, context, brief, onOpenChange, canSave = true }: BuilderProps) {
   const [values, setValues] = useState<CastValues>(castDefaults);
   const [tab, setTab] = useState(SOUL_CAST_TABS[0]);
   const [notes, setNotes] = useState("");
@@ -347,7 +349,7 @@ function SoulCast({ projectId, folderId, engine, context, brief, onOpenChange }:
           <p className="text-[12.5px] font-medium">Select an image variant for your cast</p>
           <Results items={results} picked={chosen} onPick={(u) => setPicked((p) => (p.map(current).includes(u) ? [] : [u]))} />
           <CastTurnaround projectId={projectId} folderId={folderId} engine={engine} name={castName(visible)} results={results} picked={chosen[0]} />
-          <SaveElement kind="character" defaultName={castName(visible)} picked={chosen} description={castPrompt(visible, notes)} onSaved={() => onOpenChange(false)} />
+          {canSave && <SaveElement kind="character" defaultName={castName(visible)} picked={chosen} description={castPrompt(visible, notes)} onSaved={() => onOpenChange(false)} />}
         </div>
       )}
     </>
@@ -394,7 +396,7 @@ export function SoulLocationDialog(props: BuilderProps) {
   );
 }
 
-function SoulLocation({ projectId, folderId, engine, settings, context, brief, onOpenChange }: BuilderProps) {
+function SoulLocation({ projectId, folderId, engine, settings, context, brief, onOpenChange, canSave = true }: BuilderProps) {
   const [prompt, setPrompt] = useState("");
   const [batch, setBatch] = useState(2);
   const [picked, setPicked] = useState<string[]>([]);
@@ -485,7 +487,7 @@ function SoulLocation({ projectId, folderId, engine, settings, context, brief, o
               ))}
             </div>
           )}
-          <SaveElement kind="location" defaultName={locationName(prompt)} picked={chosen} description={prompt} onSaved={() => onOpenChange(false)} />
+          {canSave && <SaveElement kind="location" defaultName={locationName(prompt)} picked={chosen} description={prompt} onSaved={() => onOpenChange(false)} />}
         </div>
       )}
     </>

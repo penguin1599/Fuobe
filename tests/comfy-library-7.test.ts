@@ -26,8 +26,8 @@ const FAST = "https://huggingface.co/Spectrallic/MOSS-Image-SFT-8step-DMD-int8-c
 
 describe("moss-image-t2i in the manifest", () => {
   it("is a t2i graph with the contract's bindings, limits and licence", () => {
-    // Not validated since its encoder became the int8 file: /prompt was never sent to a ComfyUI with it.
-    expect(entry).toMatchObject({ capability: "t2i", validated: false, vramGb: 16, customNodes: [], source: "hand-built (scripts/comfy/hand-built/moss-image-t2i.json)" });
+    // Validated with its int8 encoder by a real run on a GPU.
+    expect(entry).toMatchObject({ capability: "t2i", validated: true, vramGb: 16, customNodes: [], source: "hand-built (scripts/comfy/hand-built/moss-image-t2i.json)" });
     expect(Object.keys(entry.bindings).sort()).toEqual(["cfg", "filenamePrefix", "height", "negativePrompt", "prompt", "sampler", "scheduler", "seed", "steps", "unet", "width"]);
     expect(entry.limits).toEqual({ maxWidth: 2048, maxHeight: 2048, dimensionMultiple: 16 });
     expect(entry.defaults).toEqual({ width: 1024, height: 1024, steps: 25, cfg: 2.5, sampler: "er_sde", scheduler: "simple", unet: "moss_image_sft_int8_convrot.safetensors" });

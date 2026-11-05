@@ -5,6 +5,7 @@
  * covers are preset ids (src/lib/nav-covers.ts resolves them on the server). Every href is a route that exists; none
  * is renamed here.
  */
+import GPU_TESTED from "../../workflows/comfyui/gpu-tested.json";
 import { HUB_MODES, modeHref, type HubKind } from "./hubs";
 import { navActive, NEW_CREATION_HREF } from "./nav";
 
@@ -94,6 +95,15 @@ const ACCOUNT: readonly ViewerKind[] = ["account"];
 const GUEST: readonly ViewerKind[] = ["guest"];
 const VISITORS: readonly ViewerKind[] = ["guest", "account"];
 
+/**
+ * Genjutsu's Finish mode is everyone's once one of its tools (Fix faces, Fix colours) has passed its GPU test, as the
+ * studio's page shows it (modeOpen in src/lib/catalog/genjutsu.ts, from src/server/genjutsu-live.ts, which reads the
+ * same record with the workflows' manifest; tests/nav-subfeatures.test.ts holds the two to the same answer). Until
+ * then its link is the owner's.
+ */
+const passedOnGpu = (feature: string) => (GPU_TESTED.features as Record<string, { passed?: boolean } | undefined>)[feature]?.passed === true;
+const FINISH_OPEN = passedOnGpu("finish-faces") || passedOnGpu("finish-colours");
+
 /** Where the source lives (as connections.ts says it; kept here so this module imports nothing heavy). */
 const REPO = "https://github.com/workingprototype/fuobe";
 /** A "do this" entry that isn't a page: the palette toggles the theme. */
@@ -180,7 +190,7 @@ const STUDIOS: NavEntry[] = [
   // Sell & advertise
   { id: "marketing", href: "/marketing", label: "Marketing Studio", short: "Marketing", what: "UGC and product films", kind: "studio", group: "sell", lead: true, goals: ["sell"], keywords: "ugc product ads commercial brand", cover: "app-macroshot-product", icon: "Megaphone", popular: true },
   { id: "ads", href: "/ads", label: "Ads Studio", short: "Ads", what: "Campaigns in every size", kind: "studio", group: "sell", goals: ["sell"], keywords: "brand campaign advert banner sizes", cover: "app-billboard-ad", icon: "Target" },
-  { id: "kinetic", href: "/kinetic", label: "Fuobe Kinetic Motion", short: "Kinetic", what: "Brand motion graphics", kind: "studio", group: "sell", goals: ["sell", "social"], keywords: "kinetic motion graphics animated text typography titles end card logo sting stat quote", cover: "app-click-to-ad", icon: "LetterText", newUntil: newFor30Days("2026-11-03") },
+  { id: "kinetic", href: "/kinetic", label: "Fuobe Kinetic Motion", short: "Kinetic", what: "Brand motion graphics", kind: "studio", group: "sell", goals: ["sell", "social"], keywords: "kinetic motion graphics animated text typography titles end card logo sting stat quote", cover: "kinetic-runway-titles", icon: "LetterText", newUntil: newFor30Days("2026-11-03") },
   { id: "mixed-media", href: "/mixed-media", label: "Mixed Media", short: "Mixed Media", what: "Collage, paint and photo", kind: "studio", group: "sell", goals: ["sell", "film"], keywords: "collage paint scrapbook", cover: "effect-magazine", icon: "Shapes" },
   { id: "moodboards", href: "/moodboards", label: "Moodboards", short: "Moodboards", what: "Lock a look, reuse it", kind: "studio", group: "sell", goals: ["sell", "people"], keywords: "style references mood look", cover: "app-steal-the-look", icon: "Images" },
   { id: "photodump", href: "/photodump", label: "Photodump", short: "Photodump", what: "A photo pack of one person", kind: "studio", group: "sell", goals: ["sell", "people", "social"], keywords: "photo pack character photoshoot", cover: "app-headshot-generator", icon: "Camera" },
@@ -236,6 +246,7 @@ const TOOL_COPY: Record<string, { what: string; keywords: string; cover?: string
   "audio-dialogue": { what: "A conversation, one voice each", keywords: "conversation podcast two speakers multi voice" },
   "audio-voice-change": { what: "Swap the voice, keep the timing", keywords: "voice changer convert speech to speech" },
   "audio-design": { what: "A new voice from a few words", keywords: "voice design create custom new voice describe" },
+  "audio-edit-speech": { what: "Change the words, keep the voice", keywords: "edit speech words fix line respeak overdub pitch pace mood whisper" },
   "audio-translate": { what: "Dub into any language", keywords: "dub dubbing localize translate lip sync", cover: "app-asmr-promo", label: "Translate & dub", short: "Translate" },
   "audio-transcribe": { what: "Words from any clip", keywords: "subtitles text speech to text srt vtt captions" },
   "audio-clean": { what: "Remove noise and echo", keywords: "denoise podcast mic fix reverb enhance speech", cover: "app-clean-up-voice", short: "Clean up" },
@@ -247,6 +258,7 @@ const TOOL_COPY: Record<string, { what: string; keywords: string; cover?: string
   "audio-join": { what: "Join sounds into one", keywords: "merge combine concatenate audio" },
   "audio-video": { what: "Sound that fits the picture", keywords: "foley sfx v2a video to audio", cover: "app-asmr-classic" },
   "video-tools-matte": { what: "Cut out the background", keywords: "remove background green screen alpha matte rotoscope" },
+  "video-tools-green-screen": { what: "Key out a green screen", keywords: "chroma key keyer green screen despill alpha matte" },
   "video-tools-remove-object": { what: "Erase anything from a clip", keywords: "erase clean plate inpaint video object" },
   "video-tools-remove-person": { what: "Take a person out of a clip", keywords: "erase person people remove someone clean plate" },
   "video-tools-remove-dialogue": { what: "Keep the sound, lose the words", keywords: "speech mute voice keep music" },
@@ -264,10 +276,16 @@ const HUB_ORDER: HubKind[] = ["upscale", "audio", "video-tools"];
 const HUB_ICON: Record<HubKind, NavIconName> = { upscale: "ZoomIn", audio: "AudioLines", "video-tools": "Layers" };
 
 /**
- * The Sound column: the Audio studio, then its main modes in this order (voice is the studio's first mode, so the lead
- * card stands for it). These modes are in the launcher, the Studios sheet and "Every studio" as well as in search.
+ * The Sound column: the Audio studio, then its main modes in this order, Clean up voice (the studio's first mode) first.
+ * These modes are in the launcher, the Studios sheet and "Every studio" as well as in search.
  */
-const SOUND_COLUMN = ["audio", "audio-music", "audio-sfx", "audio-clean", "audio-translate"];
+const SOUND_COLUMN = ["audio", "audio-clean", "audio-music", "audio-sfx", "audio-translate"];
+
+/**
+ * A hub's first mode with a row of its own in the menus (Audio's Clean up voice): its own page (/audio/clean, the same
+ * tool as /audio), so its row and the studio's card don't share a link.
+ */
+const OWN_PAGE = new Set(["audio-clean"]);
 
 /** Every hub mode as a tool of its studio (found by search, linked from the goal bands). */
 const HUB_TOOLS: NavEntry[] = HUB_ORDER.flatMap((hub) =>
@@ -276,7 +294,7 @@ const HUB_TOOLS: NavEntry[] = HUB_ORDER.flatMap((hub) =>
     const copy = TOOL_COPY[id];
     return {
       id,
-      href: modeHref(hub, m.id),
+      href: OWN_PAGE.has(id) ? `/${hub}/${m.id}` : modeHref(hub, m.id),
       label: copy?.label ?? m.label,
       ...(copy?.label && copy.label !== m.label && { tab: m.label }),
       what: copy?.what ?? m.label,
@@ -333,8 +351,8 @@ const STUDIO_FEATURES: NavEntry[] = [
       ["insert", "Insert", "Add something to the shot", "insert add object put into clip place"],
     ] as const
   ).map(([id, label, what, kw]) => feature("genjutsu", "WandSparkles", id, `/genjutsu?mode=${id}`, label, what, kw)),
-  feature("genjutsu", "WandSparkles", "picture", "/genjutsu?mode=picture", "From picture", "Your picture's setting, moving", "from picture photo setting animate motion", OWNER),
-  feature("genjutsu", "WandSparkles", "finish", "/genjutsu?mode=finish", "Finish", "Fix faces and colours", "finish fix faces colours colors", OWNER),
+  feature("genjutsu", "WandSparkles", "picture", "/genjutsu?mode=picture", "From picture", "Your picture's setting, moving", "from picture photo setting animate motion"),
+  feature("genjutsu", "WandSparkles", "finish", "/genjutsu?mode=finish", "Finish", "Fix faces and colours", "finish fix faces colours colors", FINISH_OPEN ? undefined : OWNER),
   ...(
     [
       ["reference", "From Reference", "A sheet from your photos", "reference photo upload face sheet"],
@@ -352,7 +370,7 @@ const STUDIO_FEATURES: NavEntry[] = [
     ] as const
   ).map(([id, label, what, kw]) => feature("image-to-3d", "Box", id, `/image-to-3d?mode=${id}`, label, what, kw)),
   feature("photodump", "Camera", "instadump", "/photodump?tab=instadump", "From a selfie", "A photo pack from one selfie", "instadump selfie one photo pack instagram"),
-  feature("cinema", "Clapperboard", "blockout", "/cinema?blockout=1", "Blockout", "Block a scene out in 3D", "blockout block out 3d layout previs scene", OWNER),
+  feature("cinema", "Clapperboard", "blockout", "/cinema?blockout=1", "Blockout", "Block a scene out in 3D", "blockout block out 3d layout previs scene"),
   feature("canvas", "Network", "skills", "/canvas?tab=skills", "Skills as canvases", "Assist's skills, drawn as boards", "skills recipes boards assist canvas", OWNER),
   feature("assist", "MessageCircle", "memory", "/assist/memory", "Memory", "What Assist remembers", "memory remember facts notes", OWNER),
   feature("assist", "MessageCircle", "scheduled", "/assist/scheduled", "Scheduled", "Tasks that run on a schedule", "scheduled schedule recurring tasks", OWNER),
@@ -687,7 +705,7 @@ export interface StudioSubs {
   tall?: 800 | 880 | 960;
   /** Below `tall`: "line" shows them as one wrapped line of names instead of hiding them (Genjutsu's modes). */
   short?: "line";
-  /** The owner's own features in the list (Genjutsu's From picture and Finish) show from this height. */
+  /** The owner's own features in the list (Genjutsu's modes not open to everyone yet) show from this height. */
   ownerTall?: 880 | 960;
 }
 
@@ -713,13 +731,7 @@ export const STUDIO_SUBS: Readonly<Record<string, StudioSubs>> = {
  * Features a guest or an account may open but not run here (their pages say so up front, docs/public-signup.md): the
  * menus and the phone sheet link them for the owner only. Search and /studios still list them.
  */
-export const OWNER_RUNS: ReadonlySet<string> = new Set([
-  "audio-split",
-  "video-tools-remove-dialogue",
-  ...STUDIO_SUBS["image-to-3d"].ids,
-  ...STUDIO_SUBS["character-sheet"].ids,
-  ...STUDIO_SUBS.photodump.ids,
-]);
+export const OWNER_RUNS: ReadonlySet<string> = new Set<string>();
 
 /** The studio a feature lives under in the menus (Ads Studio under Marketing Studio). */
 const SUB_PARENT = new Map(Object.entries(STUDIO_SUBS).flatMap(([parent, s]) => s.ids.map((id) => [id, parent] as const)));

@@ -1,0 +1,142 @@
+{
+  "$schema": "./case.schema.json",
+  "suite": "splat",
+  "title": "Splat · one object from one picture",
+  "description": "Image to 3D → Splat on your GPU: Idol 3D at Best and at Quick look against TripoSplat as it ships, on the same pictures and seeds (docs/research/idol-9.md §9 idol-3). Idol's quality lead is the vendor's own table (§3), so this run measures it. The orbit video is what is scored and reviewed blind: style is the orbit's frames against the input picture with DINOv2 (how much of the object survives every angle), temporal is how smoothly it turns, aesthetic is the LAION predictor, and splat reads the saved file for the share of nearly transparent Gaussians (Idol's haze, §2.4). The .spz is kept with each job. Inputs are your own pictures in local/splat/ (never committed): generated product renders, product photos (the photo crop runs on these), a figurine, a stylised character, a realistic person (a made-up one or someone who agreed), thin parts and glass or chrome. The cloud has no Idol run here: triposplat-cloud is fal's TripoSplat as Fuobe ships it in the cloud, a reference for the haze and the price only (a .ply without an orbit).",
+  "original": ["oss-idol", "oss-triposplat"],
+  "kind": "video",
+  "decides": "Three defaults, each changed by a person in a reviewed commit after one open run of every variant on a GPU (the GPU, its driver and ComfyUI's version recorded with the numbers; docs/research/idol-9.md, Results). (1) Splat mode's open default (MODELS_3D.splat.open in src/lib/av/model3d.ts, TripoSplat first today): Idol 3D goes first only if idol-best, against triposplat-today, scores at least as well on style in at least 8 of the 11 cases, gives up no more than 0.15 aesthetic, 0.002 warp and 0.004 drift on the suite's means, and takes at least 55 % of the non-tie blind ratings of their pairs, with at least 6 per case or every such pair the review offered when it offered fewer (3 per case for one reviewer at 3 seeds; pnpm eval:promote latest --against triposplat-today applies this part). Idol's Best samples 50 Euler steps at cfg 4 where TripoSplat ships 20 dpmpp_2m at cfg 3, so a win may be the settings rather than the weights: TripoSplat at Idol's sampler can't run yet (its graph doesn't take a sampler), and it is the next run before Idol goes first. (2) Idol's Quick look (IDOL_PRESETS.quick): 20 dpmpp_2m steps and 65,536 Gaussians stay while idol-quick is within 0.02 style of idol-best on the suite's mean and idol-best takes no more than 70 % of their non-tie ratings; otherwise the next run tries 30 steps or 131,072 Gaussians. (3) The photo crop (on for uploads today): it stays on only if idol-photo-crop scores at least as well as idol-best on style in at least 2 of the 3 photo cases and takes at least 55 % of their non-tie ratings; otherwise it starts off. The splat metric's haze says whether TripoSplat's files carry Idol's haze too (the splat viewer's opacity cut-off, idol-4). Demo runs decide nothing.",
+  "targets": {
+    "open": { "models": ["oss-idol", "oss-triposplat"], "op": "splat" },
+    "demo": { "models": ["oss-idol", "oss-triposplat"], "op": "splat" }
+  },
+  "defaults": {
+    "seeds": [1001, 2002, 3003],
+    "metrics": ["style", "temporal", "aesthetic", "splat"],
+    "styleModel": "dinov2",
+    "timeoutSeconds": 3600,
+    "candidate": "idol-best"
+  },
+  "variants": {
+    "idol-best": {
+      "description": "Idol 3D at Best: Idol's reference settings (50 Euler steps, cfg 4, 262,144 Gaussians)",
+      "engines": ["open", "demo"],
+      "models": { "open": ["oss-idol"] },
+      "extra": { "steps": 50, "sampler": "euler", "cfg": 4, "numGaussians": 262144 }
+    },
+    "idol-quick": {
+      "description": "Idol 3D at Quick look: 20 dpmpp_2m steps, cfg 4, 65,536 Gaussians",
+      "engines": ["open", "demo"],
+      "models": { "open": ["oss-idol"] },
+      "extra": { "steps": 20, "sampler": "dpmpp_2m", "cfg": 4, "numGaussians": 65536 }
+    },
+    "triposplat-today": {
+      "description": "TripoSplat as it ships (its graph's defaults: 20 dpmpp_2m steps, cfg 3, 262,144 Gaussians)",
+      "engines": ["open", "demo"],
+      "models": { "open": ["oss-triposplat"] }
+    },
+    "idol-photo-crop": {
+      "description": "Idol 3D at Best with the photo crop (the looser crop Idol uses for photos), on the photo cases",
+      "engines": ["open", "demo"],
+      "tags": ["photo"],
+      "models": { "open": ["oss-idol"] },
+      "extra": { "steps": 50, "sampler": "euler", "cfg": 4, "numGaussians": 262144, "photoCrop": true, "cropMode": "real" }
+    },
+    "triposplat-cloud": {
+      "description": "TripoSplat on fal (tripo3d/triposplat), the cloud's splat today: a reference for the haze, the time and the price (a .ply, no orbit to score or review)",
+      "engines": ["cloud"],
+      "models": { "cloud": ["triposplat"] }
+    }
+  },
+  "cases": [
+    {
+      "id": "splat/bottle",
+      "title": "A generated render of a bottle",
+      "inputs": { "images": ["local/splat/bottle.png"] },
+      "demoInputs": { "images": ["fixtures/start-frame.png"] },
+      "references": "local/splat/bottle.png",
+      "tags": ["render", "product"]
+    },
+    {
+      "id": "splat/sneaker",
+      "title": "A generated render of a sneaker",
+      "inputs": { "images": ["local/splat/sneaker.png"] },
+      "demoInputs": { "images": ["fixtures/start-frame.png"] },
+      "references": "local/splat/sneaker.png",
+      "tags": ["render", "product"]
+    },
+    {
+      "id": "splat/headphones",
+      "title": "A generated render of headphones",
+      "inputs": { "images": ["local/splat/headphones.png"] },
+      "demoInputs": { "images": ["fixtures/start-frame.png"] },
+      "references": "local/splat/headphones.png",
+      "tags": ["render", "product", "thin"]
+    },
+    {
+      "id": "splat/photo-mug",
+      "title": "A product photo of a mug",
+      "inputs": { "images": ["local/splat/photo-mug.jpg"] },
+      "demoInputs": { "images": ["fixtures/end-frame.png"] },
+      "references": "local/splat/photo-mug.jpg",
+      "tags": ["photo", "product"]
+    },
+    {
+      "id": "splat/photo-bag",
+      "title": "A product photo of a handbag",
+      "inputs": { "images": ["local/splat/photo-bag.jpg"] },
+      "demoInputs": { "images": ["fixtures/end-frame.png"] },
+      "references": "local/splat/photo-bag.jpg",
+      "tags": ["photo", "product"]
+    },
+    {
+      "id": "splat/figurine",
+      "title": "A photo of a figurine on a table",
+      "inputs": { "images": ["local/splat/figurine.jpg"] },
+      "demoInputs": { "images": ["fixtures/end-frame.png"] },
+      "references": "local/splat/figurine.jpg",
+      "tags": ["photo", "figurine"]
+    },
+    {
+      "id": "splat/character",
+      "title": "A stylised character, full body",
+      "inputs": { "images": ["local/splat/character.png"] },
+      "demoInputs": { "images": ["fixtures/character/drawn-face-1.png"] },
+      "references": "local/splat/character.png",
+      "tags": ["render", "character"]
+    },
+    {
+      "id": "splat/person",
+      "title": "A realistic person, full body on a plain background",
+      "inputs": { "images": ["local/splat/person.png"] },
+      "demoInputs": { "images": ["fixtures/character/drawn-face-2.png"] },
+      "references": "local/splat/person.png",
+      "tags": ["render", "person"],
+      "note": "A made-up person (generated), or a photo of someone who agreed; photos of real people stay in local/ and are never committed."
+    },
+    {
+      "id": "splat/chair",
+      "title": "A chair with thin legs",
+      "inputs": { "images": ["local/splat/chair.png"] },
+      "demoInputs": { "images": ["fixtures/start-frame.png"] },
+      "references": "local/splat/chair.png",
+      "tags": ["render", "thin"]
+    },
+    {
+      "id": "splat/plant",
+      "title": "A potted plant with thin leaves",
+      "inputs": { "images": ["local/splat/plant.png"] },
+      "demoInputs": { "images": ["fixtures/start-frame.png"] },
+      "references": "local/splat/plant.png",
+      "tags": ["render", "thin"]
+    },
+    {
+      "id": "splat/glass-chrome",
+      "title": "A glass perfume bottle with a chrome cap",
+      "inputs": { "images": ["local/splat/glass-chrome.png"] },
+      "demoInputs": { "images": ["fixtures/start-frame.png"] },
+      "references": "local/splat/glass-chrome.png",
+      "tags": ["render", "glass"]
+    }
+  ]
+}

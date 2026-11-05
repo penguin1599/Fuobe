@@ -1,6 +1,7 @@
 /**
  * Every LoRA a run can load, with its licence as information: the library's, the preset LoRA map's files that aren't
- * library files (the round-1 Wan LoRAs camera motions and effects load), the Character swap's and Open-H3 Regenerate's.
+ * library files (the round-1 Wan LoRAs camera motions and effects load), the Character swap's, Pika H3 Flex's, Open-H3
+ * Regenerate's and MiniMax H3's 2K draft's.
  * Settings → Models & licences lists them with a switch each (src/server/model-access.ts) and Thanks & licences lists
  * them for everyone (src/lib/thanks.ts). Pure data, no I/O.
  */
@@ -9,8 +10,9 @@ import { CHARACTER_LORAS, MINIMAX_H3_LICENCE } from "./catalog/character-swap";
 import { LORA_LIBRARY, MOTION_EFFECT_LORAS } from "./catalog/lora-library.generated";
 import { libraryEntry } from "./catalog/loras";
 import { OSS_LORAS, type OssLora } from "./catalog/oss-loras.generated";
-import { REGEN_FILES, REGEN_LORA } from "./catalog/regenerate";
-import { loraLicenceInfo, modelCardOf, type LicenceInfo } from "./licences";
+import { PIKA_FLEX_LORAS } from "./catalog/pika-flex";
+import { H3_TURBO_4STEP_INFO, H3_TURBO_4STEP_LORA, REGEN_FILES, REGEN_LORA } from "./catalog/regenerate";
+import { licenceInfo, loraLicenceInfo, modelCardOf, type LicenceInfo } from "./licences";
 import type { LoraInfo } from "./model-access";
 
 /** Open-H3 Regenerate's merged LoRA: MiniMax H3's terms (restricted regions), with what its merged parts carry. */
@@ -19,8 +21,13 @@ export function regenLoraLicence(): LicenceInfo {
   return { name, class: cls, url: modelCardOf(REGEN_LORA.url) ?? url, note: REGEN_FILES[0].note, ...(excludes && { excludes }), ...(notices?.length && { notices }) };
 }
 
+/** lightx2v's Turbo 4-step v1.2 (MiniMax H3's 2K draft): Apache-2.0 in its card at the pinned revision. */
+export function turbo4StepLicence(): LicenceInfo {
+  return { ...licenceInfo("Apache-2.0"), url: H3_TURBO_4STEP_INFO.url, note: H3_TURBO_4STEP_INFO.note };
+}
+
 /** A Character swap LoRA's licence as the list shows it (its own recorded terms, its pinned model card). */
-export function characterLoraLicence(l: (typeof CHARACTER_LORAS)[number]): LicenceInfo {
+export function characterLoraLicence(l: Pick<(typeof CHARACTER_LORAS)[number], "licence" | "url">): LicenceInfo {
   const { name, class: cls, url, excludes, notices, note } = l.licence;
   return { name, class: cls, url: modelCardOf(l.url) ?? url, note, ...(excludes && { excludes }), ...(notices?.length && { notices }) };
 }
@@ -59,7 +66,11 @@ export function loraLicenceRows(off: readonly string[] = []): LoraInfo[] {
   }
   // The LoRAs the Character swap's graphs load (and fal's route takes): Akatz Labs' swap LoRA and lightx2v's Turbo.
   for (const l of CHARACTER_LORAS) rows.push({ file: l.file, name: l.name, group: "adapter", base: "MiniMax H3", licence: characterLoraLicence(l), on: on(l.file) });
+  // Pika H3 Flex's two adapters (MiniMax H3 on your GPU: Fast · Pika Flex, References, Talk from a voice clip).
+  for (const l of PIKA_FLEX_LORAS) rows.push({ file: l.file, name: l.name, group: "adapter", base: "MiniMax H3", licence: characterLoraLicence(l), on: on(l.file) });
   // The refiner LoRA Open-H3 Regenerate's graph loads (and a run downloads).
   rows.push({ file: REGEN_LORA.file, name: REGEN_FILES[0].item, group: "adapter", base: "MiniMax H3", licence: regenLoraLicence(), on: on(REGEN_LORA.file) });
+  // The Turbo 4-step LoRA MiniMax H3's 2K draft loads (off: the draft runs on H3's own graph and the finish redraws its clip).
+  rows.push({ file: H3_TURBO_4STEP_LORA.file, name: H3_TURBO_4STEP_INFO.name, group: "adapter", base: "MiniMax H3", licence: turbo4StepLicence(), on: on(H3_TURBO_4STEP_LORA.file) });
   return rows;
 }

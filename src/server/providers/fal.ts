@@ -326,6 +326,11 @@ export const falProvider: ProviderAdapter = {
         const draftId = /"draft_id"\s*:\s*"([^"]+)"/.exec(JSON.stringify(result))?.[1];
         return { state: "succeeded", outputs: draftId ? outputs.map((o) => ({ ...o, draftId })) : outputs };
       } catch (e) {
+        // An account's finished (and paid) job isn't failed for a passing problem collecting it (busy, down, no answer):
+        // the runner asks again with a growing wait (generations.ts healPoll).
+        const s = (e as { status?: number }).status;
+        if (tenantAccount() && e instanceof ProviderError && (s === 429 || (s !== undefined && s >= 500) || (s === undefined && /fetch failed|ECONN|ETIMEDOUT|ENOTFOUND/i.test(e.message)))) throw e;
+        if (tenantAccount() && e instanceof TypeError && /fetch failed/i.test(e.message)) throw e;
         return { state: "failed", error: (e as Error).message };
       }
     }

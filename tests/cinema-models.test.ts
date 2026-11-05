@@ -49,7 +49,8 @@ describe("Cinema Studio's models", () => {
     // On the GPU, H3 renders 768p.
     const open = planCinema(input({ modelId: "oss-minimax-h3", resolution: "720p" }), ctx);
     expect(open.steps[0].request.params?.resolution).toBe("768p");
-    expect(open.notes.join(" ")).toMatch(/MiniMax H3 renders at 768p here/);
+    expect(open.notes.join(" ")).toMatch(/MiniMax H3 renders at 768p/);
+    expect(open.notes.join(" ")).not.toMatch(/renders (at|up to) \S+ here/);
     // Every cloud choice has a price.
     for (const id of CINEMA_MODELS.video.cloud) expect(res({ modelId: id, resolution: "720p" }).costUsd, id).not.toBeNull();
   });

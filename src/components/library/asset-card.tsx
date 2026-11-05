@@ -11,6 +11,7 @@ import { coverOf, trashDaysLeft, userTitle, type LibraryEntry } from "@/lib/libr
 import { isLayered, shownOutputs } from "@/lib/output-actions";
 import { cn } from "@/lib/utils";
 import { PlaceholderChip } from "@/components/demo-mode";
+import { TroubleActions, TroubleDetails } from "@/components/gpu/trouble";
 import { DRAG_TYPE } from "./folders";
 import { ReviewBadge } from "./review";
 import type { Layout } from "./view-options";
@@ -63,6 +64,13 @@ export function StatusCover({ g }: { g: Generation }) {
       <div className="min-h-0 space-y-1 overflow-hidden">
         <p className="text-[13px] font-medium">{g.status === "canceled" ? "Canceled" : "Couldn't generate this one"}</p>
         {g.error && <p className="line-clamp-4 text-[12px] leading-snug break-words text-muted-foreground">{g.error}</p>}
+        {/* An account's own GPU or key: what came back (small), and the way out (Start your pod, Check my GPU, Replace key…). */}
+        {g.status === "failed" && g.trouble && (
+          <>
+            <TroubleDetails details={g.trouble.details} />
+            <TroubleActions className="pt-1" actions={g.trouble.actions} skip={["retry"]} max={2} />
+          </>
+        )}
       </div>
     </div>
   );

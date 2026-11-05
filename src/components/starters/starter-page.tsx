@@ -7,7 +7,7 @@ import { PageShell } from "@/components/page-shell";
 import { SelfHostNote } from "@/components/self-host-note";
 import { CoverArt, CoverImg, useCoverPlayback } from "@/components/template-cover";
 import { useIsOwner, useIsVisitor } from "@/lib/api";
-import { STARTER_SURFACES, starterShown, type StarterCardData, type StarterInput } from "@/lib/starters/types";
+import { STARTER_SURFACES, VISITOR_MAKES, starterShown, type StarterCardData, type StarterInput } from "@/lib/starters/types";
 import { StarterIcon } from "./starter-icon";
 import { useStarterUse } from "./starter-section";
 import { StepsGlyph } from "./steps-glyph";
@@ -106,7 +106,7 @@ export function StarterPage({ s }: { s: StarterCardData }) {
           </div>
           <p className="mt-2 text-[15px] text-pretty text-muted-foreground">{s.description}</p>
 
-          {owner ? (
+          {owner || VISITOR_MAKES.has(s.surface) ? (
             <div className="mt-4 flex flex-wrap items-center gap-3">
               {s.use.kind === "fill" ? (
                 <Button asChild className="rounded-full">

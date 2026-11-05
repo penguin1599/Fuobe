@@ -47,7 +47,7 @@ for (const r of plan) {
   if (!was || r.rank < was.rank) firstBySurface.set(r.surface, r);
 }
 /** Pages that show "More to try" covers until they have examples of their own. */
-const MORE = ["/video-edit", "/extend", "/reframe", "/lipsync", "/motion-control", "/upscale/video", "/video-tools", "/audio", "/audio/music", "/layers", "/genjutsu", "/katana", "/cinema", "/ads"];
+const MORE = ["/video-edit", "/extend", "/reframe", "/lipsync", "/motion-control", "/upscale/video", "/video-tools", "/audio/speech", "/audio/music", "/layers", "/genjutsu", "/katana", "/cinema", "/ads"];
 
 const targets = [
   ...[...firstBySurface.values()].map((r) => ({ url: urlOf(r.surface), row: r })),

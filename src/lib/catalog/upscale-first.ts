@@ -1,4 +1,4 @@
-import { REGEN_DEFAULT_TIER, REGEN_MODEL, REGEN_OFFERED } from "./regenerate";
+import { REGEN_DEFAULT_TIER, REGEN_MODEL } from "./regenerate";
 
 /**
  * Upscale → Video's "before upscaling" steps: one list, so each finishing package adds its row here (archive-restore:
@@ -15,6 +15,8 @@ export interface UpscaleFirstStep {
   href: string;
   /** GPU-only (nobody hosts its model): hidden when Engine mode is "Paid APIs only". */
   openOnly?: true;
+  /** It runs on the visitor's own setup (src/lib/own-setup.ts id): its label sits next to the step's. */
+  ownSetup?: string;
 }
 
 const ALL_FIRST_STEPS: UpscaleFirstStep[] = [
@@ -30,11 +32,13 @@ const ALL_FIRST_STEPS: UpscaleFirstStep[] = [
     hint: "Open-H3 Regenerate redraws it at 2K on your GPU from its words: details may change; motion, layout and sound stay",
     href: `/upscale/video?model=${REGEN_MODEL}&resolution=${REGEN_DEFAULT_TIER}`,
     openOnly: true,
+    // A 48 GB card: the step says so, and a visitor runs it on its own GPU only.
+    ownSetup: "regenerate:upscale",
   },
 ];
 
-/** The steps offered now (Regenerate only while REGEN_OFFERED is on). */
-export const UPSCALE_FIRST_STEPS: UpscaleFirstStep[] = ALL_FIRST_STEPS.filter((s) => s.id !== "regenerate" || REGEN_OFFERED);
+/** The steps offered now. */
+export const UPSCALE_FIRST_STEPS: UpscaleFirstStep[] = ALL_FIRST_STEPS;
 
 /** The query a tool reads to switch its "then upscale" step on. */
 export const THEN_UPSCALE = "upscale";

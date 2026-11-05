@@ -319,6 +319,9 @@ describe("Shorts pipeline shape", () => {
     const st = stitchSteps({ ids: ["j", "s"], final: "m" }, { j: g("succeeded", { op: "concat" }), s: g("succeeded", { op: "trim" }), m: g("running", { op: "mux", progress: 0.2 }) });
     expect(st.map((x) => x.label)).toEqual(["Stitching the segments", "Cutting the original sound", "Putting the sound back"]);
     expect(chainState(st).progress).toBeCloseTo((2 + 0.2) / 3);
+    // Original sound split on the GPU before the final mux.
+    const split = stitchSteps({ ids: ["j", "t", "x"], final: "m" }, { j: g("succeeded", { op: "concat" }), t: g("succeeded", { op: "trim" }), x: g("running", { op: "separate-audio", progress: 0.4 }), m: g("queued", { op: "mux" }) });
+    expect(chainState(split)).toMatchObject({ status: "working", label: "Splitting the sound" });
   });
 
   it("limits are Higgsfield's", () => {

@@ -11,7 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { NotFoundState } from "@/components/empty-state";
 import { EngineSwitch } from "@/components/studio/engine-switch";
 import { radioKeys, radioTab } from "@/components/studio/radio-keys";
-import { useEngine } from "@/lib/api";
+import { useEngine, useIsOwner } from "@/lib/api";
 import {
   defaultVoice,
   FACELESS_STYLE_IDS,
@@ -70,6 +70,8 @@ export function EpisodeWizard({ channelId, picker, initialTopic }: { channelId: 
   const [step, setStep] = useState<1 | 2>(1);
   const [topics, setTopics] = useState<TopicIdea[] | null>(null);
   const [offline, setOffline] = useState(false);
+  // Suggestions written offline say how to get fresher ones: the studio's AI helper, which only its owner sets up.
+  const owner = useIsOwner();
   const [round, setRound] = useState(0);
   const [loadingTopics, setLoadingTopics] = useState(false);
   const [picked, setPicked] = useState<string | null>(null);
@@ -211,7 +213,7 @@ export function EpisodeWizard({ channelId, picker, initialTopic }: { channelId: 
 
             <section aria-label="Topic suggestions" className="space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className={cn("text-[13px] text-muted-foreground", loadingTopics && "shimmer-text animate-shimmer-text")}>{loadingTopics ? "Writing topic suggestions…" : offline ? "Suggestions written offline — connect Claude or a local model (Ollama, LM Studio or Unsloth Studio) in Settings for fresher ones." : "Tick one, or write your own below."}</p>
+                <p className={cn("text-[13px] text-muted-foreground", loadingTopics && "shimmer-text animate-shimmer-text")}>{loadingTopics ? "Writing topic suggestions…" : offline && owner ? "Suggestions written offline — connect Claude or a local model (Ollama, LM Studio or Unsloth Studio) in Settings for fresher ones." : "Tick one, or write your own below."}</p>
                 <Button
                   variant="outline"
                   size="sm"

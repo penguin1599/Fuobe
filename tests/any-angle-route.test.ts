@@ -4,7 +4,7 @@ import { tempDir } from "./helpers/temp-dir";
 
 // Any Angle through POST /api/generations: a second build of the same photo answers with the first one (running or
 // done) and gives the run back to the hourly count; one account never gets another's; an account may build the 3D view
-// on its own GPU (other 3D models wait for the server's finish).
+// on its own GPU (like any 3D model there; on this install's GPUs other 3D models are refused).
 
 const dir = tempDir("fuobe-any-angle-route-");
 process.env.FUOBE_DATA_DIR = dir;
@@ -16,7 +16,8 @@ globalThis.__fuobeTestDiskFree = 1e13;
 const auth = await import("@/server/auth");
 const generationsRoute = await import("@/app/api/generations/route");
 const { saveFile } = await import("@/server/storage");
-const { createGenerations } = await import("@/server/generations");
+const { asAccount, createGenerations } = await import("@/server/generations");
+const { withRunStamp } = await import("@/server/run-stamp");
 const { viewKeyOf } = await import("@/server/any-angle");
 const { ANY_ANGLE } = await import("@/lib/catalog/any-angle");
 const { OWN_GPU_TOOL_MESSAGE } = await import("@/lib/guest-access");
@@ -82,7 +83,7 @@ describe("Any Angle's 3D view through the route", () => {
     expect(body.items?.map((g) => g.id) ?? []).not.toContain("view-a");
   });
 
-  it("lets an account build the 3D view on its own GPU (other 3D models wait for the server's finish)", async () => {
+  it("lets an account build the 3D view on its own GPU (other 3D models aren't made on this install's GPUs)", async () => {
     const photo = await upload(a, "build.png");
     let refused: unknown = null;
     try {
@@ -92,7 +93,7 @@ describe("Any Angle's 3D view through the route", () => {
     }
     // Whatever else stops it here (no GPU connected in this test), it isn't the 3D finish that keeps accounts out.
     expect((refused as Error | null)?.message ?? "").not.toBe(OWN_GPU_TOOL_MESSAGE);
-    expect(() => createGenerations({ feature: "image-to-3d", modelId: "oss-triposplat", op: "splat", engine: "open", inputs: { images: [photo] }, account: a } as never)).toThrow(OWN_GPU_TOOL_MESSAGE);
+    expect(() => asAccount(a, () => withRunStamp({ place: "pool" }, () => createGenerations({ feature: "image-to-3d", modelId: "oss-triposplat", op: "splat", engine: "open", inputs: { images: [photo] } } as never)))).toThrow(OWN_GPU_TOOL_MESSAGE);
 
   });
 });

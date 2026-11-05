@@ -8,6 +8,7 @@ import { HUB_MODES, type HubKind } from "@/lib/hubs";
 import { GENJUTSU_MODES } from "@/lib/catalog/genjutsu";
 import { appStudio, EDIT_STUDIO, IMAGE_STUDIO, INPAINT_STUDIO, UPSCALE_STUDIO, VIDEO_STUDIO } from "@/lib/studios";
 import { EXAMPLE_MEDIA } from "@/lib/examples/media.generated";
+import { STUDIO_COVERS, isStudioCover } from "@/lib/studio-covers";
 import { EXAMPLE_CAPTION_MAX, EXAMPLE_WORDS_MAX, EXAMPLES_HEADING, MORE_HEADING, exampleFits, type ExampleCard, type ExampleMedia } from "@/lib/examples/types";
 import type { Draft } from "@/components/studio/studio-context";
 
@@ -219,7 +220,10 @@ describe("the examples' catalog", () => {
         expect(row!.heading, s).toBe(MORE_HEADING);
         for (const c of row!.cards) {
           expect(c.load, c.id).toMatchObject({ via: "look" });
-          expect((c.load as { href?: string }).href, c.id).toMatch(/^\/(apps\/app-[a-z0-9-]+|video\?preset=[a-z0-9-]+)$/);
+          // A studio's own cover opens its studio (studio-covers.ts); a preset's its own page.
+          const cover = c.id.replace(/^more\./, "");
+          if (isStudioCover(cover)) expect((c.load as { href?: string }).href, c.id).toBe(STUDIO_COVERS[cover].href);
+          else expect((c.load as { href?: string }).href, c.id).toMatch(/^\/(apps\/app-[a-z0-9-]+|video\?preset=[a-z0-9-]+)$/);
         }
       }
     }

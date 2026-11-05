@@ -1,0 +1,21 @@
+# Publishes Fuobe Connect to the Comfy Registry when pyproject.toml changes on main (a new version), or by hand.
+# Needs the repository secret REGISTRY_ACCESS_TOKEN: a publishing key of the "workingprototype" Registry publisher.
+name: Publish to the Comfy Registry
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [pyproject.toml]
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    if: ${{ github.repository_owner == 'workingprototype' }}
+    steps:
+      - name: Publish
+        uses: Comfy-Org/publish-node-action@7578cdb0c1410f2515e6f9b1443c6859cab94f05 # 1.0.1
+        with:
+          personal_access_token: ${{ secrets.REGISTRY_ACCESS_TOKEN }}

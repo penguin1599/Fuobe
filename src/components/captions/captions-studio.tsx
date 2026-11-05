@@ -1,6 +1,7 @@
 "use client";
 
 import { Captions, Download, FileUp, Flame, Loader2, Sparkles, Wand2 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -37,6 +38,7 @@ import {
   type CaptionSize,
 } from "@/lib/av/captions";
 import { parseCues, toSrt, toVtt, type Cue } from "@/lib/cues";
+import { speechEditLink } from "@/lib/speech-edit-handoff";
 import { cn } from "@/lib/utils";
 import { toastError } from "@/lib/refusals";
 
@@ -142,7 +144,8 @@ export function CaptionsStudio() {
 }
 
 function Editor({ video, restored, onReplace }: { video: SlotValue; restored: Saved | null; onReplace: (v: SlotValue | null) => void }) {
-  const [engine] = useEngine();
+  const [engine, , mode] = useEngine();
+  const router = useRouter();
   const create = useCreateGeneration();
   const editor = useCueEditor(restored?.cues ?? []);
   const [look, setLook] = useState<CaptionLook>(restored?.look ?? DEFAULT_LOOK);
@@ -276,6 +279,8 @@ function Editor({ video, restored, onReplace }: { video: SlotValue; restored: Sa
             }}
             className="max-h-[60vh]"
             emptyHint="Transcribe the clip, import an .srt / .vtt, or write the lines yourself."
+            /* Fix this line: change what was said in the clip itself (Edit speech, your GPU only). */
+            onFixLine={mode === "cloud" ? undefined : (i) => router.push(speechEditLink({ media: video.ref, kind: "video", name: video.name, cues, line: i }))}
           />
         </Panel>
 

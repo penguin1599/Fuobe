@@ -99,6 +99,9 @@ export interface NodeView {
 
 export const EMPTY_VIEW: NodeView = { counts: {}, costUsd: null, step: null, reused: false, results: EMPTY_RESULTS };
 
+/** The `feature` of the stand-in result a visitor's ready board shows on its last step (its published example). */
+export const EXAMPLE_FEATURE = "canvas-example";
+
 /** Board-wide settings the nodes read (they change rarely). */
 export interface EditorGlobals {
   canvasId: string;
@@ -110,6 +113,8 @@ export interface EditorGlobals {
   running: boolean;
   /** True when this model would run on the demo provider (no key / no ComfyUI). */
   isDemo: (m: ModelDef) => boolean;
+  /** A visitor's board (visitor-canvas.tsx): it never runs here, so nodes show no price and no run state. */
+  visitor?: boolean;
 }
 
 export interface EditorSnapshot {

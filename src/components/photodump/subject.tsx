@@ -9,11 +9,12 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { fileToList, type SlotValue } from "@/components/studio/media-slot";
-import { useElements, useLikelyVisitor, useSaveElement } from "@/lib/api";
+import { useAskFirst } from "./ask-first";
 import type { StudioElement } from "@/lib/catalog/elements";
 import { SOUL_ID_COPY, SOUL_ID_PHOTOS } from "@/lib/catalog/training";
 import { cn } from "@/lib/utils";
 import { toastError } from "@/lib/refusals";
+import { usePhotoCharacters, useSaveCharacter } from "./hooks";
 
 /** What a character brings: a trained Soul ID (Fuobe Soul), an old Higgsfield one to retrain, or just photos. */
 export function identityLabel(el: StudioElement): string {
@@ -37,7 +38,7 @@ export function QuickCharacter({ open, onOpenChange, onCreated }: { open: boolea
   const [photos, setPhotos] = useState<SlotValue[]>([]);
   const [over, setOver] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
-  const save = useSaveElement();
+  const save = useSaveCharacter();
   const busy = photos.some((p) => p.uploading);
   const addFiles = (files: Iterable<File>) => [...files].filter((f) => /^image\/(png|jpe?g|webp)$/.test(f.type)).slice(0, MAX_PHOTOS - photos.length).forEach((f) => fileToList(f, setPhotos, "image"));
   return (
@@ -101,11 +102,12 @@ export function QuickCharacter({ open, onOpenChange, onCreated }: { open: boolea
           <Button
             disabled={!name.trim() || !photos.length || busy || save.isPending}
             onClick={() =>
-              save.mutate(
-                { name: name.trim(), kind: "character", references: photos.map((p) => p.ref).filter(Boolean) },
+              save.save(
+                { name: name.trim(), references: photos.map((p) => p.ref).filter(Boolean) },
                 {
                   onSuccess: (el) => {
-                    toast.success(`Saved as @${el.handle}`);
+                    // The owner's character is an element (@handle); an account's is its own, by name.
+                    toast.success(save.owner ? `Saved as @${el.handle}` : `Saved ${el.name}`);
                     onCreated(el);
                     setName("");
                     setPhotos([]);
@@ -126,28 +128,22 @@ export function QuickCharacter({ open, onOpenChange, onCreated }: { open: boolea
 
 /** Your characters as cards (photo, name, what identity they carry), plus "New character". */
 export function CharacterPicker({ value, onChange }: { value?: string; onChange: (id: string) => void }) {
-  const { data, isLoading } = useElements();
+  // The owner's characters are its elements; an account's are its own (saved here or from a Character Sheet).
+  const { data, isLoading } = usePhotoCharacters();
   const [creating, setCreating] = useState(false);
-  // A character is saved to the studio's library, which is its owner's: a guest or an account reads where characters
-  // are made, in the same place, instead of a form whose photos and save would be refused.
-  const visitor = useLikelyVisitor();
+  // A guest is asked to sign up first, and an account with neither its own GPU nor its own key to connect one.
+  const askFirst = useAskFirst();
   const characters = (data ?? []).filter((e) => e.kind === "character");
   return (
     <>
       <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-6">
-        {visitor ? (
-          <p className="flex aspect-[3/4] flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed p-3 text-center text-[12px] leading-snug text-pretty text-muted-foreground">
-            <UserRound className="size-5" /> Saving characters isn&apos;t available here
-          </p>
-        ) : (
-          <button
-            type="button"
-            onClick={() => setCreating(true)}
-            className="flex aspect-[3/4] flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed text-[12.5px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-          >
-            <Plus className="size-5" /> New character
-          </button>
-        )}
+        <button
+          type="button"
+          onClick={() => askFirst(() => setCreating(true))}
+          className="flex aspect-[3/4] flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed text-[12.5px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        >
+          <Plus className="size-5" /> New character
+        </button>
         {isLoading
           ? Array.from({ length: 3 }, (_, i) => <Skeleton key={i} className="aspect-[3/4] rounded-xl" />)
           : characters.map((el) => {
@@ -183,7 +179,7 @@ export function CharacterPicker({ value, onChange }: { value?: string; onChange:
               );
             })}
       </div>
-      <QuickCharacter open={creating && !visitor} onOpenChange={setCreating} onCreated={(el) => onChange(el.id)} />
+      <QuickCharacter open={creating} onOpenChange={setCreating} onCreated={(el) => onChange(el.id)} />
     </>
   );
 }

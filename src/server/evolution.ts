@@ -19,7 +19,7 @@ import {
   type Intensity,
 } from "@/lib/catalog/evolution";
 import { SHORTS, vaceDownsample, type PlanStep } from "@/lib/catalog/shorts";
-import type { Engine, Generation } from "@/lib/catalog/types";
+import type { Engine, Generation, GenerationRequest } from "@/lib/catalog/types";
 import { ACCESS_PLACE } from "@/lib/model-access";
 import { createPipeline } from "./chains";
 import { llmText, llmTextBackend } from "./enhance";
@@ -29,6 +29,7 @@ import { probeOllama } from "./providers/llm";
 import { engineMode, getSetting } from "./settings";
 import { probeSource, ShortsError } from "./shorts";
 import { readRef } from "./storage";
+import { tenantAccount } from "./tenant";
 
 /**
  * Video tools → Evolution (Fuobe Evolution, build plan O13): plans, prices and starts a run (src/lib/catalog/evolution.ts)
@@ -138,6 +139,9 @@ export async function writeDirection(body: z.infer<typeof DirectionSchema>): Pro
   mustMatchMode(body.engine);
   if (body.references.length > EVOLUTION.maxReferences) throw new ShortsError(`Use up to ${EVOLUTION.maxReferences} references`, 422);
   const offline = (why: string): DirectionAnswer => ({ direction: offlineDirection({ intensity: body.intensity as Intensity, idea: body.idea, references: body.references.length }), by: "offline", why });
+  // A signed-in account's direction is Fuobe's offline writer's: never this studio's AI helper (its LLM or its key), and
+  // no word about the studio's setup.
+  if (tenantAccount()) return { direction: offline("").direction, by: "offline" };
   if (getSetting("demoMode") === "on") return offline("demo mode");
   const textModel = getModel(body.engine === "open" ? "oss-text-llm" : "text-llm");
   if (!textModel || !offeredModel(textModel)) return offline(`the text model is switched off in ${ACCESS_PLACE}`);
@@ -267,8 +271,36 @@ export function estimateEvolution(body: z.infer<typeof EvolutionEstimateSchema>)
   };
 }
 
+/** A planned run: its steps, the key of the finished video's step, and the direction it uses. Nothing is created yet. */
+export interface EvolutionRun {
+  steps: PlanStep[];
+  final: string;
+  direction: string;
+  by: DirectionAnswer["by"] | "you";
+}
+
+/** A planned run's steps as the requests they make, with how many earlier steps each waits for (account-tool-run.ts). */
+export const evolutionSteps = (r: EvolutionRun): { request: GenerationRequest; deps: number }[] => r.steps.map((s) => ({ request: withChain(s), deps: s.after?.length ?? 0 }));
+
+/** Start a planned run; returns the finished video's generation, every step and the direction used. */
+export function startEvolution(r: EvolutionRun): { final: Generation; items: Generation[]; direction: string; by: DirectionAnswer["by"] | "you" } {
+  let p: ReturnType<typeof createPipeline>;
+  try {
+    p = createPipeline(r.steps);
+  } catch (e) {
+    if (e instanceof ConnectComfyError) throw e;
+    throw new ShortsError((e as Error).message, 422);
+  }
+  return { final: p.byKey[r.final], items: p.items, direction: r.direction, by: r.by };
+}
+
 /** Start the run; a run with no direction gets one written first. Returns the finished video's generation and the direction used. */
 export async function createEvolution(body: z.infer<typeof EvolutionBodySchema>): Promise<{ final: Generation; items: Generation[]; direction: string; by: DirectionAnswer["by"] | "you" }> {
+  return startEvolution(await planEvolutionRun(body));
+}
+
+/** Plan the run (the clip's header is read, a direction written when none is given); nothing is created. */
+export async function planEvolutionRun(body: z.infer<typeof EvolutionBodySchema>): Promise<EvolutionRun> {
   mustMatchMode(body.engine);
   mustBeOffered(body.engine);
   if (body.resolution && !EVOLUTION_RESOLUTIONS[body.engine].includes(body.resolution)) throw new ShortsError(`Pick ${resolutionChoices(body.engine)}`, 422);
@@ -284,12 +316,5 @@ export async function createEvolution(body: z.infer<typeof EvolutionBodySchema>)
   }
   const { input } = planInput(body, info, direction, true);
   const plan = planEvolution(input);
-  let p: ReturnType<typeof createPipeline>;
-  try {
-    p = createPipeline(plan.steps);
-  } catch (e) {
-    if (e instanceof ConnectComfyError) throw e;
-    throw new ShortsError((e as Error).message, 422);
-  }
-  return { final: p.byKey[plan.final], items: p.items, direction, by };
+  return { steps: plan.steps, final: plan.final, direction, by };
 }

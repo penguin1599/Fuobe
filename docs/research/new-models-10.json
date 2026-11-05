@@ -300,14 +300,15 @@
   {
    "name": "Hy-Nomas (interactive world model)",
    "area": "world model / long steerable video",
-   "licence": "Apache-2.0 (HF tag)",
+   "licence": "Apache-2.0 (code and weights: LICENSE at tencent/Hy-Nomas bb6a8ca4, read 2026-11-03; third-party components keep their own licences). The PixelUMM decoder is Tencent's fine-tune of NVIDIA PixelUMM: the converted file (nynxz/Hy-Nomas) is under the NVIDIA One-Way Noncommercial License per its card. The prompt enhancer (PE, ~55 GB in 18 shards) is in the same Apache-2.0 repository and is only needed by the web demo",
    "vram": "8 GPUs reference; one 4090 with INT8 DiT + FP8 decoder + offload; port: 5090 ~21 s per 3 s turn at 1280x704",
    "hosted": [],
-   "comfy": "community port Nynxz/ComfyUI-HyNomas (stock loaders)",
+   "comfy": "community port Nynxz/ComfyUI-HyNomas at a89e0515 (Apache-2.0, stock loaders; weights nynxz/Hy-Nomas at e8ddc4bf: int8 ConvRot DiT 8.97 GB, bf16 DiT 17.11 GB, PixelUMM VAE bf16 15.78 GB; text encoder qwen_2.5_vl_7b from Comfy-Org/Qwen-Image, already pinned). History lives in ComfyUI's memory (NOMAS_WORLD + an int8 KV cache in temp/nomas_history): separate /prompt calls carry it only through ComfyUI's output cache (the same upstream nodes and inputs) or the Nomas Explore node's in-process sessions",
    "released": "2026-10-21",
    "url": "https://huggingface.co/tencent/Hy-Nomas",
-   "inFuobe": false,
-   "confirmed": true
+   "inFuobe": true,
+   "confirmed": true,
+   "fuobe": "World mode in Cinema (nm10-hy-nomas-world): oss-hy-nomas-world, graph world-hy-nomas-turn, open engine only"
   },
   {
    "name": "MiniMax H3 Max Director (realtime steering)",
@@ -328,7 +329,9 @@
    "released": "2026-09-03 / 2026-10-15",
    "url": "https://fal.ai/models/minimax/h3-max/director",
    "inFuobe": false,
-   "confirmed": true
+   "confirmed": true,
+   "pricing": "fal (read 2026-11-03): $0.08/s, 1080p $0.16/s from 2026-11-16 (30% off 11-01 to 11-15: $0.056 / $0.112); every session billed at least 60 s. Reference Director: no price listed on fal's model list",
+   "notes": "Realtime WebRTC sessions with live prompts (fal's 'worlds' category). A different model from Hy-Nomas, not a stand-in for World mode; offering it under its own name is the owner's call"
   },
   {
    "name": "Prism (Tencent/Fudan/ZJU joint 2K audio-video, preview)",
@@ -949,19 +952,22 @@
   {
    "name": "CorridorKey 2.0",
    "area": "green/blue screen keying, linear EXR",
-   "licence": "corridor-key-licence-2.0 (CC BY-NC-SA variant: commercial projects allowed; no paid API/resale; seats above US$20M revenue)",
+   "licence": "corridor-key-licence-2.0: the CC BY-NC-SA 4.0 licence with additional terms (LICENSE at cf44a8db): any lawful use including commercial projects, outputs are yours; no repackaging or resale and no charging for the code or weights; no paid API or inference service (paywall, subscription or usage billing); derivatives released free of charge under the same licence; a commercial software package or inference service needs a written agreement with Corridor Digital; organisations above US$20M revenue need a seat per user",
    "vram": "4 GB <= 1440p, 6 GB 4K; RTX 30+",
    "hosted": [],
-   "comfy": "community wrappers (pixelworldai/ComfyUI-CorridorKeyWrapper, TrentNodes, SeanBRVFX): v2 support unverified",
+   "comfy": "Three ComfyUI packs load the 2.0 weights (re-checked 2026-11-02), all under the Corridor Key Licence 2.0: hashu786/ComfyUI-CorridorKey2 @d1228b68 (one CorridorKey2 node; vendors Corridor's corridorkey package at 485f5e9 unmodified), miguelangelarribas/ComfyUI-CorridorKey2 @ab948899 (loader + keyer, also unmodified upstream) and marawan206/ComfyUI-CorridorKey2.0 @c3abf212 (large pack; patches upstream blocks.py). The three named in the brief (pixelworldai/ComfyUI-CorridorKeyWrapper @7eb44e48, SeanBRVFX/ComfyUI-CorridorKey @0f724f7c, TrentNodes @3d80a9df) load CorridorKey_v1.0.pth only. 2.0 also fetches three frozen models: NVIDIA C-RADIOv4-SO400M @c0457f5d (NVIDIA Open Model License, 1.72 GB), MoGe-2 ViT-B @ca5f0e07 (MIT, 0.42 GB), RVM small (CC-BY 4.0, 0.27 GB). Fuobe's graph runs 2.0 through hashu786's node.",
    "released": "2026-10-13",
    "url": "https://huggingface.co/nikopueringer/CorridorKey2.0",
    "inFuobe": false,
-   "confirmed": true
+   "confirmed": true,
+   "revision": "cf44a8db3f024bb49fd59daa408848ccf05f7477",
+   "sizeGb": 2.66,
+   "checked": "2026-11-02"
   },
   {
    "name": "Bria VRMBG 3.0 (open weights) via ComfyUI-RMBG 3.3.0",
    "area": "video matting",
-   "licence": "bria-vrmbg-3.0 (gated, manual approval)",
+   "licence": "bria-vrmbg-3.0: gated with manual approval; the card says non-commercial use only, commercial use needs an agreement with Bria AI, academic access on request",
    "vram": "not stated",
    "hosted": [
     {
@@ -969,23 +975,29 @@
      "endpoint": "bria/video/background-removal/v3"
     }
    ],
-   "comfy": "ComfyUI-RMBG AILab_VRMBG (custom)",
+   "comfy": "ComfyUI-RMBG 3.3.0 AILab_VRMBG (no 3.3.0 tag: pinned at commit a66a5e64, 2026-10-20). The node needs config.json, model.safetensors, model.py and vrmbg3_config.py in models/RMBG/VRMBG-3.0/ (no automatic download); it infers at 1024x1024 and conditions each frame on the one before within one run (reset_state).",
    "released": "pack 2026-10-20",
    "url": "https://huggingface.co/briaai/VRMBG-3.0",
    "inFuobe": true,
-   "confirmed": true
+   "confirmed": true,
+   "revision": "59716e19a6cc97f91311edea190938219c097b76",
+   "sizeGb": 0.88,
+   "checked": "2026-11-02"
   },
   {
    "name": "FeyNoBg (hair / fine-edge matting)",
    "area": "image matting",
-   "licence": "unconfirmed",
+   "licence": "unknown: the Hugging Face repo has no model card, no licence tag and no LICENSE file (checked 2026-11-02); ComfyUI-RMBG's code is GPL-3.0",
    "vram": "1.05 GB weights",
    "hosted": [],
-   "comfy": "ComfyUI-RMBG 3.3.0",
+   "comfy": "ComfyUI-RMBG 3.3.0 AILab_FeyNoBg: downloads config.json, FeyNobg.safetensors and preprocessor_config.json into models/RMBG/FeyNoBg/ on first run; needs the nobg Python package (pack requirements: nobg>=0.3.1)",
    "released": "2026-10-09",
    "url": "https://huggingface.co/1038lab/FeyNobg",
    "inFuobe": false,
-   "confirmed": false
+   "confirmed": true,
+   "revision": "59dd27c65909b7dcc2de8c3239712b0b997c3e41",
+   "sizeGb": 1.05,
+   "checked": "2026-11-02"
   },
   {
    "name": "Bria green-screen despill; Bria guided background removal",
@@ -1005,8 +1017,10 @@
    "comfy": "no",
    "released": "2026-08-27 / 2026-10-10",
    "url": "https://fal.ai/models/bria/guided-remove-background",
-   "inFuobe": false,
-   "confirmed": true
+   "inFuobe": true,
+   "confirmed": true,
+   "pricing": "green-screen despill $0.05 per second; guided cut-out $0.03 per image (fal llms.txt, 2026-11-02)",
+   "checked": "2026-11-02"
   },
   {
    "name": "LTX-2.5 IC-LoRA Alpha-Gen",
@@ -1018,7 +1032,8 @@
    "released": "2026-10-02 (beta 0.9)",
    "url": "https://huggingface.co/Lightricks/LTX-2.5-22b-IC-LoRA-Alpha-Gen",
    "inFuobe": false,
-   "confirmed": true
+   "confirmed": true,
+   "note": "Recorded for later (nm10-keying, 2026-11-02): the LTX-2.5 IC-LoRA graph in the library (video-restore-ltx25-tiled) has not validated, so 'Best · Alpha-Gen' is not offered yet."
   },
   {
    "name": "Marigold V2 / MoGe 3",
@@ -1058,12 +1073,12 @@
    "name": "Hi3D v1.0",
    "area": "mesh refinement",
    "licence": "Hi3D Open License Agreement 1.0",
-   "vram": "see hi3d-refine brief",
+   "vram": "see docs/research/hi3d-refine.json",
    "hosted": [],
-   "comfy": "t8star/Hi3d-Comfy (community)",
-   "released": "2026-10-16",
+   "comfy": "T8mars/Comfyui-Hi3d-T8 (community, Registry hi3d-t8; t8star/Hi3d-Comfy is its weights repo). Corrected 2026-11-02 by hi3d-refine",
+   "released": "2026-10-23",
    "url": "https://huggingface.co/hi3d-official/Hi3Dv1.0",
-   "inFuobe": false,
+   "inFuobe": true,
    "confirmed": true
   },
   {
@@ -1261,6 +1276,75 @@
    "notes": "\"<qma> {azimuth} {elevation} {distance}\": 8 azimuths relative to the original camera, 4 elevations, 3 distances; strength 1.0, 30 steps, CFG 3, euler / simple, ~1 MP. Not hostable: fal's Qwen-Image 2.1 takes no LoRAs.",
    "inFuobe": true,
    "confirmed": true
+  },
+  {
+   "name": "Abot World 0 (Alibaba)",
+   "area": "interactive world (realtime)",
+   "licence": "commercial (fal listing)",
+   "vram": "hosted (realtime session)",
+   "hosted": [
+    {
+     "provider": "fal",
+     "endpoint": "alibaba/abot-world-0"
+    }
+   ],
+   "comfy": "no",
+   "released": "2026-10-15",
+   "url": "https://fal.ai/models/alibaba/abot-world-0",
+   "inFuobe": false,
+   "confirmed": true,
+   "pricing": "not listed on fal's model list (read 2026-11-03)",
+   "notes": "fal 'worlds': explore interactive worlds in real time with movement and camera controls. A different model from Hy-Nomas, not a stand-in; offering it under its own name is the owner's call"
+  },
+  {
+   "name": "Lingbot World 2 (Robbyant)",
+   "area": "interactive world (realtime)",
+   "licence": "research (fal listing: licenseType 'research')",
+   "vram": "hosted (realtime session)",
+   "hosted": [
+    {
+     "provider": "fal",
+     "endpoint": "robbyant/lingbot-world-2"
+    }
+   ],
+   "comfy": "no",
+   "released": "2026-10-16",
+   "url": "https://fal.ai/models/robbyant/lingbot-world-2",
+   "inFuobe": false,
+   "confirmed": true,
+   "pricing": "not listed on fal's model list (read 2026-11-03)",
+   "notes": "fal 'worlds': realtime movement and camera controls. Research licence on fal. A different model from Hy-Nomas; the owner's call"
+  },
+  {
+   "name": "VAST Eden Live (5B / 14B, Game and Video)",
+   "area": "realtime game worlds and video-to-video",
+   "licence": "commercial (fal listing)",
+   "vram": "hosted (realtime session)",
+   "hosted": [
+    {
+     "provider": "fal",
+     "endpoint": "vast/eden-live-14b-game"
+    },
+    {
+     "provider": "fal",
+     "endpoint": "vast/eden-live-5b-game"
+    },
+    {
+     "provider": "fal",
+     "endpoint": "vast/eden-live-14b-video"
+    },
+    {
+     "provider": "fal",
+     "endpoint": "vast/eden-live-5b-video"
+    }
+   ],
+   "comfy": "no",
+   "released": "2026-10-22",
+   "url": "https://fal.ai/models/vast/eden-live-14b-game",
+   "inFuobe": false,
+   "confirmed": true,
+   "pricing": "fal (read 2026-11-03): 14B $0.01 per generated second, 5B $0.0035, each session billed at least 10 s",
+   "notes": "Game models in fal's 'worlds' category; the Video ones are video-to-video. Different models from Hy-Nomas; the owner's call"
   }
  ],
  "packages": [
@@ -7259,6 +7343,849 @@
    "schemaUrl": "https://fal.ai/api/openapi/queue/openapi.json?endpoint_id=google/lyria-3.5",
    "capability": "music",
    "fetched": "2026-11-01"
+  },
+  {
+   "family": "kandinsky-6",
+   "model": "Kandinsky 6.0 Pro",
+   "title": "Kandinsky 6.0 Pro",
+   "vendor": "Kandinsky Lab",
+   "operation": "t2v",
+   "provider": "fal",
+   "endpoint": "fal-ai/kandinsky6-pro/text-to-video",
+   "variant": "pro",
+   "falCategory": "text-to-video",
+   "status": "active",
+   "keyFields": {
+    "prompt": "prompt",
+    "aspectRatio": "aspect_ratio",
+    "generateAudio": "generate_audio",
+    "seed": "seed",
+    "steps": "num_inference_steps",
+    "enhancePrompt": "enable_prompt_expansion",
+    "negativePrompt": "negative_prompt"
+   },
+   "inputs": {
+    "prompt": {
+     "type": "string",
+     "required": true,
+     "desc": "The text prompt describing the video and its sound.",
+     "examples": [
+      "A cat and a dog baking a cake together in a kitchen. The cat whisks batter while the dog sniffs the flour; a kitchen timer ticks and a mixer hums in the background."
+     ]
+    },
+    "negative_prompt": {
+     "nullable": true,
+     "type": "string",
+     "required": false,
+     "desc": "What to avoid in the video. Defaults to the model's built-in negative prompt."
+    },
+    "aspect_ratio": {
+     "type": "enum",
+     "values": [
+      "16:9",
+      "9:16",
+      "1:1",
+      "4:3",
+      "3:4"
+     ],
+     "valueType": "string",
+     "required": false,
+     "default": "16:9",
+     "desc": "The aspect ratio of the generated video."
+    },
+    "generate_audio": {
+     "type": "boolean",
+     "required": false,
+     "default": true,
+     "desc": "Whether to generate a synchronized audio track."
+    },
+    "enable_prompt_expansion": {
+     "type": "boolean",
+     "required": false,
+     "default": false,
+     "desc": "Whether to rewrite the prompt into a detailed video+audio description with the model's own Qwen2.5-VL text encoder before generating."
+    },
+    "upscale_factor": {
+     "nullable": true,
+     "type": "enum",
+     "values": [
+      2,
+      2.25,
+      4,
+      null
+     ],
+     "valueType": "number",
+     "required": false,
+     "desc": "If set, upscale the generated video by this factor with Kandinsky 6 video super-resolution. One of 2, 2.25 or 4; 2.25 turns the 480p output into 1080p."
+    },
+    "seed": {
+     "nullable": true,
+     "type": "integer",
+     "required": false,
+     "desc": "The random seed used for the generation process."
+    },
+    "sync_mode": {
+     "type": "boolean",
+     "required": false,
+     "default": false,
+     "desc": "If `True`, the media will be returned as a data URI and the output data won't be available in the request history."
+    },
+    "num_inference_steps": {
+     "type": "integer",
+     "required": false,
+     "default": 50,
+     "minimum": 8,
+     "maximum": 50,
+     "desc": "The number of denoising steps."
+    },
+    "guidance_scale": {
+     "type": "number",
+     "required": false,
+     "default": 5,
+     "minimum": 1,
+     "maximum": 10,
+     "desc": "Classifier-free guidance strength."
+    },
+    "enable_safety_checker": {
+     "type": "boolean",
+     "required": false,
+     "default": true,
+     "desc": "Authorized callers may set false to request relaxed screening."
+    }
+   },
+   "output": "video.url",
+   "price": "A 5-second 480p video costs $1.35 at the default 50 steps. 20 steps cost $0.56, 8 steps cost $0.24, and each step adds about $0.027. Upscaling (16:9) adds $0.14 for 2×, $0.18 for 1080p and $0.56 for 4×, so at 50 steps these cost $1.49, $1.53 and $1.91. For example, 8 steps with 4× upscaling costs about $0.79.",
+   "pricing": {
+    "usd": 1.35,
+    "unit": "video",
+    "seconds": 5,
+    "resolution": "480p",
+    "defaultSteps": 50,
+    "bySteps": {
+     "8": 0.24,
+     "20": 0.56,
+     "50": 1.35
+    },
+    "upscaleAdds": {
+     "2": 0.14,
+     "2.25": 0.18,
+     "4": 0.56
+    }
+   },
+   "license": "MIT (Kandinsky 6.0 weights, kandinskylab/Kandinsky-6.0-*-Diffusers model cards); the Qwen2.5-VL 7B text encoder is Apache-2.0, the BigVGAN v2 vocoder MIT (NVIDIA), the MMAudio audio VAE MIT",
+   "notes": "5 s at 24 fps, 480p; the sound is made with the picture (generate_audio). Spoken lines go in the prompt; enable_prompt_expansion rewrites a short prompt first (off by default). upscale_factor runs the VSR after it, at extra cost.",
+   "verified": true,
+   "sourceUrl": "https://fal.ai/models/fal-ai/kandinsky6-pro/text-to-video",
+   "schemaUrl": "https://fal.ai/api/openapi/queue/openapi.json?endpoint_id=fal-ai/kandinsky6-pro/text-to-video",
+   "capability": "t2v",
+   "fetched": "2026-11-02"
+  },
+  {
+   "family": "kandinsky-6",
+   "model": "Kandinsky 6.0 Pro",
+   "title": "Kandinsky 6.0 Pro",
+   "vendor": "Kandinsky Lab",
+   "operation": "i2v",
+   "provider": "fal",
+   "endpoint": "fal-ai/kandinsky6-pro/image-to-video",
+   "variant": "pro",
+   "falCategory": "image-to-video",
+   "status": "active",
+   "keyFields": {
+    "prompt": "prompt",
+    "aspectRatio": "aspect_ratio",
+    "generateAudio": "generate_audio",
+    "seed": "seed",
+    "steps": "num_inference_steps",
+    "enhancePrompt": "enable_prompt_expansion",
+    "negativePrompt": "negative_prompt",
+    "image": "image_url"
+   },
+   "inputs": {
+    "prompt": {
+     "type": "string",
+     "required": true,
+     "desc": "The text prompt describing the video and its sound.",
+     "examples": [
+      "A cat and a dog baking a cake together in a kitchen. The cat whisks batter while the dog sniffs the flour; a kitchen timer ticks and a mixer hums in the background."
+     ]
+    },
+    "image_url": {
+     "type": "string",
+     "required": true,
+     "desc": "The image used as the first frame of the video.",
+     "examples": [
+      "https://storage.googleapis.com/falserverless/example_inputs/ltxv-2-i2v-input.jpg"
+     ]
+    },
+    "negative_prompt": {
+     "nullable": true,
+     "type": "string",
+     "required": false,
+     "desc": "What to avoid in the video. Defaults to the model's built-in negative prompt."
+    },
+    "aspect_ratio": {
+     "type": "union",
+     "variants": [
+      {
+       "type": "enum",
+       "values": [
+        "16:9",
+        "9:16",
+        "1:1",
+        "4:3",
+        "3:4"
+       ],
+       "valueType": "string",
+       "required": false
+      },
+      {
+       "type": "string",
+       "required": false
+      }
+     ],
+     "default": "auto",
+     "desc": "The aspect ratio of the generated video. `auto` picks the supported ratio closest to the image's; the image is center-cropped to it."
+    },
+    "generate_audio": {
+     "type": "boolean",
+     "required": false,
+     "default": true,
+     "desc": "Whether to generate a synchronized audio track."
+    },
+    "enable_prompt_expansion": {
+     "type": "boolean",
+     "required": false,
+     "default": false,
+     "desc": "Whether to rewrite the prompt into a detailed video+audio description with the model's own Qwen2.5-VL text encoder before generating."
+    },
+    "upscale_factor": {
+     "nullable": true,
+     "type": "enum",
+     "values": [
+      2,
+      2.25,
+      4,
+      null
+     ],
+     "valueType": "number",
+     "required": false,
+     "desc": "If set, upscale the generated video by this factor with Kandinsky 6 video super-resolution. One of 2, 2.25 or 4; 2.25 turns the 480p output into 1080p."
+    },
+    "seed": {
+     "nullable": true,
+     "type": "integer",
+     "required": false,
+     "desc": "The random seed used for the generation process."
+    },
+    "sync_mode": {
+     "type": "boolean",
+     "required": false,
+     "default": false,
+     "desc": "If `True`, the media will be returned as a data URI and the output data won't be available in the request history."
+    },
+    "num_inference_steps": {
+     "type": "integer",
+     "required": false,
+     "default": 50,
+     "minimum": 8,
+     "maximum": 50,
+     "desc": "The number of denoising steps."
+    },
+    "guidance_scale": {
+     "type": "number",
+     "required": false,
+     "default": 5,
+     "minimum": 1,
+     "maximum": 10,
+     "desc": "Classifier-free guidance strength."
+    },
+    "enable_safety_checker": {
+     "type": "boolean",
+     "required": false,
+     "default": true,
+     "desc": "Authorized callers may set false to request relaxed screening."
+    }
+   },
+   "output": "video.url",
+   "price": "A 5-second 480p video costs $1.40 at the default 50 steps. 20 steps cost $0.58, 8 steps cost $0.25, and each step adds about $0.027. Upscaling (16:9) adds $0.14 for 2×, $0.18 for 1080p and $0.58 for 4×, so at 50 steps these cost $1.54, $1.58 and $1.98 (square output at 4×: $1.97). For example, 8 steps with 4× upscaling costs about $0.82.",
+   "pricing": {
+    "usd": 1.4,
+    "unit": "video",
+    "seconds": 5,
+    "resolution": "480p",
+    "defaultSteps": 50,
+    "bySteps": {
+     "8": 0.25,
+     "20": 0.58,
+     "50": 1.4
+    },
+    "upscaleAdds": {
+     "2": 0.14,
+     "2.25": 0.18,
+     "4": 0.58
+    }
+   },
+   "license": "MIT (Kandinsky 6.0 weights, kandinskylab/Kandinsky-6.0-*-Diffusers model cards); the Qwen2.5-VL 7B text encoder is Apache-2.0, the BigVGAN v2 vocoder MIT (NVIDIA), the MMAudio audio VAE MIT",
+   "notes": "5 s at 24 fps, 480p; the sound is made with the picture (generate_audio). Spoken lines go in the prompt; enable_prompt_expansion rewrites a short prompt first (off by default). upscale_factor runs the VSR after it, at extra cost.",
+   "verified": true,
+   "sourceUrl": "https://fal.ai/models/fal-ai/kandinsky6-pro/image-to-video",
+   "schemaUrl": "https://fal.ai/api/openapi/queue/openapi.json?endpoint_id=fal-ai/kandinsky6-pro/image-to-video",
+   "capability": "i2v",
+   "fetched": "2026-11-02"
+  },
+  {
+   "family": "kandinsky-6",
+   "model": "Kandinsky 6.0 Lite",
+   "title": "Kandinsky 6.0 Lite",
+   "vendor": "Kandinsky Lab",
+   "operation": "t2v",
+   "provider": "fal",
+   "endpoint": "fal-ai/kandinsky6-lite/text-to-video",
+   "variant": "lite",
+   "falCategory": "text-to-video",
+   "status": "active",
+   "keyFields": {
+    "prompt": "prompt",
+    "aspectRatio": "aspect_ratio",
+    "generateAudio": "generate_audio",
+    "seed": "seed",
+    "steps": "num_inference_steps",
+    "enhancePrompt": "enable_prompt_expansion"
+   },
+   "inputs": {
+    "prompt": {
+     "type": "string",
+     "required": true,
+     "desc": "The text prompt describing the video and its sound.",
+     "examples": [
+      "A cat and a dog baking a cake together in a kitchen. The cat whisks batter while the dog sniffs the flour; a kitchen timer ticks and a mixer hums in the background."
+     ]
+    },
+    "aspect_ratio": {
+     "type": "enum",
+     "values": [
+      "16:9",
+      "9:16",
+      "1:1",
+      "4:3",
+      "3:4"
+     ],
+     "valueType": "string",
+     "required": false,
+     "default": "16:9",
+     "desc": "The aspect ratio of the generated video."
+    },
+    "generate_audio": {
+     "type": "boolean",
+     "required": false,
+     "default": true,
+     "desc": "Whether to generate a synchronized audio track."
+    },
+    "enable_prompt_expansion": {
+     "type": "boolean",
+     "required": false,
+     "default": false,
+     "desc": "Whether to rewrite the prompt into a detailed video+audio description with the model's own Qwen2.5-VL text encoder before generating."
+    },
+    "upscale_factor": {
+     "nullable": true,
+     "type": "enum",
+     "values": [
+      2,
+      2.25,
+      4,
+      null
+     ],
+     "valueType": "number",
+     "required": false,
+     "desc": "If set, upscale the generated video by this factor with Kandinsky 6 video super-resolution. One of 2, 2.25 or 4; 2.25 turns the 480p output into 1080p."
+    },
+    "seed": {
+     "nullable": true,
+     "type": "integer",
+     "required": false,
+     "desc": "The random seed used for the generation process."
+    },
+    "sync_mode": {
+     "type": "boolean",
+     "required": false,
+     "default": false,
+     "desc": "If `True`, the media will be returned as a data URI and the output data won't be available in the request history."
+    },
+    "num_inference_steps": {
+     "type": "integer",
+     "required": false,
+     "default": 10,
+     "minimum": 4,
+     "maximum": 16,
+     "desc": "The number of denoising steps. Lite is tuned for 10."
+    },
+    "enable_safety_checker": {
+     "type": "boolean",
+     "required": false,
+     "default": true,
+     "desc": "Authorized callers may set false to request relaxed screening."
+    }
+   },
+   "output": "video.url",
+   "price": "A 5-second 480p video costs $0.16 at the default 10 steps. 4 steps cost $0.08, 16 steps cost $0.24, and each extra step adds about $0.013. Upscaling (16:9) adds $0.12 for 2×, $0.16 for 1080p and $0.49 for 4×, so at 10 steps these cost $0.28, $0.32 and $0.65. For example, 16 steps with 4× upscaling costs $0.73.",
+   "pricing": {
+    "usd": 0.16,
+    "unit": "video",
+    "seconds": 5,
+    "resolution": "480p",
+    "defaultSteps": 10,
+    "bySteps": {
+     "4": 0.08,
+     "10": 0.16,
+     "16": 0.24
+    },
+    "upscaleAdds": {
+     "2": 0.12,
+     "2.25": 0.16,
+     "4": 0.49
+    }
+   },
+   "license": "MIT (Kandinsky 6.0 weights, kandinskylab/Kandinsky-6.0-*-Diffusers model cards); the Qwen2.5-VL 7B text encoder is Apache-2.0, the BigVGAN v2 vocoder MIT (NVIDIA), the MMAudio audio VAE MIT",
+   "notes": "5 s at 24 fps, 480p; the sound is made with the picture (generate_audio). Spoken lines go in the prompt; enable_prompt_expansion rewrites a short prompt first (off by default). upscale_factor runs the VSR after it, at extra cost.",
+   "verified": true,
+   "sourceUrl": "https://fal.ai/models/fal-ai/kandinsky6-lite/text-to-video",
+   "schemaUrl": "https://fal.ai/api/openapi/queue/openapi.json?endpoint_id=fal-ai/kandinsky6-lite/text-to-video",
+   "capability": "t2v",
+   "fetched": "2026-11-02"
+  },
+  {
+   "family": "kandinsky-6",
+   "model": "Kandinsky 6.0 Lite",
+   "title": "Kandinsky 6.0 Lite",
+   "vendor": "Kandinsky Lab",
+   "operation": "i2v",
+   "provider": "fal",
+   "endpoint": "fal-ai/kandinsky6-lite/image-to-video",
+   "variant": "lite",
+   "falCategory": "image-to-video",
+   "status": "active",
+   "keyFields": {
+    "prompt": "prompt",
+    "aspectRatio": "aspect_ratio",
+    "generateAudio": "generate_audio",
+    "seed": "seed",
+    "steps": "num_inference_steps",
+    "enhancePrompt": "enable_prompt_expansion",
+    "image": "image_url"
+   },
+   "inputs": {
+    "prompt": {
+     "type": "string",
+     "required": true,
+     "desc": "The text prompt describing the video and its sound.",
+     "examples": [
+      "A cat and a dog baking a cake together in a kitchen. The cat whisks batter while the dog sniffs the flour; a kitchen timer ticks and a mixer hums in the background."
+     ]
+    },
+    "image_url": {
+     "type": "string",
+     "required": true,
+     "desc": "The image used as the first frame of the video.",
+     "examples": [
+      "https://storage.googleapis.com/falserverless/example_inputs/ltxv-2-i2v-input.jpg"
+     ]
+    },
+    "aspect_ratio": {
+     "type": "union",
+     "variants": [
+      {
+       "type": "enum",
+       "values": [
+        "16:9",
+        "9:16",
+        "1:1",
+        "4:3",
+        "3:4"
+       ],
+       "valueType": "string",
+       "required": false
+      },
+      {
+       "type": "string",
+       "required": false
+      }
+     ],
+     "default": "auto",
+     "desc": "The aspect ratio of the generated video. `auto` picks the supported ratio closest to the image's; the image is center-cropped to it."
+    },
+    "generate_audio": {
+     "type": "boolean",
+     "required": false,
+     "default": true,
+     "desc": "Whether to generate a synchronized audio track."
+    },
+    "enable_prompt_expansion": {
+     "type": "boolean",
+     "required": false,
+     "default": false,
+     "desc": "Whether to rewrite the prompt into a detailed video+audio description with the model's own Qwen2.5-VL text encoder before generating."
+    },
+    "upscale_factor": {
+     "nullable": true,
+     "type": "enum",
+     "values": [
+      2,
+      2.25,
+      4,
+      null
+     ],
+     "valueType": "number",
+     "required": false,
+     "desc": "If set, upscale the generated video by this factor with Kandinsky 6 video super-resolution. One of 2, 2.25 or 4; 2.25 turns the 480p output into 1080p."
+    },
+    "seed": {
+     "nullable": true,
+     "type": "integer",
+     "required": false,
+     "desc": "The random seed used for the generation process."
+    },
+    "sync_mode": {
+     "type": "boolean",
+     "required": false,
+     "default": false,
+     "desc": "If `True`, the media will be returned as a data URI and the output data won't be available in the request history."
+    },
+    "num_inference_steps": {
+     "type": "integer",
+     "required": false,
+     "default": 10,
+     "minimum": 4,
+     "maximum": 16,
+     "desc": "The number of denoising steps. Lite is tuned for 10."
+    },
+    "enable_safety_checker": {
+     "type": "boolean",
+     "required": false,
+     "default": true,
+     "desc": "Authorized callers may set false to request relaxed screening."
+    }
+   },
+   "output": "video.url",
+   "price": "A 5-second 480p video costs $0.17 at the default 10 steps. 4 steps cost $0.085, 16 steps cost $0.25, and each extra step adds about $0.014. Upscaling (16:9) adds $0.13 for 2×, $0.17 for 1080p and $0.52 for 4×, so at 10 steps these cost $0.30, $0.34 and $0.69. For example, 16 steps with 4× upscaling costs $0.77.",
+   "pricing": {
+    "usd": 0.17,
+    "unit": "video",
+    "seconds": 5,
+    "resolution": "480p",
+    "defaultSteps": 10,
+    "bySteps": {
+     "4": 0.085,
+     "10": 0.17,
+     "16": 0.25
+    },
+    "upscaleAdds": {
+     "2": 0.13,
+     "2.25": 0.17,
+     "4": 0.52
+    }
+   },
+   "license": "MIT (Kandinsky 6.0 weights, kandinskylab/Kandinsky-6.0-*-Diffusers model cards); the Qwen2.5-VL 7B text encoder is Apache-2.0, the BigVGAN v2 vocoder MIT (NVIDIA), the MMAudio audio VAE MIT",
+   "notes": "5 s at 24 fps, 480p; the sound is made with the picture (generate_audio). Spoken lines go in the prompt; enable_prompt_expansion rewrites a short prompt first (off by default). upscale_factor runs the VSR after it, at extra cost.",
+   "verified": true,
+   "sourceUrl": "https://fal.ai/models/fal-ai/kandinsky6-lite/image-to-video",
+   "schemaUrl": "https://fal.ai/api/openapi/queue/openapi.json?endpoint_id=fal-ai/kandinsky6-lite/image-to-video",
+   "capability": "i2v",
+   "fetched": "2026-11-02"
+  },
+  {
+   "family": "kandinsky-6",
+   "model": "Kandinsky 6.0 VSR",
+   "title": "Kandinsky 6.0 VSR",
+   "vendor": "Kandinsky Lab",
+   "operation": "upscale-video",
+   "provider": "fal",
+   "endpoint": "fal-ai/kandinsky6-vsr",
+   "variant": "vsr",
+   "falCategory": "video-to-video",
+   "status": "active",
+   "keyFields": {
+    "video": "video_url",
+    "scale": "upscale_factor",
+    "steps": "num_inference_steps",
+    "seed": "seed"
+   },
+   "inputs": {
+    "video_url": {
+     "type": "string",
+     "required": true,
+     "desc": "The input video to upscale. Clips are resampled to 24fps and capped at 121 frames (~5s). For 2x and 4x upscaling, width and height must be multiples of 16.",
+     "examples": [
+      "https://storage.googleapis.com/falserverless/example_inputs/seedvr-input.mp4"
+     ]
+    },
+    "upscale_factor": {
+     "type": "enum",
+     "values": [
+      2,
+      2.25,
+      4
+     ],
+     "valueType": "number",
+     "required": false,
+     "default": 2.25,
+     "desc": "Total upscale factor applied to the input resolution. One of 2, 2.25 or 4."
+    },
+    "num_inference_steps": {
+     "type": "integer",
+     "required": false,
+     "default": 5,
+     "minimum": 2,
+     "maximum": 50,
+     "desc": "The number of denoising steps used for each tile."
+    },
+    "seed": {
+     "nullable": true,
+     "type": "integer",
+     "required": false,
+     "desc": "The random seed used for the generation process."
+    },
+    "sync_mode": {
+     "type": "boolean",
+     "required": false,
+     "default": false,
+     "desc": "If `True`, the media will be returned as a data URI and the output data won't be available in the request history."
+    },
+    "enable_safety_checker": {
+     "type": "boolean",
+     "required": false,
+     "default": true,
+     "desc": "Authorized callers may set false to request relaxed screening."
+    }
+   },
+   "output": "video.url",
+   "price": "Your request will cost $0.00036 per output megapixel per frame at the default 5 steps. Upscaling a 5-second 480p video to 1080p costs about $0.09, so $1.00 covers 10 upscales. 4x upscaling costs about $0.29, and more steps cost more.",
+   "pricing": {
+    "usd": 0.00036,
+    "unit": "output megapixel per frame",
+    "defaultSteps": 5,
+    "maxFrames": 121,
+    "fps": 24
+   },
+   "license": "MIT (Kandinsky 6.0 weights, kandinskylab/Kandinsky-6.0-*-Diffusers model cards); the Qwen2.5-VL 7B text encoder is Apache-2.0, the BigVGAN v2 vocoder MIT (NVIDIA), the MMAudio audio VAE MIT",
+   "notes": "Clips are resampled to 24 fps and capped at 121 frames (about 5 s); 2x and 4x need sides that are multiples of 16.",
+   "verified": true,
+   "sourceUrl": "https://fal.ai/models/fal-ai/kandinsky6-vsr",
+   "schemaUrl": "https://fal.ai/api/openapi/queue/openapi.json?endpoint_id=fal-ai/kandinsky6-vsr",
+   "capability": "upscale-video",
+   "fetched": "2026-11-02"
+  },
+  {
+   "family": "kandinsky-6",
+   "model": "Kandinsky 6.0 VSR Lite",
+   "title": "Kandinsky 6.0 VSR Lite",
+   "vendor": "Kandinsky Lab",
+   "operation": "upscale-video",
+   "provider": "fal",
+   "endpoint": "fal-ai/kandinsky6-vsr/lite",
+   "variant": "vsr-lite",
+   "falCategory": "video-to-video",
+   "status": "active",
+   "keyFields": {
+    "video": "video_url",
+    "scale": "upscale_factor",
+    "steps": "num_inference_steps",
+    "seed": "seed"
+   },
+   "inputs": {
+    "video_url": {
+     "type": "string",
+     "required": true,
+     "desc": "The input video to upscale. Clips are resampled to 24fps and capped at 121 frames (~5s). For 2x and 4x upscaling, width and height must be multiples of 16.",
+     "examples": [
+      "https://storage.googleapis.com/falserverless/example_inputs/seedvr-input.mp4"
+     ]
+    },
+    "upscale_factor": {
+     "type": "enum",
+     "values": [
+      2,
+      2.25,
+      4
+     ],
+     "valueType": "number",
+     "required": false,
+     "default": 2.25,
+     "desc": "Total upscale factor applied to the input resolution. One of 2, 2.25 or 4."
+    },
+    "num_inference_steps": {
+     "type": "integer",
+     "required": false,
+     "default": 5,
+     "minimum": 2,
+     "maximum": 50,
+     "desc": "The number of denoising steps used for each tile."
+    },
+    "seed": {
+     "nullable": true,
+     "type": "integer",
+     "required": false,
+     "desc": "The random seed used for the generation process."
+    },
+    "sync_mode": {
+     "type": "boolean",
+     "required": false,
+     "default": false,
+     "desc": "If `True`, the media will be returned as a data URI and the output data won't be available in the request history."
+    },
+    "enable_safety_checker": {
+     "type": "boolean",
+     "required": false,
+     "default": true,
+     "desc": "Authorized callers may set false to request relaxed screening."
+    }
+   },
+   "output": "video.url",
+   "price": "Your request will cost $0.00036 per output megapixel per frame, with a default of 2 steps. Upscaling a 5-second 480p video to 1080p costs about $0.08, so $1.00 covers 12 upscales. 4x upscaling costs about $0.24.",
+   "pricing": {
+    "usd": 0.00036,
+    "unit": "output megapixel per frame",
+    "defaultSteps": 2,
+    "maxFrames": 121,
+    "fps": 24
+   },
+   "license": "MIT (Kandinsky 6.0 weights, kandinskylab/Kandinsky-6.0-*-Diffusers model cards); the Qwen2.5-VL 7B text encoder is Apache-2.0, the BigVGAN v2 vocoder MIT (NVIDIA), the MMAudio audio VAE MIT",
+   "notes": "Clips are resampled to 24 fps and capped at 121 frames (about 5 s); 2x and 4x need sides that are multiples of 16.",
+   "verified": true,
+   "sourceUrl": "https://fal.ai/models/fal-ai/kandinsky6-vsr/lite",
+   "schemaUrl": "https://fal.ai/api/openapi/queue/openapi.json?endpoint_id=fal-ai/kandinsky6-vsr/lite",
+   "capability": "upscale-video",
+   "fetched": "2026-11-02"
+  },
+  {
+   "family": "bria",
+   "model": "Bria green-screen despill",
+   "title": "Bria Video Background Removal: Green Screen Despill",
+   "vendor": "Bria",
+   "operation": "bg-remove-video",
+   "provider": "fal",
+   "endpoint": "bria/video/background-removal/green-screen-despill",
+   "falCategory": "video-to-video",
+   "status": "active",
+   "keyFields": {
+    "video": "video_url"
+   },
+   "inputs": {
+    "output_container_and_codec": {
+     "type": "enum",
+     "values": [
+      "mp4_h265",
+      "mp4_h264",
+      "webm_vp9",
+      "mov_h265",
+      "mov_proresks",
+      "mkv_h265",
+      "mkv_h264",
+      "mkv_vp9",
+      "gif"
+     ],
+     "valueType": "string",
+     "required": false,
+     "default": "webm_vp9",
+     "desc": "Output container and codec. Options: mp4_h265, mp4_h264, webm_vp9, mov_h265, mov_proresks, mkv_h265, mkv_h264, mkv_vp9, gif."
+    },
+    "preserve_audio": {
+     "type": "boolean",
+     "required": false,
+     "default": true,
+     "desc": "If true, audio will be preserved in the output video."
+    },
+    "video_url": {
+     "type": "string",
+     "required": true,
+     "desc": "Input video filmed on a green screen.",
+     "examples": [
+      "https://bria-datasets.s3.us-east-1.amazonaws.com/rmbg_tests/videos/green_screen_video.webm"
+     ]
+    },
+    "spill_suppression": {
+     "type": "number",
+     "required": false,
+     "default": 1,
+     "minimum": 0,
+     "maximum": 1,
+     "desc": "Strength of green-spill suppression. Higher values pull the green channel toward the red/blue average on green-dominant pixels, removing the green fringe around the subject. 0 disables it."
+    }
+   },
+   "output": "video.url",
+   "price": "Price: $0.05 per seconds",
+   "pricing": {
+    "usd": 0.05,
+    "unit": "second"
+   },
+   "license": "Bria's hosted model (proprietary; used through fal's API)",
+   "notes": "Chroma (green-screen) footage keyed onto a transparent background with the green spill pulled out of the edges. spill_suppression 0-1 (1 by default, 0 turns it off); output_container_and_codec webm_vp9 keeps the transparency (a codec that can't carry alpha falls back to black and says so in warning); preserve_audio keeps the sound. Released 2026-08-27.",
+   "verified": true,
+   "sourceUrl": "https://fal.ai/models/bria/video/background-removal/green-screen-despill",
+   "schemaUrl": "https://fal.ai/api/openapi/queue/openapi.json?endpoint_id=bria/video/background-removal/green-screen-despill",
+   "capability": "bg-remove-video",
+   "fetched": "2026-11-02"
+  },
+  {
+   "family": "bria",
+   "model": "Bria guided cut-out",
+   "title": "Bria Guided Remove Background",
+   "vendor": "Bria",
+   "operation": "bg-remove",
+   "provider": "fal",
+   "endpoint": "bria/guided-remove-background",
+   "falCategory": "image-to-image",
+   "status": "active",
+   "keyFields": {
+    "image": "image_url",
+    "prompt": "prompt"
+   },
+   "inputs": {
+    "image_url": {
+     "type": "string",
+     "required": false,
+     "default": "https://labs-assets.bria.ai/api-examples/guided-remove-background/yoga_studio_input.jpg",
+     "desc": "Source image as a public URL, a base64 data URI (data:image/png;base64,...) or raw base64-encoded image bytes.",
+     "examples": [
+      "https://labs-assets.bria.ai/api-examples/guided-remove-background/yoga_studio_input.jpg"
+     ]
+    },
+    "prompt": {
+     "nullable": true,
+     "type": "string",
+     "required": false,
+     "desc": "Optional. Plain words for how to change the default cutout of the photo's obvious subject: add something ('the person with the mat and the plant'), drop something ('the woman at her desk without the lamp') or narrow it ('only the chair'). Everything kept is the original pixels with a new alpha channel. Leave it empty for the plain cutout of the obvious subject.",
+     "examples": [
+      "the person with the mat and the plant"
+     ]
+    },
+    "autocrop": {
+     "type": "boolean",
+     "required": false,
+     "default": false,
+     "desc": "Tighten the output canvas to the kept content."
+    },
+    "sync_mode": {
+     "type": "boolean",
+     "required": false,
+     "default": false,
+     "desc": "\n            If true, the function waits for the image to be generated and uploaded\n            before returning, so the image is returned directly (base64) instead of\n            via the CDN. Increases latency.\n        "
+    }
+   },
+   "output": "image.url",
+   "price": "Your request will cost $0.03 per image.",
+   "pricing": {
+    "usd": 0.03,
+    "unit": "image"
+   },
+   "license": "Bria's hosted model (proprietary; used through fal's API)",
+   "notes": "The photo's obvious subject cut out (the original pixels with a new alpha, RGBA PNG), adjusted by plain words: add something ('the person with the mat'), drop something ('without the lamp') or narrow it ('only the chair'). The prompt is optional (empty = the plain cut-out); autocrop tightens the canvas to what is kept. Released 2026-10-10.",
+   "verified": true,
+   "sourceUrl": "https://fal.ai/models/bria/guided-remove-background",
+   "schemaUrl": "https://fal.ai/api/openapi/queue/openapi.json?endpoint_id=bria/guided-remove-background",
+   "capability": "bg-remove",
+   "fetched": "2026-11-02"
   }
  ]
 }

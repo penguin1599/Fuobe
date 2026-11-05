@@ -1,0 +1,426 @@
+{
+  "1": {
+    "class_type": "LoadAudio",
+    "inputs": {
+      "audio": "input.wav"
+    },
+    "_meta": {
+      "title": "Recording to edit (audio; a video's soundtrack works too)"
+    }
+  },
+  "2": {
+    "class_type": "LoadAudio",
+    "inputs": {
+      "audio": "fade.wav"
+    },
+    "_meta": {
+      "title": "Fade-in curve the provider writes: a linear ramp, then a flat tail AudioMerge trims off (fadeCurve)"
+    }
+  },
+  "3": {
+    "class_type": "SplitAudioChannels",
+    "inputs": {
+      "audio": [
+        "2",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "Fade-in (left)"
+    }
+  },
+  "4": {
+    "class_type": "AuKModelLoader",
+    "inputs": {
+      "checkpoint_path": "ckpts/AuK-Flash/auk_flash.safetensors",
+      "config_path": "",
+      "qwen_path": "ckpts/Qwen2.5-Omni-3B",
+      "device": "cuda:0",
+      "dtype": "bf16",
+      "cpu_offload": false
+    },
+    "_meta": {
+      "title": "AuK Model Loader (AuK-Flash; paths under the AuK checkout)"
+    }
+  },
+  "5": {
+    "class_type": "EmptyAudio",
+    "inputs": {
+      "duration": 0.05,
+      "sample_rate": 24000,
+      "channels": 1
+    },
+    "_meta": {
+      "title": "Silence at AuK's 24 kHz"
+    }
+  },
+  "6": {
+    "class_type": "AudioMerge",
+    "inputs": {
+      "audio1": [
+        "1",
+        0
+      ],
+      "audio2": [
+        "5",
+        0
+      ],
+      "merge_method": "add"
+    },
+    "_meta": {
+      "title": "The recording at max(its rate, 24 kHz), so no seam is resampled"
+    }
+  },
+  "10": {
+    "class_type": "TrimAudioDuration",
+    "inputs": {
+      "audio": [
+        "6",
+        0
+      ],
+      "start_index": 1.0,
+      "duration": 4.0
+    },
+    "_meta": {
+      "title": "Window 1: the change with at least 1 s of untouched speech on each side"
+    }
+  },
+  "11": {
+    "class_type": "AuKGenerateEdit",
+    "inputs": {
+      "engine": [
+        "4",
+        0
+      ],
+      "instruction": "Replace 'Tuesday' with 'Thursday'.",
+      "generation_seconds": 4.2,
+      "use_prompt_enhancer": false,
+      "seed": 42,
+      "nfe_steps": 4,
+      "cfg_strength": 0.0,
+      "sway_sampling_coef": -1.0,
+      "input_audio": [
+        "10",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "AuK Generate / Edit (window 1)"
+    }
+  },
+  "12": {
+    "class_type": "AudioMerge",
+    "inputs": {
+      "audio1": [
+        "10",
+        0
+      ],
+      "audio2": [
+        "10",
+        0
+      ],
+      "merge_method": "subtract"
+    },
+    "_meta": {
+      "title": "Silence at the recording's rate"
+    }
+  },
+  "13": {
+    "class_type": "AudioMerge",
+    "inputs": {
+      "audio1": [
+        "11",
+        0
+      ],
+      "audio2": [
+        "12",
+        0
+      ],
+      "merge_method": "add"
+    },
+    "_meta": {
+      "title": "The edit at the recording's rate"
+    }
+  },
+  "20": {
+    "class_type": "TrimAudioDuration",
+    "inputs": {
+      "audio": [
+        "6",
+        0
+      ],
+      "start_index": 0,
+      "duration": 1.0
+    },
+    "_meta": {
+      "title": "Original before the window"
+    }
+  },
+  "21": {
+    "class_type": "TrimAudioDuration",
+    "inputs": {
+      "audio": [
+        "6",
+        0
+      ],
+      "start_index": 1.0,
+      "duration": 0.12
+    },
+    "_meta": {
+      "title": "Original: the window's first crossfade"
+    }
+  },
+  "22": {
+    "class_type": "TrimAudioDuration",
+    "inputs": {
+      "audio": [
+        "13",
+        0
+      ],
+      "start_index": 0,
+      "duration": 0.12
+    },
+    "_meta": {
+      "title": "Edit: its first crossfade"
+    }
+  },
+  "23": {
+    "class_type": "AudioMerge",
+    "inputs": {
+      "audio1": [
+        "22",
+        0
+      ],
+      "audio2": [
+        "21",
+        0
+      ],
+      "merge_method": "subtract"
+    },
+    "_meta": {
+      "title": "Edit − original"
+    }
+  },
+  "24": {
+    "class_type": "AudioMerge",
+    "inputs": {
+      "audio1": [
+        "23",
+        0
+      ],
+      "audio2": [
+        "3",
+        0
+      ],
+      "merge_method": "multiply"
+    },
+    "_meta": {
+      "title": "× fade-in"
+    }
+  },
+  "25": {
+    "class_type": "AudioMerge",
+    "inputs": {
+      "audio1": [
+        "21",
+        0
+      ],
+      "audio2": [
+        "24",
+        0
+      ],
+      "merge_method": "add"
+    },
+    "_meta": {
+      "title": "Seam into the edit: original + (edit − original) × fade-in"
+    }
+  },
+  "26": {
+    "class_type": "TrimAudioDuration",
+    "inputs": {
+      "audio": [
+        "13",
+        0
+      ],
+      "start_index": 0.12,
+      "duration": 3.96
+    },
+    "_meta": {
+      "title": "Edit: its middle"
+    }
+  },
+  "27": {
+    "class_type": "TrimAudioDuration",
+    "inputs": {
+      "audio": [
+        "13",
+        0
+      ],
+      "start_index": 4.08,
+      "duration": 0.12
+    },
+    "_meta": {
+      "title": "Edit: its last crossfade"
+    }
+  },
+  "28": {
+    "class_type": "TrimAudioDuration",
+    "inputs": {
+      "audio": [
+        "6",
+        0
+      ],
+      "start_index": 4.88,
+      "duration": 0.12
+    },
+    "_meta": {
+      "title": "Original: the window's last crossfade"
+    }
+  },
+  "29": {
+    "class_type": "AudioMerge",
+    "inputs": {
+      "audio1": [
+        "28",
+        0
+      ],
+      "audio2": [
+        "27",
+        0
+      ],
+      "merge_method": "subtract"
+    },
+    "_meta": {
+      "title": "Original − edit"
+    }
+  },
+  "30": {
+    "class_type": "AudioMerge",
+    "inputs": {
+      "audio1": [
+        "29",
+        0
+      ],
+      "audio2": [
+        "3",
+        0
+      ],
+      "merge_method": "multiply"
+    },
+    "_meta": {
+      "title": "× fade-in"
+    }
+  },
+  "31": {
+    "class_type": "AudioMerge",
+    "inputs": {
+      "audio1": [
+        "27",
+        0
+      ],
+      "audio2": [
+        "30",
+        0
+      ],
+      "merge_method": "add"
+    },
+    "_meta": {
+      "title": "Seam back: edit + (original − edit) × fade-in"
+    }
+  },
+  "32": {
+    "class_type": "TrimAudioDuration",
+    "inputs": {
+      "audio": [
+        "6",
+        0
+      ],
+      "start_index": 5.0,
+      "duration": 100000
+    },
+    "_meta": {
+      "title": "Original after the window"
+    }
+  },
+  "40": {
+    "class_type": "AudioConcat",
+    "inputs": {
+      "audio1": [
+        "20",
+        0
+      ],
+      "audio2": [
+        "25",
+        0
+      ],
+      "direction": "after"
+    },
+    "_meta": {
+      "title": "Join"
+    }
+  },
+  "41": {
+    "class_type": "AudioConcat",
+    "inputs": {
+      "audio1": [
+        "40",
+        0
+      ],
+      "audio2": [
+        "26",
+        0
+      ],
+      "direction": "after"
+    },
+    "_meta": {
+      "title": "Join"
+    }
+  },
+  "42": {
+    "class_type": "AudioConcat",
+    "inputs": {
+      "audio1": [
+        "41",
+        0
+      ],
+      "audio2": [
+        "31",
+        0
+      ],
+      "direction": "after"
+    },
+    "_meta": {
+      "title": "Join"
+    }
+  },
+  "43": {
+    "class_type": "AudioConcat",
+    "inputs": {
+      "audio1": [
+        "42",
+        0
+      ],
+      "audio2": [
+        "32",
+        0
+      ],
+      "direction": "after"
+    },
+    "_meta": {
+      "title": "Join"
+    }
+  },
+  "50": {
+    "class_type": "SaveAudio",
+    "inputs": {
+      "audio": [
+        "43",
+        0
+      ],
+      "filename_prefix": "fuobe/speech-edit-auk"
+    },
+    "_meta": {
+      "title": "Save (FLAC)"
+    }
+  }
+}

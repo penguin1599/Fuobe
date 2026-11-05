@@ -20,6 +20,8 @@ import { launch, root } from "./_browser.mjs";
 import { tempDir, removeDir, stopProcess } from "./_temp.mjs";
 
 const APP_PORT = Number(process.env.E2E_APP_PORT ?? 3650);
+// The one step a ComfyUI that doesn't let this page in gets: Fuobe Connect once it is published, else Fuobe's setting.
+const ONE_STEP = /Install Fuobe Connect|Add this to the command you start ComfyUI with|Download this start file|In ComfyUI Desktop, open Settings|In Stability Matrix, open/;
 const COMFY_OPEN = 18188;
 const OTHER_APP = 18189;
 const COMFY_CLOSED = 18190;
@@ -172,7 +174,7 @@ try {
       await card.getByRole("button", { name: "Find my ComfyUI" }).click();
       const primary = card.getByText("Something is running on port 8188, ComfyUI's usual port.");
       check(`${w.name}: ComfyUI on 8188 and a 401 on 8189 show 8188`, !!(await until(() => primary.isVisible(), 20_000)));
-      check(`${w.name}: …saying plainly why this page can't use it, with the one step`, (await card.getByText(/ComfyUI only answers the websites it's told to trust/).isVisible()) && (await card.getByText(/Install Fuobe Connect/).isVisible()));
+      check(`${w.name}: …saying plainly why this page can't use it, with the one step`, (await card.getByText(/ComfyUI only answers the websites it's told to trust/).isVisible()) && (await card.getByText(ONE_STEP).first().isVisible()));
       check(`${w.name}: …and 8189 is no second sentence, only under Other ports`, (await card.getByText(/Something answers on port 8189/).count()) === 0 && (await card.getByRole("button", { name: "Other ports (1)" }).isVisible()));
       await shot(page, card, `${w.name}-1-comfy-on-8188.png`);
 
@@ -251,11 +253,11 @@ try {
       await card.getByRole("button", { name: "Find my ComfyUI" }).click();
       const weak = await until(() => card.getByText("No ComfyUI found on port 8188, its usual port.").isVisible(), 20_000);
       check(`${w.name}: only a 401 on 8189 is a weak candidate, not "found"`, !!weak && (await card.getByText(/Something answers on port 8189, but Fuobe can't tell if it's ComfyUI/).isVisible()));
-      check(`${w.name}: …with one action, Check again`, (await card.getByRole("button", { name: "Check again" }).count()) === 1 && (await card.getByText(/Install Fuobe Connect/).count()) === 0);
+      check(`${w.name}: …with one action, Check again`, (await card.getByRole("button", { name: "Check again" }).count()) === 1 && (await card.getByText(ONE_STEP).first().count()) === 0);
       await shot(page, card, `${w.name}-8-weak-8189.png`);
       const t = Date.now();
       await card.getByRole("button", { name: "Port 8189 is my ComfyUI" }).click();
-      check(`${w.name}: "Port 8189 is my ComfyUI" shows the one step for it`, !!(await until(() => card.getByText("Something answers on port 8189.").isVisible(), 10_000)) && (await card.getByText(/Install Fuobe Connect/).isVisible()));
+      check(`${w.name}: "Port 8189 is my ComfyUI" shows the one step for it`, !!(await until(() => card.getByText("Something answers on port 8189.").isVisible(), 10_000)) && (await card.getByText(ONE_STEP).first().isVisible()));
       check(`${w.name}: …after looking at 8189 again`, ctx.loopback.some((r) => r.port === 8189 && r.at >= t));
       await shot(page, card, `${w.name}-9-weak-chosen.png`);
     }
@@ -275,7 +277,7 @@ try {
       const { page, card } = await account(w, { 8000: COMFY_CLOSED });
       await card.getByRole("button", { name: "Find my ComfyUI" }).click();
       const desk = await until(() => card.getByText("Something is running on port 8000, ComfyUI Desktop's usual port.").isVisible(), 20_000);
-      check(`${w.name}: something on 8000 is ComfyUI Desktop's usual port, with the one step`, !!desk && (await card.getByText(/Install Fuobe Connect/).isVisible()) && (await card.getByText(/No ComfyUI found/).count()) === 0);
+      check(`${w.name}: something on 8000 is ComfyUI Desktop's usual port, with the one step`, !!desk && (await card.getByText(ONE_STEP).first().isVisible()) && (await card.getByText(/No ComfyUI found/).count()) === 0);
       check(`${w.name}: …and the one-line setting is offered next to it`, await card.getByText("Or start ComfyUI with one setting instead.").isVisible());
       await shot(page, card, `${w.name}-9b-desktop-8000.png`);
     }
@@ -297,7 +299,7 @@ try {
       await shot(page, card, `${w.name}-9c-typed-other-app.png`);
       await typeAndLook(9188);
       const typed = await until(() => card.getByText("Something answers on port 9188.").isVisible(), 10_000);
-      check(`${w.name}: a typed port that answers is taken as the person's ComfyUI, with the one step`, !!typed && (await card.getByText(/Install Fuobe Connect/).isVisible()) && (await card.getByText(/can't tell if it's ComfyUI/).count()) === 0);
+      check(`${w.name}: a typed port that answers is taken as the person's ComfyUI, with the one step`, !!typed && (await card.getByText(ONE_STEP).first().isVisible()) && (await card.getByText(/can't tell if it's ComfyUI/).count()) === 0);
       await shot(page, card, `${w.name}-9d-typed-port.png`);
     }
 

@@ -1,7 +1,6 @@
 import fs from "node:fs";
 import { z } from "zod";
 import { imageSize } from "@/lib/image-size";
-import { LIBRARY_MESSAGE } from "@/lib/guest-access";
 import { RECIPE_MAX_BYTES, RecipeSchema, type Recipe } from "@/lib/motion/recipe";
 import { designSize, exportSize } from "@/lib/motion/sizes";
 import { ACCOUNT_LIMITS, ACCOUNT_MESSAGES, diskHasRoom } from "@/server/account-files";
@@ -131,11 +130,14 @@ function shownWords(extra: Record<string, unknown> | undefined, title: string | 
   return [...new Set([...words, title ?? ""].map((w) => w.trim()).filter(Boolean))].join(" · ").slice(0, 2000);
 }
 
+/** What an account's grade or Relight blend is stored as: the picture or clip the page renders. */
+const BROWSER_TYPES = /^(image\/png|video\/(mp4|webm))$/;
+
 /**
  * Record a result rendered in the browser (a colour grade, a Relight blend, a Kinetic Motion clip) so it shows up in the
- * library. The owner records their own files. An account (public sign-up) records Kinetic Motion clips only, each from
- * files it uploaded itself: the result is its own run (its own list, never the owner's Library), counted with its runs,
- * and through the studio's checks when they are on.
+ * library. The owner records their own files. An account (public sign-up) records them too, each from files it uploaded
+ * itself: the result is its own run (its own list, never the owner's Library), counted with its runs, and through the
+ * studio's checks when they are on.
  */
 export async function POST(request: Request) {
   const viewer = requestViewer(request);
@@ -179,22 +181,26 @@ export async function POST(request: Request) {
   }
 
   const account = viewer.account;
-  // Accounts have their own runs, not the owner's Library: only Kinetic Motion results, recorded as their runs.
-  if (body.op !== "motion") return refuse(403, LIBRARY_MESSAGE, { code: "library" });
+  // Accounts have their own runs, not the owner's Library: what they make in the browser is recorded as one of them.
   if (fileAccount(rel) !== account.id) return refuse(403, NOT_FOUND);
-  // Every file the clip names is the account's own: its inputs, its poster, and the recipe's logo, product and pictures.
-  const problem = accountInputProblem({ inputs: body.inputs, params: { extra: { ...recipeFiles(body.params?.extra), ...(poster && { _poster: poster }) } } }, account.id);
+  // A grade or a blend is what the page renders: a PNG picture, or an MP4 or WebM clip.
+  if (body.op !== "motion" && !BROWSER_TYPES.test(contentTypeFor(rel))) return refuse(400, "Invalid result");
+  // Every file it names is the account's own: its inputs, its poster, and a clip's recipe's logo, product and pictures.
+  const named = body.op === "motion" ? recipeFiles(body.params?.extra) : {};
+  const problem = accountInputProblem({ inputs: body.inputs, params: { extra: { ...named, ...(poster && { _poster: poster }) } } }, account.id);
   if (problem) return refuse(problem.status === 404 ? 403 : problem.status, problem.status === 404 || problem.code === "input-not-yours" ? NOT_FOUND : problem.error, { code: problem.code });
   if (!diskHasRoom()) return refuse(503, ACCOUNT_MESSAGES.diskLow);
-  // A saved clip is one of the account's runs: the same hourly budget.
+  // A saved result is one of the account's runs: the same hourly budget.
   const bucket = `run:${account.id}`;
   const rate = hit(bucket, ACCOUNT_LIMITS.runsPerHour, 60 * 60_000);
   if (!rate.ok) return Response.json({ error: ACCOUNT_MESSAGES.runRate }, { status: 429, headers: { "Retry-After": String(rate.retryAfterS), "Cache-Control": "no-store" } });
-  // The words drawn on the clip and its title (never the page's own summary of them) go through the studio's checks,
-  // and are what the run keeps.
-  const prompt = shownWords(body.params?.extra, body.title);
+  // The words drawn on a clip and its title (never the page's own summary of them) go through the studio's checks, and
+  // are what the run keeps; a grade or a blend keeps its description, checked with its title.
+  const motion = body.op === "motion";
+  const prompt = motion ? shownWords(body.params?.extra, body.title) : body.prompt;
+  const words = motion ? prompt : [body.prompt, body.title ?? ""].map((w) => w.trim()).filter(Boolean).join(" · ").slice(0, 2000);
   const place = account.gpu ? ("own-gpu" as const) : account.keys?.fal || account.keys?.replicate ? ("own-key" as const) : ("pool" as const);
-  const checked = await moderateRun(account, { feature: body.feature, modelId: body.modelId, op: body.op, prompt, inputs: body.inputs }, null, "own", { kind: "video", place });
+  const checked = await moderateRun(account, { feature: body.feature, modelId: body.modelId, op: body.op, prompt: words, inputs: body.inputs }, null, "own", { kind: motion ? "video" : body.output.kind, place });
   if (!checked.ok) {
     unhit(bucket);
     return refuse(422, checked.refusal.body.error, { code: checked.refusal.body.code });

@@ -1,5 +1,6 @@
 import "server-only";
 import fs from "node:fs";
+import { ACCOUNT_ZIP_MAX_BYTES, ACCOUNT_ZIP_MAX_RUNS } from "@/lib/guest-access";
 import { accountById } from "./auth";
 import { DATA_DIR, db } from "./db";
 
@@ -58,6 +59,12 @@ export const ACCOUNT_LIMITS = {
   gpuChecksPerMinute: 10,
   /** Fuobe Soul's finished pictures (the look's grade made in the browser) stored per hour: a run's 4 outputs, 60 runs. */
   finishesPerHour: 240,
+  /** 3D models finished on this server (the web GLB, model3d-finish.ts) per hour; past it a model is kept as it came. */
+  modelFinishesPerHour: 60,
+  /** A zip of its own runs (streamed, nothing written to disk): runs and bytes in one zip, and how long one may sit idle. */
+  zipRuns: ACCOUNT_ZIP_MAX_RUNS,
+  zipBytes: ACCOUNT_ZIP_MAX_BYTES,
+  zipIdleMs: 2 * 60_000,
 } as const;
 
 export const RETENTION_MS = { upload: ACCOUNT_LIMITS.uploadDays * DAY, run: ACCOUNT_LIMITS.runDays * DAY };
@@ -85,6 +92,9 @@ export const ACCOUNT_MESSAGES = {
   probeRate: "Too many clip checks at once. Wait a moment, then try again.",
   reloadToUpload: "Reload the page, then upload again.",
   lengthNeeded: "That upload didn't go through. Please try again.",
+  zipTooMany: `Download up to ${ACCOUNT_ZIP_MAX_RUNS} at a time.`,
+  zipTooBig: "That's over 1 GB. Download fewer items at a time.",
+  zipBusy: "Your last download is still going. Try again when it finishes.",
 } as const;
 
 /** What an account may keep in all: 3 GB, or 1 GB in its first 7 days (`created`: when it signed up, when known). */

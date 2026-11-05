@@ -1,0 +1,47 @@
+{
+  "id": "fuobe-push-in",
+  "name": "Fuobe push-in",
+  "kind": "motion",
+  "base": "wan2.2-i2v-a14b",
+  "media": "video",
+  "presets": [
+    "Eyes In",
+    "Mouth In",
+    "Eating Zoom"
+  ],
+  "trigger": "fbpushin",
+  "dataset": {
+    "min": 20,
+    "max": 40,
+    "what": "Own-shot push-in clips: a steady dolly or zoom into the eyes or the mouth of people who signed a release; no text or logos in frame.",
+    "captions": [
+      "Every caption starts with \"fbpushin, \" then says \"slow push in to an extreme close-up of the eyes\" or \"… of the mouth\" in the same words each time, then what is in the first frame.",
+      "One sentence for what moves and one for what stays still; no text, logos or names."
+    ],
+    "clipSeconds": [
+      2,
+      5
+    ],
+    "fps": 16
+  },
+  "train": {
+    "steps": 800,
+    "rank": 32,
+    "learningRate": 0.0002
+  },
+  "routes": {
+    "fal": {
+      "trainer": "fal-ai/wan-22-trainer/i2v-a14b"
+    },
+    "aiToolkit": {
+      "arch": "wan22_14b_i2v"
+    }
+  },
+  "target": {
+    "file": "fuobe-push-in.safetensors",
+    "strength": 1.0,
+    "loraTarget": "both",
+    "hfRepo": "fuobe/fuobe-push-in"
+  },
+  "notes": "Replaces the Wan 'eyes in' LoRA, which forbids selling outputs. fal's Wan 2.2 I2V trainer returns one file; loading it on both experts is unverified until the first run."
+}

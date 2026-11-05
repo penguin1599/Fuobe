@@ -1,7 +1,7 @@
 "use client";
 
-import { Box, Camera, CircleHelp, Loader2, Route, RotateCcw, SlidersHorizontal, X } from "lucide-react";
-import { useEffect, useEffectEvent, useId, useMemo, useRef, useState } from "react";
+import { Box, Camera, CircleHelp, Loader2, Package, Route, RotateCcw, SlidersHorizontal, X } from "lucide-react";
+import { useCallback, useEffect, useEffectEvent, useId, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
@@ -16,15 +16,19 @@ import { uploadFile, useDeleteUpload, useModelAccess, useStatus } from "@/lib/ap
 import { getModel } from "@/lib/catalog";
 import { IMAGE_ASPECTS, PATH_MODELS, PATH_RENDER_FIRST, RECOMPOSE_MODELS, planCinema, type CinemaGenerateInput, type DirectorSettings } from "@/lib/catalog/cinema";
 import { PATH_FPS, PATH_FRAMES, PHOTO_KEY, addKey, flyPoseOf, framePoses, fromScenePose, keyAt, keyPose, presetKeys, removeKey, renderSize, type CameraKey } from "@/lib/camera-path";
-import type { Engine } from "@/lib/catalog/types";
+import type { Engine, Generation } from "@/lib/catalog/types";
 import { ACCESS_PLACE, offered } from "@/lib/model-access";
 import { APERTURE, FLY_KEYS, F_STOPS, LENS, LENS_STOPS, captureSize, formatStop, frameRect, ratioOf, scenePose, twoFinger, type Rect } from "@/lib/scene3d";
 import { cn } from "@/lib/utils";
 import { toastError } from "@/lib/refusals";
+import { SPLAT_MAX_BYTES } from "@/lib/av/splat-view";
+import { MAX_PROPS, bringToCamera, parseSceneState, placeProp, propCandidate as propCandidateOf, sceneStateKey, serializeSceneState, sizeRange, turnOver, type PropCandidate, type SceneProp } from "@/lib/scene-props";
 import { useCinemaGenerate } from "./hooks";
 import { usePlanPrice, type SceneTake } from "./scene-actions";
 import { FilmButton, OPEN_SECONDS, PathKeys, PathOptions } from "./scene-path";
-import type { SceneEngine, SceneInfo } from "./scene-engine";
+import { WORLDCAST_SECONDS } from "@/lib/catalog/worldcast-plan";
+import type { PropHandle, SceneEngine, SceneInfo } from "./scene-engine";
+import { AddPropDialog, MakingWatch, PropsPanel, propName } from "./scene-props";
 
 /**
  * The full-screen 3D scene viewer (Higgsfield's "3D Scene", higgsfield-delta-4.md §4.4): fly with W A S D Q E
@@ -35,6 +39,11 @@ import type { SceneEngine, SceneInfo } from "./scene-engine";
  * Fly path (build plan N7-5): keyframe the camera (or pick a move), preview the flight, and "Film this path" films the
  * still along it as a new take: H3 Max camera-controls on the cloud; on the open engine the browser first records the
  * scene along the path, which guides Wan 2.1 through Uni3C on the user's GPU.
+ *
+ * Props (idol-9): "Add a prop" places a splat (an Idol 3D or TripoSplat result from the Library, or a picture made into
+ * one with Idol 3D on your GPU) in the scene with move, turn and size handles. The props are part of the scene's own
+ * render, so a capture, a blockout and the open engine's path render (Uni3C's guide) show them; they are kept per
+ * scene in this browser.
  */
 
 export interface SceneViewerProps {
@@ -43,7 +52,7 @@ export interface SceneViewerProps {
   engine: Engine;
   onEngine: (e: Engine) => void;
   settings: DirectorSettings;
-  context: { cloudAllowed: boolean; civitai?: boolean };
+  context: { cloudAllowed: boolean; civitai?: boolean; worldcast?: boolean };
   brief: string;
   onClose: () => void;
   /** Blockout to film: the path rendered through the scene (24 fps) handed to the composer as a blockout. */
@@ -127,6 +136,26 @@ export default function SceneViewer({ take, projectId, engine, onEngine, setting
   const [filming, setFilming] = useState<"render" | "send" | null>(null);
   const [progress, setProgress] = useState(0);
   const previewRef = useRef<AbortController | null>(null);
+  // Props: kept per scene in this browser; `loaded` is what the current engine holds.
+  const stateKey = sceneStateKey(take.generation.id);
+  const [props, setProps] = useState<SceneProp[]>(() => {
+    try {
+      return parseSceneState(localStorage.getItem(stateKey)).props;
+    } catch {
+      return [];
+    }
+  });
+  const [pickedProp, setPickedProp] = useState<string | null>(null);
+  const [handle, setHandle] = useState<PropHandle>("translate");
+  const [propLoading, setPropLoading] = useState<Record<string, "loading" | "error">>({});
+  const [addOpen, setAddOpen] = useState(false);
+  const [propsOpen, setPropsOpen] = useState(false);
+  const [making, setMaking] = useState<string[]>([]);
+  const loadedRef = useRef(new Set<string>());
+  const propsRef = useRef(props);
+  useEffect(() => {
+    propsRef.current = props;
+  }, [props]);
   const generate = useCinemaGenerate(take.generation.projectId ?? projectId);
   const noteId = useId();
 
@@ -145,7 +174,7 @@ export default function SceneViewer({ take, projectId, engine, onEngine, setting
   const pathModel = getModel(PATH_MODELS[engine]);
   const qualities = engine === "cloud" ? (pathModel?.options.resolutions ?? []) : [];
   const quality = pathQuality && qualities.includes(pathQuality) ? pathQuality : (pathModel?.defaults?.resolution ?? qualities[0] ?? "");
-  const seconds = engine === "open" ? OPEN_SECONDS : pathSeconds;
+  const seconds = engine === "open" ? (context.worldcast ? WORLDCAST_SECONDS : OPEN_SECONDS) : pathSeconds;
   const pathInput: Omit<CinemaGenerateInput, "brief"> = useMemo(
     () => ({
       engine,
@@ -160,7 +189,7 @@ export default function SceneViewer({ take, projectId, engine, onEngine, setting
     [engine, words, settings, take.still, quality, keys, pathSeconds, preset],
   );
   const pathPlan = useMemo(
-    () => planCinema({ ...pathInput, brief, path: { ...pathInput.path!, ...(engine === "open" ? { render: PLACEHOLDER_RENDER } : {}) } }, context),
+    () => planCinema({ ...pathInput, brief, path: { ...pathInput.path!, ...(engine === "open" && !context.worldcast ? { render: PLACEHOLDER_RENDER } : {}) } }, context),
     [pathInput, brief, context, engine],
   );
   const pathPrice = usePlanPrice(pathPlan);
@@ -176,7 +205,8 @@ export default function SceneViewer({ take, projectId, engine, onEngine, setting
   const openRefusal = (): string | undefined => {
     const m = pathPlan.model;
     if (!offered(access, m.id, "open")) return `${m.name} is turned off in ${ACCESS_PLACE}. Turn it back on there, or film on the cloud engine`;
-    if (appStatus && !pathPrice.demo && !m.routes.some((r) => appStatus.providers[r.provider]?.configured)) return "Connect ComfyUI in Settings to film a path on your GPU";
+    if (appStatus && !pathPrice.demo && !m.routes.some((r) => appStatus.providers[r.provider]?.configured))
+      return m.routes.some((r) => r.provider === "worldcast") ? "Connect the WorldCast worker in Settings to film a path with it" : "Connect ComfyUI in Settings to film a path on your GPU";
     return undefined;
   };
 
@@ -200,7 +230,9 @@ export default function SceneViewer({ take, projectId, engine, onEngine, setting
         if (ctl.signal.aborted) return;
         eng = new SceneEngine(canvas);
         engineRef.current = eng;
+        loadedRef.current = new Set();
         eng.onFocus = setFocus;
+        eng.onPropChange = (id, t) => setProps((ps) => ps.map((p) => (p.id === id ? { ...p, ...t } : p)));
         const { w, h } = sizeRef.current;
         if (w && h) eng.resize(w, h, Math.min(window.devicePixelRatio || 1, coarse ? 1.5 : 2));
         const loaded = await eng.load(take.source, { maxPoints: coarse ? 150_000 : 400_000, signal: ctl.signal });
@@ -240,6 +272,95 @@ export default function SceneViewer({ take, projectId, engine, onEngine, setting
   useEffect(() => {
     if (frame && status === "ready") engineRef.current?.setView({ lens, aperture, aspect: ratioOf(aspect), dof, frame, speed });
   }, [lens, aperture, aspect, dof, frame, speed, status]);
+
+  // Props into the engine: new ones load (Spark comes with the first), changed ones move, removed ones go.
+  useEffect(() => {
+    const eng = engineRef.current;
+    if (!eng || status !== "ready") return;
+    const loaded = loadedRef.current;
+    for (const p of props) {
+      if (loaded.has(p.id)) {
+        eng.updateProp(p);
+        continue;
+      }
+      loaded.add(p.id);
+      setPropLoading((m) => ({ ...m, [p.id]: "loading" }));
+      eng
+        .addProp(p, { maxBytes: coarse ? SPLAT_MAX_BYTES.coarse : SPLAT_MAX_BYTES.fine })
+        .then(() => {
+          if (engineRef.current !== eng) return;
+          // The latest state of it (a slider may have moved while it loaded).
+          const now = propsRef.current.find((x) => x.id === p.id);
+          if (now) eng.updateProp(now);
+          else eng.removeProp(p.id);
+          setPropLoading((m) => Object.fromEntries(Object.entries(m).filter(([k]) => k !== p.id)));
+        })
+        .catch((e) => {
+          if (engineRef.current !== eng || (e as Error).name === "AbortError") return;
+          setPropLoading((m) => ({ ...m, [p.id]: "error" }));
+        });
+    }
+    for (const id of [...loaded]) {
+      if (props.some((p) => p.id === id)) continue;
+      loaded.delete(id);
+      eng.removeProp(id);
+    }
+  }, [props, status, coarse]);
+
+  useEffect(() => {
+    try {
+      if (props.length) localStorage.setItem(stateKey, serializeSceneState({ version: 1, props }));
+      else localStorage.removeItem(stateKey);
+    } catch {}
+  }, [props, stateKey]);
+
+  // The handle sits on the picked prop once it has loaded.
+  const pickedReady = !!pickedProp && props.some((p) => p.id === pickedProp) && !propLoading[pickedProp];
+  useEffect(() => {
+    if (status === "ready") engineRef.current?.pickProp(pickedReady ? pickedProp : null, handle);
+  }, [pickedProp, pickedReady, handle, status]);
+
+  /** Place a Library splat in the scene; says why not when it can't (the scene isn't ready, or it is full). */
+  const placeCandidate = useCallback(
+    (c: PropCandidate & { name: string }): "placed" | "not-ready" | "full" => {
+      const eng = engineRef.current;
+      if (!eng || !info) return "not-ready";
+      const ps = propsRef.current;
+      if (ps.length >= MAX_PROPS) return "full";
+      const id = `p${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+      const next = [...ps, placeProp(c, eng.getPose(), info.pivotDepth, ps.length, id)];
+      propsRef.current = next;
+      setProps(next);
+      setPickedProp(id);
+      setHandle("translate");
+      setAddOpen(false);
+      return "placed";
+    },
+    [info],
+  );
+
+  const madeProp = useCallback(
+    (id: string, g: Generation | null) => {
+      setMaking((m) => m.filter((x) => x !== id));
+      const c = g && propCandidateOf(g);
+      if (c) {
+        const placed = placeCandidate({ ...c, name: propName(c.modelId) });
+        if (placed === "placed") toast.success("Your prop is in the scene");
+        else if (placed === "full") toast.info(`Your prop is ready in your Library. The scene holds ${MAX_PROPS} props: remove one, then add it from Add a prop`);
+        else toast.info("Your prop is ready in your Library. Add it to the scene from Add a prop");
+      } else toast.error("Couldn't make the prop from that picture. Try another picture, with one object on a plain background");
+    },
+    [placeCandidate],
+  );
+
+  const changeProp = (id: string, f: (p: SceneProp) => SceneProp) => setProps((ps) => ps.map((p) => (p.id === id ? f(p) : p)));
+  const propSizes = sizeRange(info?.pivotDepth ?? 1);
+  const propNote =
+    engine === "cloud"
+      ? "Props show in captures and blockouts. Filming on the cloud follows the still itself, so they don't show there; film on your GPU to keep them."
+      : context.worldcast
+        ? "Props show in captures and blockouts. WorldCast films from the still's depth, so they don't show there."
+        : "Props show in captures, blockouts and the path filmed on your GPU.";
 
   // The camera of a key as the path films it: the still's own lens (a key's distance already counts the lens it was set with).
   const goTo = (i: number) => {
@@ -341,7 +462,8 @@ export default function SceneViewer({ take, projectId, engine, onEngine, setting
     let uploaded: string | undefined;
     try {
       let render: string | undefined;
-      if (engine === "open") {
+      // WorldCast (N7-9) renders the path on the server from the still's depth: nothing to record here.
+      if (engine === "open" && !context.worldcast) {
         // The still's own view along the path: Uni3C's guide, in the still's shape (the open run keeps it).
         setFilming("render");
         setProgress(0);
@@ -547,6 +669,32 @@ export default function SceneViewer({ take, projectId, engine, onEngine, setting
     </div>
   );
 
+  const propsPanel = (
+    <PropsPanel
+      props={props}
+      picked={pickedProp}
+      onPick={setPickedProp}
+      handle={handle}
+      onHandle={setHandle}
+      loading={propLoading}
+      making={making.length}
+      sizeRange={propSizes}
+      onChange={(p) => changeProp(p.id, () => p)}
+      onRemove={(id) => {
+        setProps((ps) => ps.filter((p) => p.id !== id));
+        if (pickedProp === id) setPickedProp(null);
+      }}
+      onBring={(id) => {
+        const eng = engineRef.current;
+        if (eng && info) changeProp(id, (p) => bringToCamera(p, eng.getPose(), info.pivotDepth));
+      }}
+      onTurnOver={(id) => changeProp(id, turnOver)}
+      onAdd={() => setAddOpen(true)}
+      disabled={status !== "ready" || pathBusy}
+      note={propNote}
+    />
+  );
+
   const pathKeys = (tone: "overlay" | "panel") => (
     <PathKeys
       keys={keys}
@@ -577,6 +725,7 @@ export default function SceneViewer({ take, projectId, engine, onEngine, setting
       words={words}
       onWords={setWords}
       notes={pathPlan.notes}
+      worldcast={engine === "open" && !!context.worldcast}
       disabled={status !== "ready" || pathBusy}
     />
   );
@@ -623,6 +772,8 @@ export default function SceneViewer({ take, projectId, engine, onEngine, setting
             aria-label="3D scene. W A S D to move, Q and E to go down and up, Shift to go faster, arrow keys to look around, R to reset the view."
             className="absolute inset-0 size-full cursor-grab touch-none outline-none active:cursor-grabbing focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
             onPointerDown={(e) => {
+              // The prop's handle takes this drag.
+              if (engineRef.current?.handleActive()) return;
               e.currentTarget.setPointerCapture(e.pointerId);
               pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
             }}
@@ -669,6 +820,7 @@ export default function SceneViewer({ take, projectId, engine, onEngine, setting
               <p className="truncate text-[11.5px] text-white/70">
                 {kind === "points" ? "Point cloud from a depth map" : info?.layout === "object" ? "3D model" : "MoGe 2 mesh"}
                 {sizeText ? ` · ${sizeText}` : ""}
+                {props.length ? ` · ${props.length} prop${props.length > 1 ? "s" : ""}` : ""}
                 {queued ? ` · ${queued} new take${queued > 1 ? "s" : ""} queued` : ""}
               </p>
             </div>
@@ -754,6 +906,18 @@ export default function SceneViewer({ take, projectId, engine, onEngine, setting
           <Button variant="secondary" size="icon" className="shrink-0 rounded-full" onClick={() => setPanelOpen(true)} aria-label="Camera" title="Camera: lens, aperture, frame">
             <SlidersHorizontal />
           </Button>
+          <Button
+            variant="secondary"
+            size="icon"
+            className="relative shrink-0 rounded-full"
+            onClick={() => setPropsOpen(true)}
+            disabled={status !== "ready"}
+            aria-label={`Props, ${props.length} in the scene`}
+            title="Props: objects in the scene"
+          >
+            <Package />
+            {props.length > 0 && <span className="absolute -top-1 -right-1 grid size-4 place-items-center rounded-full bg-primary text-[10px] text-primary-foreground">{props.length}</span>}
+          </Button>
           <Button variant="secondary" className="shrink-0 rounded-full px-3" onClick={() => setPathOpen(true)} disabled={status !== "ready"} aria-label={`Path, ${keys.length - 1} keyframe${keys.length === 2 ? "" : "s"}`}>
             {filming ? <Loader2 className="animate-spin" /> : <Route />} Path{keys.length > 1 ? ` · ${keys.length - 1}` : ""}
           </Button>
@@ -770,6 +934,15 @@ export default function SceneViewer({ take, projectId, engine, onEngine, setting
               {rerender}
               {captureButton("w-full")}
             </div>
+          </SheetContent>
+        </Sheet>
+        <Sheet open={propsOpen} onOpenChange={setPropsOpen}>
+          <SheetContent side="bottom" className="max-h-[80svh] gap-0 overflow-y-auto rounded-t-2xl p-0 md:hidden">
+            <SheetHeader className="border-b px-4 py-3">
+              <SheetTitle className="font-heading text-[20px] font-normal">Props</SheetTitle>
+              <SheetDescription className="text-[12.5px]">Objects made from pictures, placed in the scene. Pick one, close this and drag its handle in the view.</SheetDescription>
+            </SheetHeader>
+            <div className="p-4">{propsPanel}</div>
           </SheetContent>
         </Sheet>
         <Sheet open={pathOpen} onOpenChange={setPathOpen}>
@@ -791,6 +964,7 @@ export default function SceneViewer({ take, projectId, engine, onEngine, setting
         <aside className="hidden w-[320px] shrink-0 flex-col border-l bg-background md:flex" aria-label="Camera and re-render">
           <div className="min-h-0 flex-1 space-y-6 overflow-y-auto p-4">
             {camera}
+            <Section title="Props">{propsPanel}</Section>
             {rerender}
             <Section title="Fly path">{pathOptions}</Section>
           </div>
@@ -801,6 +975,18 @@ export default function SceneViewer({ take, projectId, engine, onEngine, setting
             <p className="text-center text-[11.5px] text-muted-foreground">Capture re-renders the frame; Film follows the path. Both land next to the scene</p>
           </div>
         </aside>
+        <AddPropDialog
+          open={addOpen}
+          onOpenChange={setAddOpen}
+          onPlace={placeCandidate}
+          onMaking={(id) => {
+            setMaking((m) => [...m, id]);
+            setAddOpen(false);
+            toast.success("Making your prop — it lands in the scene when it's ready", { duration: 3000 });
+          }}
+          full={props.length + making.length >= MAX_PROPS}
+        />
+        {making.length > 0 && <MakingWatch ids={making} onDone={madeProp} />}
       </DialogContent>
     </Dialog>
   );

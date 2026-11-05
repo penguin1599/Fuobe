@@ -1,0 +1,44 @@
+{
+  "id": "fuobe-scale-surreal",
+  "name": "Fuobe scale surreal",
+  "kind": "concept",
+  "base": "z-image-turbo",
+  "media": "image",
+  "presets": [
+    "Giant Accessory",
+    "Giant People",
+    "Help It's Too Big"
+  ],
+  "trigger": "fbgiantscale",
+  "dataset": {
+    "min": 40,
+    "max": 60,
+    "what": "Composites Fuobe made from its own photos: giant props, tiny worlds.",
+    "captions": [
+      "Every caption starts with \"fbgiantscale, \" and names what is giant and what is tiny in the same words each time, then the scene in one long sentence.",
+      "No names of people, brands or photographers."
+    ]
+  },
+  "train": {
+    "steps": 2000,
+    "rank": 16,
+    "learningRate": 0.0001
+  },
+  "routes": {
+    "fal": {
+      "trainer": "fal-ai/z-image-trainer",
+      "extra": {
+        "training_type": "content"
+      }
+    },
+    "aiToolkit": {
+      "arch": "zimage:turbo"
+    }
+  },
+  "target": {
+    "file": "fuobe-scale-surreal.safetensors",
+    "strength": 0.8,
+    "hfRepo": "fuobe/fuobe-scale-surreal"
+  },
+  "notes": "fal trains on Z-Image base: whether a base-trained LoRA behaves the same on Z-Image Turbo (Soul's model) is unverified; AI-Toolkit trains on Turbo with the training adapter, so the first evaluation compares the two routes' files on Soul."
+}

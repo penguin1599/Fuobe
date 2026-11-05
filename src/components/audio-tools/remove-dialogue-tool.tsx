@@ -37,13 +37,7 @@ import {
 import { Segmented } from "@/components/faceless/controls";
 import { Panel, ToolHero, ToolShell } from "@/components/av/tool-shell";
 import { useGeneration } from "@/components/av/use-generation";
-import { SelfHostNote } from "@/components/self-host-note";
-import {
-  useAskBeforeUpload,
-  useEngine,
-  useGenerations,
-  useLikelyVisitor,
-} from "@/lib/api";
+import { useAskBeforeUpload, useEngine, useGenerations } from "@/lib/api";
 import {
   CLOUD_ONLY_REMOVE_PROBLEM,
   CLOUD_REMOVE_PROBLEM,
@@ -104,12 +98,6 @@ const RUN_LABEL: Record<DialogueOutcome, string> = {
 const COPY =
   "Takes the talking out and keeps the music and sound effects. The picture stays exactly as it was.";
 
-/**
- * Why a guest or an account can't run it: POST /api/audio-tools answers them own-gpu-tool (docs/public-signup.md), so
- * the page says so up front and its upload and run are off, instead of a run the server refuses.
- */
-const SELF_HOSTED = "Remove dialogue isn't available here";
-
 /** ?video= from a result's "Remove dialogue", read once after hydration. */
 function useHandoff(take: (s: Source) => void) {
   useEffect(() => {
@@ -133,7 +121,7 @@ function AddVideo({
 }: {
   onPick: (s: Source) => void;
   onUpdate: (next: (cur: Source | null) => Source | null) => void;
-  /** A visitor (the tool doesn't run here for them): nothing is uploaded or picked only to be refused. */
+  /** Nothing is uploaded or picked. A guest is asked to sign up first, and an account with nothing to run on to connect its GPU. */
   disabled?: boolean;
 }) {
   const input = useRef<HTMLInputElement>(null);
@@ -377,8 +365,6 @@ function ResultPanel({
 
 export function RemoveDialogueTool() {
   const [engine, setEngine, mode] = useEngine();
-  // A guest or an account: the run answers own-gpu-tool, so the page says so and the upload and run are off.
-  const visitor = useLikelyVisitor();
   const run = useAudioToolRun();
   const [source, setSource] = useState<Source | null>(null);
   const [outcome, setOutcome] = useState<DialogueOutcome>("no-dialogue");
@@ -423,15 +409,13 @@ export function RemoveDialogueTool() {
   const picked: SplitQuality = quality ?? p?.hostPick ?? "fast";
   const cloudProblem =
     mode === "cloud" ? CLOUD_ONLY_REMOVE_PROBLEM : CLOUD_REMOVE_PROBLEM;
-  const blocker = visitor
-    ? SELF_HOSTED
-    : !source
-      ? "Add a video"
-      : source.uploading
-        ? "Uploading…"
-        : engine === "cloud"
-          ? cloudProblem
-          : null;
+  const blocker = !source
+    ? "Add a video"
+    : source.uploading
+      ? "Uploading…"
+      : engine === "cloud"
+        ? cloudProblem
+        : null;
   const error = preview.error ? (preview.error as Error).message : null;
   const g = result.data;
   const busy =
@@ -467,20 +451,12 @@ export function RemoveDialogueTool() {
         : null;
 
   return (
-    <ToolShell title="Video tools" selfHostedOnly>
+    <ToolShell title="Video tools">
       {!source && (
         <ToolHero
           title="Remove dialogue"
-          subtitle={
-            visitor
-              ? COPY
-              : `${COPY} Runs on your ComfyUI with DBS (open source, 23 MB, CPU or GPU): free.`
-          }
-        >
-          {visitor && (
-            <SelfHostNote className="mt-3 max-w-xl">{SELF_HOSTED}.</SelfHostNote>
-          )}
-        </ToolHero>
+          subtitle={`${COPY} Runs on your ComfyUI with DBS (open source, 23 MB, CPU or GPU): free.`}
+        />
       )}
       <div
         className={cn(
@@ -489,7 +465,7 @@ export function RemoveDialogueTool() {
         )}
       >
         {!source ? (
-          <AddVideo onPick={take} onUpdate={setSource} disabled={visitor} />
+          <AddVideo onPick={take} onUpdate={setSource} />
         ) : (
           <Panel
             title={
@@ -651,13 +627,7 @@ export function RemoveDialogueTool() {
                 )}
                 aria-live="polite"
               >
-                {visitor && engine !== "cloud" ? (
-                  <>
-                    <span className="font-mono text-foreground">
-                      {openToolPrice(p, true)}
-                    </span>
-                  </>
-                ) : blocker && engine !== "cloud" ? (
+                {blocker && engine !== "cloud" ? (
                   blocker
                 ) : engine === "cloud" ? (
                   mode === "cloud" ? (
@@ -688,7 +658,7 @@ export function RemoveDialogueTool() {
                     "bg-muted text-subtle-foreground hover:bg-muted",
                 )}
                 onClick={go}
-                disabled={busy || visitor}
+                disabled={busy}
               >
                 {busy ? (
                   <Loader2 className="size-4 animate-spin" />

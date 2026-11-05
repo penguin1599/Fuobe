@@ -1,9 +1,12 @@
 import { connection } from "next/server";
-import { handle } from "@/server/shorts-schemas";
 import { estimateProject } from "@/server/swap-studio";
+import { asViewer, guestProjectRead } from "@/server/swap-studio-account";
 
-/** Prices before running: one take of each segment, each shot's and the project's queue, masks, anchors, words and assembly. */
-export async function GET(_req: Request, ctx: RouteContext<"/api/swap-studio/projects/[id]/estimate">) {
+/**
+ * Prices before running: one take of each segment, each shot's and the project's queue, masks, anchors, words and
+ * assembly. An account's are priced as its runs go: on its own GPU, or its own key (never a demo).
+ */
+export async function GET(request: Request, ctx: RouteContext<"/api/swap-studio/projects/[id]/estimate">) {
   await connection();
-  return handle(async () => Response.json(estimateProject((await ctx.params).id)));
+  return asViewer(request, async () => Response.json(estimateProject((await ctx.params).id)), { guest: guestProjectRead });
 }

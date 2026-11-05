@@ -54,14 +54,17 @@ describe("views", () => {
     expect(keys.map((k) => [k.t, k.azimuth])).toEqual(TURN_FRAMES.map((f) => [f.t, f.t === 1 ? -360 : pathAzimuth(f.side)]));
   });
 
-  it("writes WorldCast's convention down for N7-9: its side names, its demo angles, left_sign −1", () => {
+  it("names WorldCast's anchors by where the camera stands: the person's right side is its left_side, left_sign −1", () => {
     for (const s of TURN_SIDES) {
       const a = worldcastAnchor(s);
       expect(a.name).toBe(WORLDCAST.anchor[s]);
       // Each demo anchor sits within 10° of the side's angle here.
-      expect(Math.abs(WORLDCAST.demoAzimuth[a.name] - viewAzimuth(s))).toBeLessThan(10);
+      expect(Math.abs(WORLDCAST.demoAzimuth[a.name] - a.azimuth)).toBeLessThan(10);
     }
-    expect(worldcastAnchor("left")).toEqual({ name: "left_side", azimuth: 270, signed: -90 });
+    expect(worldcastAnchor("right")).toEqual({ name: "left_side", azimuth: 270, signed: -90 });
+    expect(worldcastAnchor("left")).toEqual({ name: "right_side", azimuth: 90, signed: 90 });
+    expect(worldcastAnchor("back")).toEqual({ name: "back", azimuth: 180, signed: 180 });
+    expect(worldcastAnchor("front")).toEqual({ name: "front", azimuth: 0, signed: 0 });
     expect(WORLDCAST.leftSign).toBe(-1);
   });
 

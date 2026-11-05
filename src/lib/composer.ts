@@ -5,15 +5,16 @@
  */
 import { FORMAT_INFO } from "./av/formats";
 import { fpsPlan, fpsSummary } from "./av/fps";
-import { targetShortEdge, upscaledSize, upscaleFactorFor, upscaleTier } from "./av/upscale";
+import { sideMultipleProblem, targetShortEdge, upscaledSize, upscaleFactorFor, upscaleTier } from "./av/upscale";
 import { wholeClipProblem, wholeClipTool } from "./av/video-finish";
 import { clipFpsProblem, clipSizeProblem, clipWindowProblem } from "./catalog/clip-windows";
-import { clipBilling } from "./catalog/plan";
+import { clipBilling, sourceLengthProblem } from "./catalog/plan";
 import { addFrameAt, frameTimes, framesInputs, removeFrameAt, spread, type FrameSupport } from "./catalog/keyframes";
 import { keyTimes, totalSeconds, type InbetweenTiming } from "./inbetween";
 import { FACE_MOSAIC_MODELS } from "./catalog/open-tools";
 import { pricingOn, type PriceClock } from "./catalog/promo";
 import { soulPostStep } from "./catalog/soul";
+import { studioResolutions } from "./catalog/regenerate";
 import { appModels, ownRoute, presetRoutes, type HasModel, type RecipePreset } from "./catalog/preset-recipe-routes";
 import { COLORMAPS, type Engine, type GenParams, type InputSlot, type MatteOutput, type MediaKind, type ModelDef, type Operation, type Preset, type PresetRoute, type VideoFormat } from "./catalog/types";
 import { formatCost } from "./format";
@@ -91,7 +92,8 @@ export function settingsShape(
   const shaped = routes.length > 0 && routes.every((r) => r.unsized || r.followsImage);
   return {
     aspect: !sized || shaped || op === "i2v" || op === "flf2v" ? null : many(o.aspectRatios),
-    resolution: sized ? many(o.resolutions) : null,
+    // With the tiers a finishing pass reaches (MiniMax H3's 2K on your GPU: a 768p draft redrawn by Open-H3 Regenerate).
+    resolution: sized ? many(studioResolutions(o)) : null,
     duration: params.shots ? null : many(o.durations),
     count: (kind === "image" || kind === "video") && !single,
     draft: !!o.draft,
@@ -123,7 +125,7 @@ export function layoutShape(shape: SettingsShape): SettingsShape {
   return { ...shape, enhance: false };
 }
 
-export const MATTE_OUTPUT_LABELS: Record<MatteOutput, string> = { cutout: "Cutout video", matte: "Alpha mask" };
+export const MATTE_OUTPUT_LABELS: Record<MatteOutput, string> = { cutout: "Cutout video", matte: "Alpha mask", foreground: "Clean foreground" };
 export const colormapLabel = (v: string) => v.charAt(0).toUpperCase() + v.slice(1);
 
 /**
@@ -135,6 +137,7 @@ export function videoToolNote(model: Pick<ModelDef, "name" | "engine" | "options
   if (what === "matte") {
     const outs = o.matteOutputs ?? ["cutout"];
     if (outs.length > 1) return null;
+    if (outs[0] === "cutout" && o.greenScreen) return `${model.name} makes the cut-out only — CorridorKey on your GPU also makes the mask and the clean foreground.`;
     if (outs[0] === "cutout") return `${model.name} makes the cut-out only — BiRefNet and SAM also make the alpha mask.`;
     return model.engine === "cloud"
       ? "Name what to keep and get its mask, or cut out the whole subject."
@@ -314,10 +317,13 @@ export function clipBlocker(
       (facts.fps ? clipFpsProblem(named, facts.fps) : null)
     );
   }
+  const long = model && "name" in model && model.name ? sourceLengthProblem({ name: model.name, options: model.options }, facts?.duration) : null;
+  if (long) return long;
   if (!facts?.width || !facts.height || !model) return null;
   if (op === "upscale-video") {
     const tier = upscaleTier(params.resolution ?? model.defaults?.resolution, model.options.resolutions, { width: facts.width, height: facts.height }, params.resolution !== undefined);
-    return "error" in tier ? tier.error : null;
+    if ("error" in tier) return tier.error;
+    return sideMultipleProblem(model.name ?? "This model", model.options.sideMultiple, model.options.resolutions, tier.resolution, { width: facts.width, height: facts.height });
   }
   if (model.engine !== "open" || !ramBytes || !facts.duration || !facts.fps) return null;
   const target = params.targetFps ?? model.defaults?.targetFps;
@@ -414,7 +420,7 @@ export function missingMessage(m: MissingSlot): string {
   return `Add ${orList(m.group.map((s) => slotMessage(s.label).replace(/^Add /, "")))}`;
 }
 
-const WRITE_PROMPT = "Write a prompt first";
+export const WRITE_PROMPT = "Write a prompt first";
 
 export interface Blocker {
   message: string;
@@ -544,15 +550,20 @@ export function placeAttachment<T extends Attachment>(
  * replaced it meanwhile, nothing changes: a finished upload never brings a removed item back.
  */
 export function replaceAttachment<T extends Attachment>(
-  state: { slots: Partial<Record<InputSlot["key"], T | null>>; refs: T[]; frames?: FrameAttachment<T>[] },
+  state: { slots: Partial<Record<InputSlot["key"], T | null>>; refs: T[]; frames?: FrameAttachment<T>[]; refClips?: T[]; refAudios?: T[] },
   id: string,
   v: T | null,
-): { slots?: Partial<Record<InputSlot["key"], T | null>>; refs?: T[]; frames?: FrameAttachment<T>[] } | null {
+): { slots?: Partial<Record<InputSlot["key"], T | null>>; refs?: T[]; frames?: FrameAttachment<T>[]; refClips?: T[]; refAudios?: T[] } | null {
   for (const [k, s] of Object.entries(state.slots) as [InputSlot["key"], T | null][]) {
     if (s?.id === id) return { slots: { ...state.slots, [k]: v ? { ...v, id } : null } };
   }
   if (state.refs.some((r) => r.id === id)) {
     return { refs: v ? state.refs.map((r) => (r.id === id ? { ...v, id } : r)) : state.refs.filter((r) => r.id !== id) };
+  }
+  // References mode's clips and voice or music clips (Pika H3 Flex) keep their order.
+  for (const list of ["refClips", "refAudios"] as const) {
+    const items = state[list];
+    if (items?.some((r) => r.id === id)) return { [list]: v ? items.map((r) => (r.id === id ? { ...v, id } : r)) : items.filter((r) => r.id !== id) };
   }
   // A frame keeps its place in the clip when its upload finishes; a failed one leaves the strip.
   const f = state.frames?.findIndex((x) => x.value.id === id) ?? -1;
@@ -1307,4 +1318,11 @@ export function controlsFor(controls: NonNullable<ModelDef["options"]["controls"
     const values = c.values.filter((v) => c.ops?.[String(v)]?.includes(op) ?? true);
     return values.length > 1 ? [{ ...c, values }] : [];
   });
+}
+
+/** A related studio's link (StudioConfig.related), opened on its model for this engine when it names one (Lipsync → Kandinsky 6.0). */
+export function relatedHref(related: { href: string; models?: Partial<Record<Engine, string>> }, engine: Engine): string {
+  const model = related.models?.[engine];
+  if (!model) return related.href;
+  return `${related.href}${related.href.includes("?") ? "&" : "?"}model=${encodeURIComponent(model)}`;
 }

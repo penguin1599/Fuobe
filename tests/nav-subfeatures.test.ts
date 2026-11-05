@@ -1,8 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { MODEL3D_MODES } from "@/lib/av/model3d";
-import { GENJUTSU_MODES } from "@/lib/catalog/genjutsu";
+import { MODEL3D_MODES, readModel3dLink } from "@/lib/av/model3d";
+import { GENJUTSU_MODES, modeOpen } from "@/lib/catalog/genjutsu";
 import { HUB_MODES, type HubKind } from "@/lib/hubs";
 import { megaSubs, studiosMenu } from "@/lib/mega-menus";
 import { megaCurrent } from "@/components/nav/mega-launcher";
@@ -22,6 +22,7 @@ import {
   type ViewerKind,
 } from "@/lib/nav-model";
 import { navSearchEntries, searchNav } from "@/lib/nav-search";
+import { genjutsuLive } from "@/server/genjutsu-live";
 
 /*
  * What each studio holds inside (its tabs and modes) in the top nav: the catalogue (STUDIO_SUBS) and the links the
@@ -85,7 +86,9 @@ describe("the catalogue of studio features", () => {
     for (const id of STUDIO_SUBS.genjutsu.ids) expect(GENJUTSU_MODES.map((m) => m.id), id).toContain(query(id).get("mode"));
     expect(read("src/components/genjutsu/genjutsu-studio.tsx")).toMatch(/fresh\("mode"\)/);
     for (const id of STUDIO_SUBS["image-to-3d"].ids) expect(MODEL3D_MODES.map((m) => m.id), id).toContain(query(id).get("mode"));
-    expect(read("src/components/model3d/model3d-studio.tsx")).toMatch(/params\.get\("mode"\)/);
+    // Image to 3D reads its link through readModel3dLink (src/lib/av/model3d.ts), which takes ?mode=.
+    expect(read("src/components/model3d/model3d-studio.tsx")).toContain("readModel3dLink(params)");
+    for (const id of STUDIO_SUBS["image-to-3d"].ids) expect(readModel3dLink(query(id)).mode, id).toBe(query(id).get("mode"));
     const sheet = read("src/components/fashion/character-sheet.tsx");
     expect(sheet).toContain('<TabFromLink param="mode" ids={MODE_IDS}');
     for (const id of STUDIO_SUBS["character-sheet"].ids) expect(sheet, id).toContain(`["${query(id).get("mode")}", "${entry(id)!.label}"]`);
@@ -93,7 +96,8 @@ describe("the catalogue of studio features", () => {
     expect(dump).toContain('<TabFromLink param="tab" ids={TAB_IDS}');
     expect(dump).toContain(`["${query("photodump-instadump").get("tab")}", "From a selfie"]`);
     expect(read("src/components/canvas/canvas-list.tsx")).toContain('params.get("tab") === "skills"');
-    expect(read("src/components/cinema/projects-view.tsx")).toContain('useSearchParams().get("blockout") === "1"');
+    // Cinema reads ?blockout=1 (and World mode's ?world=1) in its project list.
+    expect(read("src/components/cinema/projects-view.tsx")).toContain('params.get("blockout") === "1"');
   });
 
   it("calls every feature by its studio's own name for it", () => {
@@ -112,7 +116,10 @@ describe("the catalogue of studio features", () => {
 
 describe("who sees a studio's features", () => {
   it("keeps the owner's own modes the owner's, in every place", () => {
-    for (const id of ["genjutsu-picture", "genjutsu-finish", "cinema-blockout", "canvas-skills", "assist-memory", "assist-scheduled", "audio-song", "video-tools-restore"]) {
+    // Restore & colourise shows to everyone, labelled: it runs on a visitor's own GPU or key (own-setup.ts).
+    expect(entry("video-tools-restore")!.visibility).toBeUndefined();
+    for (const kind of VISITORS) expect(entriesFor(kind).some((e) => e.id === "video-tools-restore"), kind).toBe(true);
+    for (const id of ["canvas-skills", "assist-memory", "assist-scheduled"]) {
       expect(entry(id)!.visibility, id).toEqual(["owner"]);
       for (const kind of VISITORS) expect(entriesFor(kind).some((e) => e.id === id), `${kind}: ${id}`).toBe(false);
     }
@@ -127,6 +134,44 @@ describe("who sees a studio's features", () => {
     }
   });
 
+  it("links Cinema Studio's Blockout for everyone: a guest sees it (and is offered a free account on a run), an account uses it", () => {
+    expect(entry("cinema-blockout")!.visibility).toBeUndefined();
+    expect(OWNER_RUNS.has("cinema-blockout")).toBe(false);
+    for (const kind of [...VISITORS, "owner" as const]) {
+      expect(studioSubs("cinema", kind, "list").map((e) => e.id), String(kind)).toEqual(["cinema-blockout"]);
+      expect(studioSubs("cinema", kind, "sheet").map((e) => e.id), String(kind)).toEqual(["cinema-blockout"]);
+      // The Studios menu's Cinema column has no room for it, for anyone, as before: the sheet, /studios and search carry it.
+      expect(studioSubs("cinema", kind, "menu"), String(kind)).toEqual([]);
+    }
+    // It opens the project list on Blockout: with no project yet (a guest, a new account) the list says to start one, and
+    // a guest's New project is the free sign-up card.
+    const list = read("src/components/cinema/projects-view.tsx");
+    expect(list).toContain("Blockout to film: start a new project to film it in.");
+    expect(list).toContain('askToSignUp("run")');
+  });
+
+  it("links Genjutsu's Finish for everyone exactly when its page shows it to everyone", () => {
+    const live = genjutsuLive();
+    const open = modeOpen("finish", (f) => live[f]);
+    expect(open).toBe(true);
+    const finish = entry("genjutsu-finish")!;
+    for (const kind of VISITORS) {
+      expect(visibleTo(finish, kind), kind).toBe(open);
+      expect(studioSubs("genjutsu", kind, "sheet").some((e) => e.id === finish.id), kind).toBe(open);
+      const menu = studiosMenu(kind).columns.flatMap((c) => [c.lead!, ...c.rows]).flatMap((e) => e.subs ?? []);
+      expect(menu.some((s) => s.id === finish.id), kind).toBe(open);
+    }
+  });
+
+  it("links Genjutsu's From picture for everyone: it runs on a visitor's own GPU until it opens here", () => {
+    const picture = entry("genjutsu-picture")!;
+    expect(picture.visibility).toBeUndefined();
+    for (const kind of VISITORS) {
+      expect(visibleTo(picture, kind), kind).toBe(true);
+      expect(studioSubs("genjutsu", kind, "sheet").some((e) => e.id === picture.id), kind).toBe(true);
+    }
+  });
+
   it("links a feature a visitor may open but not run here (its page says so) in the menus and sheets for the owner only", () => {
     for (const id of OWNER_RUNS) {
       for (const kind of VISITORS) {
@@ -136,8 +181,13 @@ describe("who sees a studio's features", () => {
       }
     }
     expect(studioSubs("audio", "owner", "sheet").map((e) => e.id)).toContain("audio-split");
-    expect(studioSubs("image-to-3d", "owner", "menu").length).toBe(3);
-    expect(studioSubs("image-to-3d", "guest", "menu")).toEqual([]);
+    // Image to 3D runs for accounts too (on their own GPU or key): its modes are linked for everyone.
+    for (const kind of [...VISITORS, "owner" as const]) expect(studioSubs("image-to-3d", kind, "menu").length, String(kind)).toBe(3);
+    // Character Sheet and Photodump run for accounts too (on their own GPU or key): their modes are linked for everyone.
+    for (const kind of [...VISITORS, "owner" as const]) {
+      expect(studioSubs("character-sheet", kind, "sheet").length, String(kind)).toBe(3);
+      expect(studioSubs("photodump", kind, "sheet").map((e) => e.id), String(kind)).toEqual(["photodump-instadump"]);
+    }
     // Search still finds them, as before.
     expect(entriesFor("guest").some((e) => e.id === "audio-split")).toBe(true);
   });
@@ -183,7 +233,7 @@ describe("finding a studio's features", () => {
     const inside = (kind: ViewerKind | undefined, q: string) => find(kind, q).groups[0];
     expect(find("guest", "genjutsu").best[0]).toMatchObject({ id: "genjutsu" });
     expect(inside("guest", "genjutsu")).toMatchObject({ label: "In Genjutsu" });
-    expect(inside("guest", "genjutsu").hits.map((h) => h.label)).toEqual(["Motion transfer", "Character swap", "Object swap", "Restyle", "Insert"]);
+    expect(inside("guest", "genjutsu").hits.map((h) => h.label)).toEqual(["Motion transfer", "Character swap", "Object swap", "Restyle", "Insert", "From picture", "Finish"]);
     expect(inside("owner", "genjutsu").hits.map((h) => h.label)).toEqual(["Motion transfer", "Character swap", "Object swap", "Restyle", "Insert", "From picture", "Finish"]);
     expect(inside("guest", "character sheet").hits.map((h) => h.label)).toEqual(["From Reference", "Build from scratch", "From a description"]);
     // Not a tab that is the studio's own page (Upscale's Image), nor one already among the best matches.
@@ -202,11 +252,11 @@ describe("finding a studio's features", () => {
       const r = find(kind, q);
       return [...r.best, ...r.groups.flatMap((g) => g.hits)].map((h) => h.id);
     };
-    expect(hits("owner", "blockout")).toContain("cinema-blockout");
     expect(hits("owner", "skills as canvases")).toContain("canvas-skills");
     expect(hits("owner", "scheduled")).toContain("assist-scheduled");
+    // Cinema Studio's Blockout is everyone's ("Cinema Studio › Blockout").
+    for (const kind of [...VISITORS, "owner" as const]) expect(hits(kind, "blockout"), String(kind)).toContain("cinema-blockout");
     for (const kind of VISITORS) {
-      expect(hits(kind, "blockout"), String(kind)).not.toContain("cinema-blockout");
       expect(hits(kind, "skills as canvases"), String(kind)).not.toContain("canvas-skills");
       expect(hits(kind, "assist memory"), String(kind)).not.toContain("assist-memory");
     }

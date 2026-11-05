@@ -45,6 +45,9 @@ a { color: var(--accent); }
 .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 12px; min-width: 0; }
 .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr)); }
 .media { width: 100%; aspect-ratio: 1; object-fit: contain; background: var(--chip); border-radius: 8px; display: block; }
+.stems { display: grid; gap: 6px; }
+.stem { display: grid; gap: 2px; font-size: 12px; }
+.stem audio, .side audio { width: 100%; min-width: 0; display: block; }
 .facts { display: grid; gap: 8px 16px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 200px), 1fr)); margin: 12px 0; }
 @media (max-width: 480px) { .facts { grid-template-columns: 1fr 1fr; } }
 .facts div { min-width: 0; } .facts b { display: block; font-size: 12px; color: var(--muted); font-weight: 500; }

@@ -134,6 +134,8 @@ export function fixPlan(t: ToolReadiness, inv: GpuInventory | null, idx: Require
     unobservable: t.unobservable,
     alternatives: { ...(t.cloud && !o.account && { cloud: t.cloud }), ...(o.fits?.length && { fits: o.fits }) },
     ...(o.gpu && { gpu: o.gpu }),
+    ...(t.state === "unsupported" && t.reason && { reason: t.reason }),
+    ...(t.gpuNeed && { gpuNeed: t.gpuNeed }),
     ...(inv?.comfy?.os && { os: inv.comfy.os }),
   };
 }

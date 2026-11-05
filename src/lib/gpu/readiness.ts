@@ -1,4 +1,5 @@
 import { compareVersions, formatBytes, nameKey, splitKey, vramGb } from "./requirements";
+import { cardFits, GPU_NEED_TEXT, readCard, type GpuNeed } from "./rtx";
 import type { Badge, FileKey, GpuInventory, IndexFile, InventorySummary, Need, Readiness, RequirementIndex, ToolReadiness, ToolRef, VramFit } from "./types";
 
 /**
@@ -20,6 +21,16 @@ export function deviceLabel(name: string | undefined): string {
     .trim();
 }
 
+/**
+ * A graphics card's name for words that say "your …" (a fix plan's gpu): only a CUDA or Intel card, never ComfyUI's bare
+ * "cpu" or "mps" device names.
+ */
+export function cardLabel(d: { name: string; type: string } | undefined): string | undefined {
+  if (!d || (d.type !== "cuda" && d.type !== "xpu")) return undefined;
+  const n = deviceLabel(d.name);
+  return n && !/^(cpu|mps|cuda|xpu)(:\d+)?$/i.test(n) ? n : undefined;
+}
+
 /** The short name people use: "NVIDIA GeForce RTX 4070" → "RTX 4070". */
 export function shortGpu(name: string | undefined): string {
   return deviceLabel(name).replace(/^(NVIDIA\s+)?(GeForce\s+)?/i, "").trim() || "GPU";
@@ -33,7 +44,7 @@ export type FileState = "present" | "partial" | "missing" | "unknown" | "unobser
 /** Is this index file on that ComfyUI: by its loader's combo list first, then the folder listing. */
 export function filePresence(f: IndexFile, inv: GpuInventory): FileState {
   if (f.presence === "unobservable") return "unobservable";
-  const listing = inv.models[f.folder];
+  const listing = inv.models[f.listFolder ?? f.folder];
   const size = listing && !listing.folderMissing ? listing.have[f.file] : undefined;
   const short = typeof size === "number" && f.sizeBytes > 0 && size < 0.99 * f.sizeBytes;
   if (f.presence === "loader") {
@@ -100,6 +111,8 @@ export interface WorkflowReadiness {
   unvalidated: boolean;
   unobservable: string[];
   reason?: string;
+  /** Unsupported because the card isn't the NVIDIA RTX one its nodes need. */
+  gpuNeed?: GpuNeed;
 }
 
 /** Whether the ComfyUI runs on its CPU (no device, --cpu, or a device that isn't a graphics card): its "VRAM" is system RAM. */
@@ -107,6 +120,17 @@ const onCpu = (inv: GpuInventory) => {
   const d = inv.devices[0];
   return !d || !!inv.comfy?.flags.cpuOnly || !(d.type === "cuda" || d.type === "mps" || d.type === "xpu");
 };
+
+/**
+ * Whether this ComfyUI's card runs nodes that need `need` (an NVIDIA RTX card): false on a CPU, an Apple, AMD or Intel
+ * device or a card whose name says it isn't one; undefined when nothing was read or the name doesn't tell (never blocks).
+ */
+export function gpuFits(need: GpuNeed, inv: GpuInventory): boolean | undefined {
+  const d = inv.devices[0];
+  if (inv.comfy?.flags.cpuOnly) return false;
+  if (!d) return undefined;
+  return cardFits(need, readCard(d.name, d.type));
+}
 
 /** The graphics card's memory in GB as the check reads it (rounded: vramGb), undefined on a CPU or with no reading. */
 export function gpuVramGb(inv: GpuInventory): number | undefined {
@@ -145,6 +169,9 @@ export function workflowReadiness(id: string, inv: GpuInventory, idx: Requiremen
   const out: WorkflowReadiness = { ...base, state: "ready", firstRun: w.firstRun, unvalidated: !w.validated, vram: vramFit(w.vramGb, inv) };
   if (w.isolated && ctx.computer) return { ...out, state: "unsupported", reason: "This one needs its own ComfyUI, so it can't run next to your other add-ons." };
   if (w.isolated && ctx.account) return { ...out, state: "unsupported", reason: "This one needs its own ComfyUI, so it can't run next to your other add-ons." };
+  // The NVIDIA RTX Video nodes: only on an NVIDIA RTX card (frame generation: RTX 40 or later). A card the check can't
+  // tell (no name, a data-centre card) isn't blocked.
+  if (w.gpu && gpuFits(w.gpu, inv) === false) return { ...out, state: "unsupported", reason: GPU_NEED_TEXT[w.gpu], gpuNeed: w.gpu };
   if (w.isolated && !ctx.isolatedUrl) {
     out.needs.push({ key: "isolated-worker", kind: "isolated-worker", label: "A second ComfyUI (the isolated worker)", detail: "Some add-ons change process-wide settings, so they run on a separate ComfyUI." });
   }
@@ -254,7 +281,7 @@ export function toolReadiness(
   const have = new Map<string, Need>();
   let needGb = 0;
   for (const p of parts) {
-    if (p.state === "unsupported") return { ...out, state: "unsupported", reason: p.reason, vram: p.vram };
+    if (p.state === "unsupported") return { ...out, state: "unsupported", reason: p.reason, vram: p.vram, ...(p.gpuNeed && { gpuNeed: p.gpuNeed }) };
     for (const n of p.needs) if (!needs.has(n.key)) needs.set(n.key, n);
     for (const h of p.have) if (!have.has(h.key)) have.set(h.key, h);
     needGb = Math.max(needGb, p.vram.needGb);
@@ -279,6 +306,8 @@ export function toolReadiness(
   out.have = [...have.values()];
   out.downloadBytes = out.needs.filter((n) => n.kind === "model" || n.kind === "model-replace" || n.kind === "lora").reduce((a, n) => a + (n.sizeBytes ?? 0), 0);
   out.vram = vramFit(needGb, inv);
+  // A graph that needs an NVIDIA RTX card (no VRAM figure published) never reads "Runs on any computer".
+  if (out.vram.fit === "any" && workflowIds.some((id) => idx.workflows[id]?.gpu)) out.vram = { ...out.vram, fit: "fits" };
   out.state = stateOf(out.needs, out.vram.fit);
   return out;
 }
@@ -287,7 +316,9 @@ export function toolReadiness(
 export function badgeOf(t: ToolReadiness): Badge | null {
   const code = ({ ready: "r", almost: "a", setup: "s", gpu: "g", unsupported: "u" } as const)[t.state as Exclude<Readiness, "unknown">];
   if (!code) return null;
-  const flags = (t.vram.fit === "tight" ? 1 : 0) | (t.firstRun.length ? 2 : 0) | (t.vram.fit === "any" ? 4 : 0);
+  // 8: needs an NVIDIA RTX card, 16: an RTX 40 series card or newer (the chip says so instead of "a second ComfyUI").
+  const card = t.state === "unsupported" && t.gpuNeed ? (t.gpuNeed === "nvidia-rtx-40" ? 16 : 8) : 0;
+  const flags = (t.vram.fit === "tight" ? 1 : 0) | (t.firstRun.length ? 2 : 0) | (t.vram.fit === "any" ? 4 : 0) | card;
   return [code, stepCount(t.needs), Math.round(t.downloadBytes / 1e8), flags];
 }
 
@@ -315,10 +346,10 @@ export function summaryOf(inv: GpuInventory, idx: RequirementIndex): InventorySu
 }
 
 /** The line under a chip or a board row: "1 download · 12.3 GB", "Needs 24 GB", "Ready". */
-export function stateLine(t: Pick<ToolReadiness, "state" | "needs" | "downloadBytes" | "vram">): string {
+export function stateLine(t: Pick<ToolReadiness, "state" | "needs" | "downloadBytes" | "vram" | "gpuNeed">): string {
   if (t.state === "ready") return t.vram.fit === "any" ? "Runs on any computer" : t.vram.fit === "tight" ? "Ready · slow on your GPU" : "Ready";
   if (t.state === "gpu") return `Needs ${t.vram.needGb} GB`;
-  if (t.state === "unsupported") return "Needs a second ComfyUI";
+  if (t.state === "unsupported") return t.gpuNeed ? GPU_NEED_TEXT[t.gpuNeed] : "Needs a second ComfyUI";
   if (t.state === "unknown") return "Not checked";
   const steps = stepCount(t.needs);
   const downloads = t.needs.filter((n) => n.kind === "model" || n.kind === "lora" || n.kind === "model-replace").length;
@@ -339,7 +370,7 @@ export function needTargets(needs: Need[], idx: RequirementIndex): { classes: st
     if (n.file) {
       const f = idx.files[n.file];
       const { folder } = splitKey(n.file);
-      folders.add(folder);
+      folders.add(f?.listFolder ?? folder);
       for (const [cls] of f?.loaders ?? []) classes.add(cls);
     }
     if (n.lora) folders.add("loras");

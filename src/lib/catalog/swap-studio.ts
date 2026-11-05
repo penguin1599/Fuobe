@@ -223,6 +223,11 @@ export interface SwapTake {
   settled?: boolean;
   /** Its sharper version (Assemble → Finish → Sharpen), shown beside it until it is picked. */
   finish?: TakeFinish | null;
+  /**
+   * An account's take (public sign-up): the run its queue started. A take that starts later, once the one it continues
+   * from is made, joins that run, so the whole queue counts once against the account's limits.
+   */
+  batchId?: string;
 }
 
 /**

@@ -16472,7 +16472,9 @@
    "data": "80-150 editorial and street photos Fuobe owns or licensed with AI-training rights; varied skin tones, ages, light; captions written in Z-Image style (long sentences)",
    "trainer": "fal-ai/z-image-trainer training_type=style (Z-Image base, $2.26 per 1,000 steps), or AI-Toolkit on Z-Image base / Turbo + ostris training adapter v2",
    "steps": "2,000-3,000, rank 32, lr 1e-4",
-   "use": "strength 0.5-0.7"
+   "use": "strength 0.5-0.7",
+   "group": "look",
+   "status": "planned"
   },
   {
    "id": "fuobe-cctv",
@@ -16482,7 +16484,9 @@
    "data": "40-80 frames from cameras Fuobe controls (own CCTV, staged scenes); no overlays in the frames",
    "trainer": "fal-ai/z-image-turbo-trainer-v2 ($0.85 per 1,000 steps) or AI-Toolkit",
    "steps": "1,500-2,000",
-   "use": "strength 0.8; overlay text in post"
+   "use": "strength 0.8; overlay text in post",
+   "group": "look",
+   "status": "planned"
   },
   {
    "id": "fuobe-ultrawide-05",
@@ -16492,7 +16496,9 @@
    "data": "60+ selfies and outfit shots taken by the team with phone 0.5x lenses",
    "trainer": "fal-ai/z-image-turbo-trainer-v2 or AI-Toolkit",
    "steps": "1,500-2,000",
-   "use": "strength 0.7"
+   "use": "strength 0.7",
+   "group": "look",
+   "status": "planned"
   },
   {
    "id": "fuobe-scale-surreal",
@@ -16502,7 +16508,9 @@
    "data": "40-60 composites (giant props, tiny worlds) made by Fuobe from own photos",
    "trainer": "fal-ai/z-image-trainer training_type=content",
    "steps": "2,000",
-   "use": "strength 0.7-0.9"
+   "use": "strength 0.7-0.9",
+   "group": "look",
+   "status": "planned"
   },
   {
    "id": "fuobe-through-glass",
@@ -16512,7 +16520,9 @@
    "data": "40+ photos shot through fogged, reeded and rain-streaked glass",
    "trainer": "fal-ai/z-image-turbo-trainer-v2",
    "steps": "1,500",
-   "use": "strength 0.8"
+   "use": "strength 0.8",
+   "group": "look",
+   "status": "planned"
   },
   {
    "id": "fuobe-old-phone",
@@ -16522,7 +16532,9 @@
    "data": "60+ photos taken on real 2005-2012 camera phones",
    "trainer": "fal-ai/z-image-turbo-trainer-v2",
    "steps": "1,500",
-   "use": "strength 0.8"
+   "use": "strength 0.8",
+   "group": "look",
+   "status": "planned"
   },
   {
    "id": "fuobe-frutiger-aero",
@@ -16532,7 +16544,9 @@
    "data": "40-60 renders Fuobe makes (Blender, own designs)",
    "trainer": "fal-ai/z-image-trainer training_type=style",
    "steps": "2,000",
-   "use": "strength 0.8"
+   "use": "strength 0.8",
+   "group": "look",
+   "status": "planned"
   },
   {
    "id": "fuobe-underwater",
@@ -16542,7 +16556,9 @@
    "data": "40+ licensed underwater portraits",
    "trainer": "fal-ai/z-image-turbo-trainer-v2",
    "steps": "1,500",
-   "use": "strength 0.8"
+   "use": "strength 0.8",
+   "group": "look",
+   "status": "planned"
   },
   {
    "id": "fuobe-paper-collage",
@@ -16552,7 +16568,9 @@
    "data": "50+ physical paper collages photographed by Fuobe",
    "trainer": "fal-ai/z-image-trainer training_type=style",
    "steps": "2,000",
-   "use": "strength 0.8"
+   "use": "strength 0.8",
+   "group": "look",
+   "status": "planned"
   },
   {
    "id": "fuobe-beauty-details",
@@ -16562,7 +16580,48 @@
    "data": "one small set per concept (20-40 images each), own or licensed",
    "trainer": "fal-ai/z-image-turbo-trainer-v2, one LoRA per concept",
    "steps": "1,000-1,500 each",
-   "use": "strength 0.7"
+   "use": "strength 0.7",
+   "group": "look",
+   "status": "planned"
+  },
+  {
+   "id": "fuobe-push-in",
+   "kind": "motion",
+   "base": "wan2.2-i2v-a14b",
+   "group": "motion",
+   "presets": "Eyes In, Mouth In, Eating Zoom",
+   "data": "20-40 own-shot push-in clips (2-5 s, 16 fps): a steady dolly or zoom into the eyes or the mouth of people who signed a consent form; no text or logos in frame",
+   "trainer": "fal-ai/wan-22-trainer/i2v-a14b, or AI-Toolkit (wan22_14b_i2v)",
+   "steps": "400-1,000",
+   "use": "strength 1.0 on both experts",
+   "status": "planned",
+   "notes": "Replaces the Wan 'eyes in' LoRA (civitai 1877142), which forbids selling outputs. Added 2026-11-02 (o/o12-training-kit)."
+  },
+  {
+   "id": "fuobe-timelapse",
+   "kind": "motion",
+   "base": "wan2.2-i2v-a14b",
+   "group": "motion",
+   "presets": "Timelapse, Timelapse Human, Timelapse Landscape, Timelapse Glam, Hyperlapse",
+   "data": "30-60 own time-lapse and hyperlapse clips (skies, streets, people holding still while the world moves), 3-5 s each at 16 fps",
+   "trainer": "fal-ai/wan-22-trainer/i2v-a14b, or AI-Toolkit (wan22_14b_i2v)",
+   "steps": "600-1,000",
+   "use": "strength 1.0 on both experts",
+   "status": "planned",
+   "notes": "Replaces the Wan 2.2 Time-lapse LoRA (civitai 1877924), which forbids selling outputs. Added 2026-11-02 (o/o12-training-kit)."
+  },
+  {
+   "id": "fuobe-drone-reveal",
+   "kind": "motion",
+   "base": "wan2.2-i2v-a14b",
+   "group": "motion",
+   "presets": "Drone Reveal, Helicopter Shot, Flying",
+   "data": "30-60 own drone clips: a rising or forward reveal over a landscape or a building, flown by the team where flying is allowed; no people who did not consent",
+   "trainer": "fal-ai/wan-22-trainer/i2v-a14b, or AI-Toolkit (wan22_14b_i2v)",
+   "steps": "600-1,000",
+   "use": "strength 1.0 on both experts",
+   "status": "planned",
+   "notes": "DroneShot and Set Reveal forbid selling outputs. Added 2026-11-02 (o/o12-training-kit)."
   }
  ],
  "motionsEffects": [

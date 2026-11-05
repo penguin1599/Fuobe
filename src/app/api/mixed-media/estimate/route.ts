@@ -1,6 +1,6 @@
+import { priceAsRun } from "@/server/account-tool-run";
 import { estimateMixed } from "@/server/mixed-media";
 import { MixedEstimateSchema, body, handle } from "@/server/shorts-schemas";
-import { priceAs } from "@/server/visitor";
 
 /** Frames, cost of the render and of a preview frame, and notes for the current settings. */
 async function post(request: Request) {
@@ -10,7 +10,7 @@ async function post(request: Request) {
   });
 }
 
-/** A visitor (public sign-up) gets the price of its run on its own GPU, never a demo (src/server/visitor.ts). */
+/** Priced as the asker's run would go: an account's on its own GPU or key, a guest's on the open engine, never a demo. */
 export async function POST(request: Request) {
-  return priceAs(request, () => post(request));
+  return priceAsRun(request, () => post(request));
 }

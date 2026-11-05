@@ -1,6 +1,7 @@
 "use client";
 
 import { Copy } from "lucide-react";
+import { Fragment } from "react";
 import { copyWithToast } from "@/lib/clipboard";
 import { rememberedComfy } from "./computer-runtime";
 
@@ -28,7 +29,7 @@ export function isLocalAddress(url: string): boolean {
 
 export const gib = (bytes?: number) => (bytes ? `${(bytes / 2 ** 30).toFixed(bytes >= 10 * 2 ** 30 ? 0 : 1)} GB` : undefined);
 
-/** The command that puts a public https address in front of a local ComfyUI. */
+/** The command that gives a ComfyUI on this computer a web address (a Cloudflare quick tunnel; nothing to sign up for). */
 export const tunnelCommand = (port: number) => `cloudflared tunnel --url http://localhost:${port}`;
 
 function CopyLine({ text, label }: { text: string; label: string }) {
@@ -49,16 +50,51 @@ function CopyLine({ text, label }: { text: string; label: string }) {
   );
 }
 
-/** How to give a ComfyUI a public address: a tunnel on the computer it runs on (its usual port, or the one last found). */
+const RELEASES = "https://github.com/cloudflare/cloudflared/releases/latest/download";
+
+/**
+ * Where to get cloudflared, Cloudflare's free app that gives a program on a computer a web address: the Mac and Windows
+ * installers (signed by Cloudflare; they put it where Terminal and Command Prompt find it), and Cloudflare's own page for
+ * Linux. A file starts downloading in place; the page opens in a new tab.
+ */
+const CLOUDFLARED: { label: string; href: string; page?: boolean }[] = [
+  { label: "Mac", href: `${RELEASES}/cloudflared-arm64.pkg` },
+  { label: "Intel Mac", href: `${RELEASES}/cloudflared-amd64.pkg` },
+  { label: "Windows", href: `${RELEASES}/cloudflared-windows-amd64.msi` },
+  { label: "Linux", href: "https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/#linux", page: true },
+];
+
+/**
+ * How to give a ComfyUI a web address, in three steps on the computer it runs on: install cloudflared, run its one
+ * command (ComfyUI's usual port, or the one last found), paste the address it shows. No words a visitor has to look up.
+ */
 export function TunnelSteps() {
   const port = rememberedComfy()?.port ?? 8188;
   return (
     <div className="space-y-2 rounded-xl border p-3 text-[13px]">
-      <p className="font-medium">Give your ComfyUI a public address</p>
-      <p className="text-[12px] text-muted-foreground">On the computer that runs ComfyUI, start a tunnel, then paste the https address it prints below:</p>
-      <CopyLine text={tunnelCommand(port)} label="tunnel command" />
+      <p className="font-medium">Give your ComfyUI a web address</p>
+      <p className="text-[12px] text-muted-foreground">Cloudflare&apos;s free app, cloudflared, gives it one. On the computer that runs ComfyUI:</p>
+      <ol className="list-decimal space-y-2 pl-5 text-[12px] text-muted-foreground">
+        <li>
+          Install cloudflared for{" "}
+          {CLOUDFLARED.map((d, i) => (
+            <Fragment key={d.label}>
+              {i > 0 && (i === CLOUDFLARED.length - 1 ? " or " : ", ")}
+              <a href={d.href} {...(d.page && { target: "_blank", rel: "noreferrer" })} className="font-medium text-brand-text underline-offset-4 hover:underline">
+                {d.label}
+              </a>
+            </Fragment>
+          ))}
+          .
+        </li>
+        <li className="space-y-1.5">
+          <span className="block">Open Terminal (on Windows, Command Prompt), paste this and press Enter:</span>
+          <CopyLine text={tunnelCommand(port)} label="the command" />
+        </li>
+        <li>Paste the web address it shows, ending in trycloudflare.com, in the box below. Keep that window open: the address works while it runs.</li>
+      </ol>
       <p className="text-[11px] text-muted-foreground">
-        Or ngrok: ngrok http {port}. ComfyUI on another port? Use that port instead of {port}.
+        Does your ComfyUI&apos;s own address end in a number other than {port}? Put that number in the command in place of {port}.
       </p>
     </div>
   );

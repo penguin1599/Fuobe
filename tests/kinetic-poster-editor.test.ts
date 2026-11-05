@@ -9,8 +9,8 @@ import { initialState, templateRecipe } from "@/lib/motion/template";
 import { measure, RASTER_LOGO } from "./helpers/motion";
 
 // The poster scenes inside Kinetic's editor and the gallery: the brand's own fonts when the person picks them, the
-// Pro controls (pace, camera, finish), a gallery cover's clip that opens on its finished poster, and the new templates
-// kept to the owner until they are ready.
+// Pro controls (pace, camera, finish), a gallery cover's clip that opens on its finished poster, and every code template
+// open to everyone.
 
 const tpl = (id: string) => TEMPLATES.find((t) => t.id === id)!;
 const plan = async (r: Recipe) => (await loadScene(r.scene)).plan({ recipe: r, measure, logo: RASTER_LOGO, images: { product: { w: 800, h: 1024 }, photo: { w: 1024, h: 1536 } }, outlines: { product: null } });
@@ -62,19 +62,21 @@ describe("gallery covers", () => {
   });
 });
 
-describe("owner-only templates", () => {
-  it("are listed and opened for the owner alone", () => {
-    const hidden = TEMPLATES.filter((t) => t.ownerOnly).map((t) => t.id);
-    expect(hidden.length).toBeGreaterThan(0);
-    for (const id of hidden) expect(tpl(id).render, id).toBe("code");
+describe("who sees the code templates", () => {
+  it("lists and opens every one of them for everyone", () => {
+    const code = TEMPLATES.filter((t) => t.render === "code").map((t) => t.id);
+    expect(code.length).toBeGreaterThanOrEqual(18);
     const guest = templatesFor("all", "all").map((t) => t.id);
-    const owner = templatesFor("all", "all", true).map((t) => t.id);
-    for (const id of hidden) {
-      expect(guest).not.toContain(id);
-      expect(owner).toContain(id);
-      expect(visibleTemplate(tpl(id), false)).toBe(false);
+    for (const id of code) {
+      expect(guest, id).toContain(id);
+      expect(visibleTemplate(tpl(id), false), id).toBe(true);
     }
-    // The ten Kinetic templates and the Logo End Card stay open to everyone.
-    for (const id of ["ms-kinetic-headline", "ms-big-number", "ms-end-card", "ms-five-star-quote", "ms-logo-sting", "ms-feature-cards", "ms-dashboard-zoom", "m2-line-reveal", "m2-retro-starburst", "m2-offer-badge"]) expect(guest, id).toContain(id);
+    for (const id of ["m2-midnight-drop", "m2-nocturne", "m2-season-finale", "m2-prism-stage", "mm-marquee", "mm-runway-titles", "ms-stat-stack", "ms-kind-words"]) expect(guest, id).toContain(id);
+  });
+
+  it("still keeps a template marked for the owner to the owner", () => {
+    const held = { ...tpl("ms-stat-stack"), ownerOnly: true as const };
+    expect(visibleTemplate(held, false)).toBe(false);
+    expect(visibleTemplate(held, true)).toBe(true);
   });
 });

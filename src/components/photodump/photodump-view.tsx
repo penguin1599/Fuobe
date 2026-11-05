@@ -5,14 +5,13 @@ import Link from "next/link";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { PageHeader, PageShell } from "@/components/page-shell";
-import { SelfHostNote } from "@/components/self-host-note";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { EngineSwitch } from "@/components/studio/engine-switch";
 import { fileToList, type SlotValue } from "@/components/studio/media-slot";
 import { radioKeys, radioTab } from "@/components/studio/radio-keys";
-import { useElements, useEngine, useGenerations, useIsOwner, useLikelyVisitor, useModelAccess } from "@/lib/api";
+import { useEngine, useGenerations, useModelAccess } from "@/lib/api";
 import { keepOffered, offered } from "@/lib/model-access";
 import { customPack, DEFAULT_ASPECT, MAX_PACK_REFS, MAX_SELFIE_MB, PACKS, PHOTODUMP_ASPECTS, PHOTODUMP_MODELS, PHOTODUMP_SOUL, soulIdOf, type Pack } from "@/lib/catalog/packs";
 import type { Generation } from "@/lib/catalog/types";
@@ -21,8 +20,9 @@ import { cn } from "@/lib/utils";
 import { onAttr, TAB_PILL, TabRow } from "@/components/ui/tab-row";
 import { linkTab, TabFromLink } from "@/components/nav/tab-from-link";
 import { toastError } from "@/lib/refusals";
+import { useAskFirst } from "./ask-first";
 import { PackCover } from "./covers";
-import { useRun, useRunPreview, usePackActions, useUserPacks } from "./hooks";
+import { useOwnsElements, usePhotoCharacters, useRun, useRunPreview, usePackActions, useUserPacks } from "./hooks";
 import { DownloadAll, ResultsGrid, runState } from "./results";
 import { RunLine, Steps } from "./steps";
 import { CharacterPicker } from "./subject";
@@ -156,11 +156,9 @@ function useRuns(feature: string) {
 /** /photodump: Photodump (trained characters) and Instadump (one selfie) — choose a pack, add your photo, get the set. */
 export function PhotodumpView() {
   const [engine, setEngine] = useEngine();
-  // A set doesn't run on an account's own GPU or key yet (only the studios' generations do), and a pack of your own is
-  // saved to the owner's library: said up front, and the upload and Generate are off. The packs stay open. Create pack
-  // shows once the owner is known (useIsOwner), so a visitor never sees it in the grid and then gone.
-  const visitor = useLikelyVisitor();
-  const isOwner = useIsOwner();
+  // A pack of your own is made of photos you upload: a guest is asked to sign up first, and an account with neither its
+  // own GPU nor its own key to connect one (as before any upload). An account's packs and runs are its own.
+  const askFirst = useAskFirst();
   const [step, setStep] = useState(0);
   const [reached, setReached] = useState(0);
   const [tab, setTab] = useState<PackTab>("all");
@@ -198,14 +196,19 @@ export function PhotodumpView() {
 
   const subjectReady = subjectMode === "selfie" ? !!selfie?.ref && !selfie.uploading : !!elementId;
   // The Model choice follows the engine: a pick the other engine had counts as Auto (one radio is always checked).
-  const elements = useElements();
+  const elements = usePhotoCharacters();
   const character = subjectMode === "character" ? elements.data?.find((e) => e.id === elementId) : undefined;
   // Models switched off in Settings → Models & licences leave the choices (Auto picks among the ones on).
   const access = useModelAccess();
   const choices: (string | undefined)[] = [undefined, ...keepOffered(PHOTODUMP_MODELS[engine], (m) => offered(access, m, engine))];
+  // The owner trains a character's Soul ID (Elements) for Fuobe Soul. A visitor's characters are its own photos: Fuobe
+  // Soul stays a choice, its press opens "My character" (pick one, or make one there), and the run line says which model
+  // makes the set from that character's photo.
+  const owner = useOwnsElements();
   const unavailable = (m?: string): string | null => {
     if (m !== PHOTODUMP_SOUL) return null;
     if (pack?.custom) return "Your own packs recreate each reference photo with an edit model";
+    if (!owner) return null;
     if (!character) return "Pick a trained character";
     return soulIdOf({ kind: "element", handle: character.handle, name: character.name, references: character.references, loras: character.loras }, engine) ? null : `${character.name} isn't trained yet`;
   };
@@ -221,7 +224,6 @@ export function PhotodumpView() {
   const product = "photo set";
 
   const generate = () => {
-    if (visitor) return;
     if (!body) return toast(subjectMode === "selfie" ? "Add your photo first" : "Pick a character first");
     run.mutate(body, {
       // The run line showed the model and its notes before Generate: no toast.
@@ -237,9 +239,8 @@ export function PhotodumpView() {
     <PageShell wide>
       <TabFromLink param="tab" ids={TAB_IDS} onTab={tabFromLink} />
       <PageHeader title="Photodump" description="A whole set of photos of you in one go, from one selfie or a saved character, in a pack of styles.">
-        <EngineSwitch value={engine} onChange={setEngine} selfHostedOnly />
+        <EngineSwitch value={engine} onChange={setEngine} />
       </PageHeader>
-      {visitor && <SelfHostNote className="-mt-3 mb-6 max-w-2xl">Photodump isn&apos;t available here.</SelfHostNote>}
       <div className="mb-6">
         <Steps steps={STEPS} current={step} reached={reached} onGo={go} />
       </div>
@@ -270,18 +271,15 @@ export function PhotodumpView() {
             </label>
           </div>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-            {/* A pack of your own is saved to the studio's library, which is its owner's. */}
-            {isOwner && (
-              <button
-                type="button"
-                onClick={() => setCreatingPack(true)}
-                className="flex aspect-[3/4] flex-col items-center justify-center gap-2 rounded-xl border border-dashed p-4 text-center text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-              >
-                <Plus className="size-6" />
-                <span className="text-[13.5px] font-medium">Create pack</span>
-                <span className="text-[12px]">From up to {MAX_PACK_REFS} reference photos</span>
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={() => askFirst(() => setCreatingPack(true))}
+              className="flex aspect-[3/4] flex-col items-center justify-center gap-2 rounded-xl border border-dashed p-4 text-center text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            >
+              <Plus className="size-6" />
+              <span className="text-[13.5px] font-medium">Create pack</span>
+              <span className="text-[12px]">From up to {MAX_PACK_REFS} reference photos</span>
+            </button>
             {shown.map((p) => {
               const sel = p.id === packId;
               return (
@@ -312,7 +310,7 @@ export function PhotodumpView() {
               );
             })}
           </div>
-          {!shown.length && <p className="py-10 text-center text-[14px] text-muted-foreground">{tab === "mine" && !needle ? (visitor ? "Saving packs of your own isn't available here." : "No packs of your own yet — create one from your reference photos.") : `No packs match “${q}”`}</p>}
+          {!shown.length && <p className="py-10 text-center text-[14px] text-muted-foreground">{tab === "mine" && !needle ? "No packs of your own yet — create one from your reference photos." : `No packs match “${q}”`}</p>}
           <div className="sticky bottom-[calc(var(--chrome-bottom)+0.75rem)] z-10 flex items-center justify-between gap-3 rounded-2xl border bg-background/95 p-3 shadow-normal backdrop-blur">
             <p className="min-w-0 truncate text-[13px]">{pack ? <><span className="font-medium">{pack.name}</span> · {pack.count} photos</> : <span className="text-muted-foreground">Pick a pack to continue</span>}</p>
             <Button disabled={!pack} onClick={() => go(1)}>
@@ -365,10 +363,7 @@ export function PhotodumpView() {
             </div>
             {subjectMode === "selfie" ? (
               <div className="space-y-2">
-                {/* A guest's or an account's selfie would be uploaded for a set that can't start here. */}
-                <div inert={visitor} className={cn(visitor && "opacity-50")}>
-                  <UploadBox value={selfie} onChange={setSelfie} title="Add your photo" hint="Use a clear, well-lit photo for best results." maxMb={MAX_SELFIE_MB} className="aspect-[4/3] max-h-[420px] w-full" />
-                </div>
+                <UploadBox value={selfie} onChange={setSelfie} title="Add your photo" hint="Use a clear, well-lit photo for best results." maxMb={MAX_SELFIE_MB} className="aspect-[4/3] max-h-[420px] w-full" />
                 <p className="text-[12px] text-muted-foreground">A clear, sharp photo of your face works best.</p>
               </div>
             ) : (
@@ -423,7 +418,11 @@ export function PhotodumpView() {
                       disabled={!!why}
                       title={why ?? undefined}
                       aria-label={why ? `${m ? MODEL_NAMES[m] : "Auto"} — ${why}` : undefined}
-                      onClick={() => setModelPick(m)}
+                      onClick={() => {
+                        setModelPick(m);
+                        // A visitor's Fuobe Soul starts from a character of its own: "My character" picks one or makes one.
+                        if (m === PHOTODUMP_SOUL && !owner && !pack.custom) setSubjectMode("character");
+                      }}
                       className={cn(
                         "h-8 rounded-full border px-2.5 text-[12.5px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40",
                         pick === m ? "border-primary bg-brand-faint text-brand-text" : "text-muted-foreground hover:bg-accent",
@@ -440,7 +439,7 @@ export function PhotodumpView() {
               <Button variant="outline" onClick={() => go(0)}>
                 <ArrowLeft /> Back
               </Button>
-              <Button className="flex-1" disabled={!body || run.isPending || !!preview.data?.error || visitor} onClick={generate}>
+              <Button className="flex-1" disabled={!body || run.isPending || !!preview.data?.error} onClick={generate}>
                 {run.isPending && <Loader2 className="animate-spin" />} Generate {pack.count}
               </Button>
             </div>

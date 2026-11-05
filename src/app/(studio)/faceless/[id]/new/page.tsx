@@ -1,17 +1,18 @@
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
 import { EpisodeWizard } from "@/components/faceless/episode-wizard";
 import { getModel } from "@/lib/catalog";
 import { pickerData } from "@/lib/catalog/faceless";
 import { facelessTopic } from "@/lib/starters/catalog";
-import { recordExists } from "@/server/records";
+import { recordFor } from "@/server/records";
 
 export const metadata: Metadata = { title: "New episode" };
 
 async function Wizard({ params, searchParams }: Pick<PageProps<"/faceless/[id]/new">, "params" | "searchParams">) {
   const { id } = await params;
-  if (!recordExists({ kind: "channel", ids: [id] })) notFound();
+  if (!recordFor({ kind: "channel", ids: [id] }, await headers())) notFound();
   // A ready channel (?starter=<id>) opens with its first episode's topic written in.
   const { starter } = await searchParams;
   const topic = facelessTopic(typeof starter === "string" ? starter : undefined);

@@ -87,7 +87,7 @@ describe("Character Swap Studio: the cloud, as a demo", () => {
     expect(created).toMatchObject({ name: "Rain scene", engine: "cloud", character: { image: hero } });
     expect(recordExists({ kind: "swap-project", ids: [id] })).toBe(true);
     expect(recordExists({ kind: "swap-project", ids: ["swap-nope"] })).toBe(false);
-    const list = await (await projects.GET()).json();
+    const list = await (await projects.GET(req("GET"))).json();
     expect(list.items[0]).toMatchObject({ id, clips: 0 });
 
     const p = await post(clips, id, { url: clip, name: "dance.mp4" });

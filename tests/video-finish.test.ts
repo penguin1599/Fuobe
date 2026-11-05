@@ -682,6 +682,16 @@ describe("demo mode", () => {
     expect(JSON.parse(sent.provider_input_json)).toMatchObject({ resolution: "1440p", sourceSize: { width: 1920, height: 1080 } });
   }, 40_000);
 
+  it("an upscaler's factor comes from the clip's own header, never from a size the request states", async () => {
+    // A clip whose header can't be read, and a request that says it is 640×360: the run gets no size from the request.
+    const video = saveFile({ data: Buffer.alloc(256, 7), contentType: "video/mp4", source: "upload" }).url;
+    const [g] = gens.createGenerations({ feature: "upscale", modelId: "topaz-video", op: "upscale-video", inputs: { video }, params: { resolution: "1440p", sourceSize: { width: 640, height: 360 } } });
+    await settled(g.id);
+    const sent = db().prepare("SELECT provider_input_json FROM generations WHERE id = ?").get(g.id) as { provider_input_json: string | null };
+    expect(sent.provider_input_json).toBeTruthy();
+    expect(JSON.parse(sent.provider_input_json!).sourceSize).toBeUndefined();
+  }, 40_000);
+
   it("an EXR export keeps its frames as a zip in the Library", async () => {
     const video = saveFile({ data: fs.readFileSync(path.join(process.cwd(), "public/samples/demo-square.mp4")), contentType: "video/mp4", source: "upload" }).url;
     const [g] = gens.createGenerations({ feature: "export-video", modelId: "oss-export-video", op: "export-video", inputs: { video }, params: { format: "exr", sourceDuration: 4 } });

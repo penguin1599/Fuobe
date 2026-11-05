@@ -20,7 +20,7 @@ const entry = (id: string) => manifest.workflows.find((w) => w.id === id)!;
 const graph = (id: string) => JSON.parse(fs.readFileSync(path.join(dir, `${id}.json`), "utf8")) as ComfyWorkflow;
 const IDS = Object.values(OPENJUTSU_WORKFLOWS);
 // Checked against a ComfyUI with the packs installed (validate-workflows.mjs).
-const CHECKED = new Set<string>(["video-group-swap-h3","video-scene-edit-h3","video-fix-faces-h3","video-fix-colours"]);
+const CHECKED = new Set<string>(["video-group-swap-h3","video-scene-edit-h3","video-fix-faces-h3","video-fix-colours","video-scene-describe","video-from-picture-solar","video-from-picture-h3","video-group-swap-h3-one-by-one"]);
 
 const PINS: Record<string, [string, string]> = {
   "ComfyUI-MiniMaxH3-Context-Loop": ["OJ_CONTEXT_LOOP_REF", "43afeffcc570beb5f7382593e79e4b211c7e02f6"],

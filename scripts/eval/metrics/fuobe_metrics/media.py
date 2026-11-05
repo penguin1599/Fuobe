@@ -119,3 +119,21 @@ def images_of(path: str | pathlib.Path, frames: int = 4) -> list[Image.Image]:
             arr = arr[np.linspace(0, len(arr) - 1, frames).astype(int)]
         return [Image.fromarray(a) for a in arr]
     return []
+
+
+def audio_channels(path: str | pathlib.Path, sr: int = 44100) -> np.ndarray | None:
+    """The sound with its channels kept (channels × samples, float32) at `sr` Hz, or None when there is none. Files with
+    more than 2 channels come back as they are; the separation metrics compare mono stems with their mono mean."""
+    r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=channels", "-of", "csv=p=0", str(path)], capture_output=True, text=True)
+    try:
+        channels = int((r.stdout or "").strip().splitlines()[0])
+    except (ValueError, IndexError):
+        channels = 0
+    if not channels:
+        return None
+    r = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-vn", "-ac", str(channels), "-ar", str(sr), "-f", "f32le", "-"], capture_output=True)
+    if r.returncode != 0 or not r.stdout:
+        return None
+    a = np.frombuffer(r.stdout, dtype="<f4")
+    n = len(a) // channels
+    return a[: n * channels].reshape(n, channels).T.copy()

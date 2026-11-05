@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { DEFAULT_MOTION, MAX_KEYS, PATH_FPS, PATH_FRAMES, PATH_PRESETS, keyLabel, type CameraKey } from "@/lib/camera-path";
 import { PATH_DURATIONS } from "@/lib/catalog/cinema";
+import { WORLDCAST_SECONDS } from "@/lib/catalog/worldcast-plan";
+import { WORLDCAST_RUN } from "@/lib/worldcast";
 import type { Engine } from "@/lib/catalog/types";
 import { cn } from "@/lib/utils";
 
@@ -106,10 +108,12 @@ export interface PathOptionsProps {
   onWords: (w: string) => void;
   notes: string[];
   disabled: boolean;
+  /** WorldCast films the path on the studio's worker (N7-9): its own length and shape. */
+  worldcast?: boolean;
 }
 
 /** The moves, the length and quality, the motion words and what will happen. */
-export function PathOptions({ engine, preset, onPreset, duration, onDuration, resolution, resolutions, onResolution, words, onWords, notes, disabled }: PathOptionsProps) {
+export function PathOptions({ engine, preset, onPreset, duration, onDuration, resolution, resolutions, onResolution, words, onWords, notes, disabled, worldcast }: PathOptionsProps) {
   const wordsId = useId();
   const open = engine === "open";
   return (
@@ -131,7 +135,14 @@ export function PathOptions({ engine, preset, onPreset, duration, onDuration, re
       </div>
       <div className="space-y-1.5">
         <p className="text-[12px] text-muted-foreground">Length</p>
-        {open ? (
+        {open && worldcast ? (
+          <p className="text-[13px]">
+            About {WORLDCAST_SECONDS} s{" "}
+            <span className="text-muted-foreground">
+              · portrait {WORLDCAST_RUN.width} × {WORLDCAST_RUN.height}, {WORLDCAST_RUN.frames} frames at {WORLDCAST_RUN.fps} fps with WorldCast
+            </span>
+          </p>
+        ) : open ? (
           <p className="text-[13px]">
             About {OPEN_SECONDS} s <span className="text-muted-foreground">· {PATH_FRAMES} frames at {PATH_FPS} fps on your GPU</span>
           </p>

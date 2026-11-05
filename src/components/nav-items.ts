@@ -42,6 +42,7 @@ const GROUPS: { label: string; ids: string[]; collapsible?: boolean }[] = [
       "mixed-media",
       "marketing",
       "ads",
+      "kinetic",
       "moodboards",
       "photodump",
       "fashion-factory",

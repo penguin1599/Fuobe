@@ -1,0 +1,40 @@
+{
+  "id": "fuobe-old-phone",
+  "name": "Fuobe old phone",
+  "kind": "style",
+  "base": "z-image-turbo",
+  "media": "image",
+  "presets": [
+    "Old smartphone"
+  ],
+  "trigger": "fboldphone",
+  "dataset": {
+    "min": 60,
+    "max": 120,
+    "what": "Photos taken on real 2005-2012 camera phones Fuobe owns, or licensed with AI-training rights.",
+    "captions": [
+      "Every caption starts with \"fboldphone style, \" and goes on in one or two long sentences (Z-Image style): who or what is in the picture, where, the light and the framing.",
+      "Describe the scene, never the look the LoRA learns (no \"grainy\", \"film look\" or the like), so the trigger carries it.",
+      "No names of people, places that identify someone, brands, camera models or photographers."
+    ]
+  },
+  "train": {
+    "steps": 1500,
+    "rank": 16,
+    "learningRate": 0.0001
+  },
+  "routes": {
+    "fal": {
+      "trainer": "fal-ai/z-image-turbo-trainer-v2"
+    },
+    "aiToolkit": {
+      "arch": "zimage:turbo"
+    }
+  },
+  "target": {
+    "file": "fuobe-old-phone.safetensors",
+    "strength": 0.8,
+    "hfRepo": "fuobe/fuobe-old-phone"
+  },
+  "notes": "A second option for the iPhone and DigitalCam looks once it is trained."
+}

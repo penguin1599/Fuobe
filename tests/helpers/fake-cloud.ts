@@ -31,6 +31,11 @@ export interface FakeCloud {
   holdSubmits: Promise<void> | null;
   /** The jobs it was asked to cancel. */
   canceled: string[];
+  /**
+   * Answers a request before anything else when it returns one (busy, down, a model it doesn't have, an input it
+   * refuses): its status, body and headers. Null or undefined: the request goes on as usual.
+   */
+  script: ((r: CloudRequest) => { status: number; body?: unknown; headers?: Record<string, string> } | null | undefined) | null;
   close(): Promise<void>;
 }
 
@@ -44,13 +49,18 @@ const json = (res: http.ServerResponse, status: number, body: unknown) => {
 };
 
 async function start(handle: (fake: FakeCloud, req: CloudRequest, res: http.ServerResponse, key: string | null) => Promise<void> | void, scheme: "Key" | "Bearer", port = 0): Promise<FakeCloud> {
-  const fake = { log: [], keys: {}, pollsToFinish: 2, holdSubmits: null, canceled: [] } as unknown as FakeCloud;
+  const fake = { log: [], keys: {}, pollsToFinish: 2, holdSubmits: null, canceled: [], script: null } as unknown as FakeCloud;
   const server = http.createServer((req, res) => {
     const chunks: Buffer[] = [];
     req.on("data", (c: Buffer) => chunks.push(c));
     req.on("end", () => {
       const r: CloudRequest = { method: req.method ?? "GET", path: req.url ?? "/", authorization: req.headers.authorization, body: Buffer.concat(chunks).toString("latin1") };
       fake.log.push(r);
+      const said = fake.script?.(r);
+      if (said) {
+        res.writeHead(said.status, { "Content-Type": "application/json", ...said.headers });
+        return res.end(typeof said.body === "string" ? said.body : JSON.stringify(said.body ?? {}));
+      }
       const m = new RegExp(`^${scheme} (.+)$`).exec(r.authorization ?? "");
       Promise.resolve(handle(fake, r, res, m ? m[1] : null)).catch((e) => json(res, 500, { detail: String(e) }));
     });

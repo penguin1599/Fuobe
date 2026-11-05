@@ -55,3 +55,6 @@ __pycache__/
 
 # The worker's built parts (scripts/build-worker.mjs)
 /bin/lib/worker/dist/
+
+# The training kit's job configs (scripts/train/kit.mjs job)
+/.train/

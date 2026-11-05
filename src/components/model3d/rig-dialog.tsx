@@ -3,15 +3,15 @@
 import { Loader2, PersonStanding } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { OwnSetupNote } from "@/components/own-setup";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectSeparator, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { useCreateGeneration } from "@/lib/api";
-import { ANIMATION_LIBRARY_URL, ANIMATION_MAX, ANIMATION_PRESETS, animationId, rigRequest } from "@/lib/av/model3d";
+import { ANIMATION_LIBRARY_URL, ANIMATION_MAX, ANIMATION_PRESETS, animationId, MODEL3D_KEY, rigRequest } from "@/lib/av/model3d";
 import { toastError } from "@/lib/refusals";
-import { priceLine, useRunPreview } from "./hooks";
+import { priceLine, useCreate3d, useRunPreview } from "./hooks";
 
 const NONE = "none";
 const NUMBER = "number";
@@ -20,8 +20,21 @@ const NUMBER = "number";
  * Rig & animate a finished model: Meshy adds a skeleton and walk / run cycles; an animation preset makes the
  * animated GLB the card plays. Cloud only (fal.ai): UniRig, the open rigger, has no verified ComfyUI pack.
  */
-export function RigDialog({ glb, open, onOpenChange, cloudAllowed }: { glb: string; open: boolean; onOpenChange: (v: boolean) => void; cloudAllowed: boolean }) {
-  const create = useCreateGeneration();
+export function RigDialog({
+  glb,
+  open,
+  onOpenChange,
+  cloudAllowed,
+  keyInstead,
+}: {
+  glb: string;
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  cloudAllowed: boolean;
+  /** A visitor on open models only: it runs with its own fal.ai key, and says so (own-setup.ts). */
+  keyInstead?: boolean;
+}) {
+  const create = useCreate3d();
   const [pick, setPick] = useState<string>("30");
   const [typed, setTyped] = useState("");
   const animation = pick === NONE ? null : pick === NUMBER ? animationId(typed) : Number(pick);
@@ -50,9 +63,15 @@ export function RigDialog({ glb, open, onOpenChange, cloudAllowed }: { glb: stri
           </DialogDescription>
         </DialogHeader>
         {!cloudAllowed ? (
-          <p className="rounded-xl bg-muted p-3 text-[13px] text-muted-foreground" role="note">
-            Rigging runs on a cloud model, which isn&apos;t available here.
-          </p>
+          keyInstead ? (
+            <OwnSetupNote setup={MODEL3D_KEY} onOpen={() => onOpenChange(false)}>
+              Rigging runs on Meshy, a cloud model, with your own fal.ai key. You pay fal.ai directly.
+            </OwnSetupNote>
+          ) : (
+            <p className="rounded-xl bg-muted p-3 text-[13px] text-muted-foreground" role="note">
+              Rigging runs on Meshy, a cloud model: turn on paid models in Settings → Engine mode.
+            </p>
+          )
         ) : (
           <div className="grid gap-3">
             <div className="grid gap-1.5">

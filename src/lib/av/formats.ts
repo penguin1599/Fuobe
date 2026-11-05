@@ -18,6 +18,7 @@ export const FORMAT_INFO: Record<VideoFormat, { label: string; short: string; hi
   exr: { label: "EXR frames, 16-bit", short: "EXR 16-bit", hint: "Uncompressed frame sequence for compositing, zipped. Largest files.", ext: "zip" },
   hlg_10bit: { label: "HLG, 10-bit MP4", short: "HLG 10-bit", hint: "BT.2020 HLG: looks right on SDR screens too, and brighter on HDR ones.", ext: "mp4" },
   pq_10bit: { label: "HDR10 (PQ), 10-bit MP4", short: "HDR10 (PQ)", hint: "BT.2020 with the PQ curve of HDR10, in H.264: for HDR displays.", ext: "mp4" },
+  webm_alpha: { label: "Transparent WebM", short: "WebM", hint: "Plays in browsers and most editors, with real transparency. Small files.", ext: "webm" },
 };
 
 /** The formats offered across `models` (the studio's models on one engine), in their catalog order. */

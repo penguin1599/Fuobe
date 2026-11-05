@@ -1,4 +1,5 @@
 import { exrWorkflow } from "@/lib/av/video-finish";
+import { idolViewsGraph } from "@/lib/av/idol-views";
 import { qwen21Graph } from "@/lib/qwen21-speed";
 import { H3_TIER_PARAM, tierGraphFor } from "@/lib/gpu/h3-tier";
 
@@ -27,6 +28,23 @@ export const H3_BEST_GRAPH: Record<string, string> = {
   "minimax-h3-i2v": "minimax-h3-i2v-hq",
   "minimax-h3-flf2v": "minimax-h3-flf2v-hq",
 };
+
+/**
+ * MiniMax H3's Quality control: "flex" runs Pika H3 Flex (Pika's post-trained adapter, 6 steps, no other speed LoRA). Its
+ * references mode is a route of its own (ref2v: minimax-h3-flex-ref2va), whatever the quality.
+ */
+export const H3_FLEX_GRAPH: Record<string, string> = {
+  "minimax-h3-t2v": "minimax-h3-flex-t2v",
+  "minimax-h3-i2v": "minimax-h3-flex-i2v",
+  "minimax-h3-flf2v": "minimax-h3-flex-flf2v",
+};
+
+/**
+ * MiniMax H3 at 2K on your GPU (n7-10): the text-to-video draft that keeps its 768p latent (params.extra.latentDraft), and
+ * Regenerate's finish that starts from that latent (params.extra.latentFrom, the draft run's id) instead of the clip.
+ */
+export const H3_LATENT_DRAFT_GRAPH: Record<string, string> = { "minimax-h3-t2v": "video-h3-t2v-2k" };
+export const REGEN_LATENT_GRAPH: Record<string, string> = { "video-regenerate-h3": "video-regenerate-h3-latent" };
 
 /** MiniMax H3's 360-degree orbit of a still (params.extra.orbit): the Orbit LoRA graph, with the still as first and last frame. */
 export const H3_ORBIT_GRAPH: Record<string, string> = { "minimax-h3-i2v": "minimax-h3-orbit" };
@@ -98,15 +116,26 @@ export function resolveWorkflowId(endpointTemplate: string, r: VariantRequest): 
   if (shot && r.extra.productShot === true && r.images === 1 && r.has(shot)) endpoint = shot;
   // Qwen-Image 2.1: Options → Speed's graph, or the small encoder's when Options → GPU says Small (src/lib/qwen21-speed.ts).
   endpoint = qwen21Graph(endpoint, r.extra, r.has);
-  // MiniMax H3: an orbit runs the Orbit LoRA graph (whatever the quality or tier); else a smaller card's tier (FastH3 V2 or Trim,
-  // as the plan decided it: src/server/h3-gpu.ts), which wins over Best; else Best runs the 20-step graph.
+  // MiniMax H3: an orbit runs the Orbit LoRA graph (whatever the quality or tier). Else Quality → Fast · Pika Flex runs its
+  // 6-step graph: Pika's bf16 adapters ride on the full fl2va int8 model, so Flex is the full model's alone, and it wins over a
+  // smaller card's tier. The plan sees to it that the two never meet here by chance (src/server/h3-gpu.ts): Flex with Auto keeps
+  // the full model (the GPU pre-flight then judges the card), and Flex with FastH3 V2 or Trim picked in Options → GPU tier is
+  // refused with a plain message, never run as either one alone. Else a smaller card's tier (FastH3 V2 or Trim, as the plan
+  // decided it), which wins over Best; else Best runs the 20-step graph.
   const orbit = H3_ORBIT_GRAPH[endpoint];
   const best = H3_BEST_GRAPH[endpoint];
   const tier = r.extra[H3_TIER_PARAM];
   const small = tier === "fast" || tier === "trim" ? tierGraphFor(endpoint, tier, r.has) : undefined;
-  if (orbit && r.extra.orbit === true && r.has(orbit)) endpoint = orbit;
+  const flex = H3_FLEX_GRAPH[endpoint];
+  const latentDraft = H3_LATENT_DRAFT_GRAPH[endpoint];
+  // The 2K tier's text-to-video draft that keeps its latent (never a Flex take's: h3TwoKRequests drafts that on Flex's graph).
+  if (latentDraft && r.extra.latentDraft === true && r.has(latentDraft)) endpoint = latentDraft;
+  else if (orbit && r.extra.orbit === true && r.has(orbit)) endpoint = orbit;
+  else if (flex && r.extra.quality === "flex" && r.has(flex)) endpoint = flex;
   else if (small) endpoint = small;
   else if (best && r.extra.quality === "best" && r.has(best)) endpoint = best;
+  const fromLatent = REGEN_LATENT_GRAPH[endpoint];
+  if (fromLatent && typeof r.extra.latentFrom === "string" && r.extra.latentFrom && r.has(fromLatent)) endpoint = fromLatent;
   const oj = OPENJUTSU_VARIANTS[endpoint];
   const ojSettings = r.extra.openjutsu as Record<string, unknown> | undefined;
   if (oj && ojSettings?.[oj.key] === oj.value && r.has(oj.graph)) endpoint = oj.graph;
@@ -118,5 +147,6 @@ export function resolveWorkflowId(endpointTemplate: string, r: VariantRequest): 
   if (bed && r.extra.background === "keep" && r.has(bed)) endpoint = bed;
   const brush = WATERMARK_BRUSH_GRAPH[endpoint];
   if (brush && r.mask && r.has(brush)) endpoint = brush;
-  return endpoint;
+  // Idol 3D's four views ("Make the other sides from the front"): the view graph, which needs the ComfyUI-Idol pack.
+  return idolViewsGraph(endpoint, r.extra, r.has);
 }

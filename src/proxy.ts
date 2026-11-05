@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { APPS } from "@/lib/catalog/apps";
-import { modeHref, type HubKind } from "@/lib/hubs";
+import { FORMER_HOME, modeHref, type HubKind } from "@/lib/hubs";
 import { hiddenStarterPage, recordForPath, unknownHubMode, unknownStarterPage } from "@/lib/record-pages";
 import { countsAsView, SHARE_VIEW_HEADER, shareRoute } from "@/lib/share";
 import {
@@ -11,6 +11,7 @@ import {
   liveRoute,
   accountMayChange,
   accountOwnRead,
+  accountProjectRoute,
   anyoneMayReport,
   ASSIST_OWNER_MESSAGE,
   CONNECT_GPU_HEADER,
@@ -30,7 +31,7 @@ import {
 import { ADMIN_BEARER, authEnabled, crossSite, hasCloudKey, hostAllowed, LoginGuard, publicSignup, sessionCookieOf, sessionViewer, validSession, validToken, type Account, type Viewer } from "@/server/auth";
 import { fileAccount, generationAccount } from "@/server/account-library";
 import { hit } from "@/server/rate";
-import { recordExists } from "@/server/records";
+import { accountRecordExists, installRecordExists } from "@/server/records";
 import { findShare, shareGuard, shareTargetExists } from "@/server/share-access";
 import { hostedRunsOn } from "@/server/hosted-switch";
 import { authStoreFailed } from "@/server/auth-store";
@@ -71,8 +72,9 @@ function pass(request: NextRequest): NextResponse {
   const { pathname } = request.nextUrl;
   const app = /^\/apps\/([^/]+)\/?$/.exec(pathname)?.[1];
   if ((app && !APP_IDS.has(safeDecode(app))) || unknownHubMode(pathname) || unknownStarterPage(pathname)) return notFound(request);
+  // The owner's and a guest's rule: an account's row in a tool's shared table is never theirs to open.
   const record = recordForPath(pathname);
-  if (record && !recordExists(record)) return notFound(request);
+  if (record && !installRecordExists(record)) return notFound(request);
   return NextResponse.next();
 }
 
@@ -214,7 +216,7 @@ function guest(request: NextRequest): NextResponse {
   if (isAssistChange(method, pathname)) return assistOwner();
   if (anyoneMayReport(method, pathname)) return pass(request);
   // What an account may send, the library, the owner's settings and the studios' runs: signing up is the next step.
-  if (!accountMayChange(method, pathname, search) && !isLibraryChange(method, pathname) && !ownerOnly(method, pathname) && !ownGpuRun(method, pathname)) return ownGpuTool();
+  if (!accountMayChange(method, pathname, search) && !isLibraryChange(method, pathname) && !ownerOnly(method, pathname) && !ownGpuRun(method, pathname) && !accountProjectRoute(pathname)) return ownGpuTool();
   return NextResponse.json({ error: GUEST_RUN_MESSAGE }, { status: 401, headers: guestHeaders });
 }
 
@@ -272,6 +274,12 @@ function account(request: NextRequest, who: Account): NextResponse {
   if (gen !== undefined) return generationAccount(gen) === who.id ? pass(request) : notYours();
   const file = request.method === "GET" || request.method === "HEAD" ? /^\/api\/files\/(.+)$/.exec(pathname)?.[1] : undefined;
   if (file !== undefined) return fileAccount(safeDecode(file)) === who.id ? pass(request) : notYours();
+  // A tool's projects, kept per account: the route answers with its own only.
+  if (accountProjectRoute(pathname)) return pass(request);
+  // A tool's page for one of them (/shorts/<id>): its own, else a real 404 (never the owner's or another account's).
+  const record = request.method === "GET" || request.method === "HEAD" ? recordForPath(pathname) : null;
+  const own = record ? accountRecordExists(record, who.id) : null;
+  if (own !== null) return own ? NextResponse.next() : notFound(request);
   if (request.method === "GET" || request.method === "HEAD") return accountOwnRead(pathname) ? pass(request) : readAsGuest(request, true);
   if (isPriceCheck(request.method, pathname, search)) return priceCheck(request, `account:${who.id}`);
   if (accountMayChange(request.method, pathname, search)) return pass(request);
@@ -328,14 +336,22 @@ function openShare(request: NextRequest, token: string, file: boolean): NextResp
 
 /**
  * An old `/audio?mode=music` link (any case: ?mode=Music too): that mode's own page, without the mode in its query.
- * An unknown mode lands on the hub's 404 (unknownHubMode).
+ * An unknown mode lands on the hub's 404 (unknownHubMode). An old link to the mode the hub opened on before, known by
+ * the params only that mode reads (`/audio?voice=…` is Speech's, FORMER_HOME), opens that mode with its whole query.
  */
 function hubModeLink(request: NextRequest): URL | null {
   const kind = /^\/(audio|video-tools|upscale)\/?$/.exec(request.nextUrl.pathname)?.[1] as HubKind | undefined;
-  const mode = kind && request.nextUrl.searchParams.get("mode")?.trim().toLowerCase();
+  const sp = request.nextUrl.searchParams;
+  const former = kind ? FORMER_HOME[kind] : undefined;
+  if (kind && former && !sp.has("mode") && former.params.some((k) => sp.has(k))) {
+    const url = new URL(modeHref(kind, former.mode), request.url);
+    url.search = request.nextUrl.search;
+    return url;
+  }
+  const mode = kind && sp.get("mode")?.trim().toLowerCase();
   if (!kind || !mode || !/^[a-z0-9-]+$/.test(mode)) return null;
   const url = new URL(modeHref(kind, mode), request.url);
-  for (const [k, v] of request.nextUrl.searchParams) if (k !== "mode") url.searchParams.append(k, v);
+  for (const [k, v] of sp) if (k !== "mode") url.searchParams.append(k, v);
   return url;
 }
 

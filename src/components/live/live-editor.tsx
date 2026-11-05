@@ -1675,8 +1675,8 @@ export function LiveSetup({ facts, computer }: { facts: LiveFacts; computer: boo
           )}
           <li className="rounded-xl border p-3.5 text-muted-foreground">
             Restart ComfyUI{facts.highvram === false ? " with --highvram (live frames take about twice as long without it)" : ""}, then reload this page.{" "}
-            <Link href={computer ? "/settings" : "/workflows"} className="font-medium text-brand-text hover:underline">
-              {computer ? "Your GPU" : "Workflows and models"}
+            <Link href={computer ? "/settings" : "/connect"} className="font-medium text-brand-text hover:underline">
+              {computer ? "Your GPU" : "Check your GPU"}
             </Link>
           </li>
         </ol>

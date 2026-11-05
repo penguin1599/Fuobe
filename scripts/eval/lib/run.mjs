@@ -266,6 +266,7 @@ export async function runEval(opts, io) {
     filters,
     variants: summary.variants,
     ...(suite.defaults.candidate && { candidate: suite.defaults.candidate }),
+    ...(suite.defaults.styleModel && { styleModel: suite.defaults.styleModel }),
     variantInfo: Object.fromEntries(summary.variants.map((v) => [v, suite.variants?.[v]?.description ?? ""])),
     maxUsd: Number.isFinite(maxUsd) ? maxUsd : null,
     estimateUsd: estimate,
@@ -459,7 +460,10 @@ async function price(client, job, inputs, ctx) {
     const route = job.submit.estimate === false ? null : (job.submit.estimate ?? `${job.submit.route}/estimate`);
     if (!route) return { studio: true, costUsd: null, demo: ctx.engine === "demo", modelId: job.model.id };
     const e = await client.request("POST", route, { json: body });
-    return { studio: true, costUsd: e.costUsd ?? e.totalUsd ?? null, demo: e.demo ?? ctx.engine === "demo", modelId: e.modelId ?? job.model.id, ...(e.modelName && { modelName: e.modelName }), ...(Array.isArray(e.providers) && { providers: e.providers }), notes: e.notes };
+    // A saved skill's estimate (RecipeEstimate, from pnpm eval:from-skill's cases): its total, or why it can't run.
+    if (Array.isArray(e.runs) && e.runnable === false) throw new Error([...(e.errors ?? []), ...e.runs.flatMap((r) => r.errors ?? [])][0] ?? "it can't run");
+    const skillTotal = Array.isArray(e.runs) ? e.total : undefined;
+    return { studio: true, costUsd: e.costUsd ?? e.totalUsd ?? skillTotal ?? null, demo: e.demo ?? ctx.engine === "demo", modelId: e.modelId ?? job.model.id, ...(e.modelName && { modelName: e.modelName }), ...(Array.isArray(e.providers) && { providers: e.providers }), notes: e.notes };
   }
   const p = await client.request("POST", "/api/generations", { json: { ...job.request, inputs }, query: { preview: 1 } });
   return { ...p, ...(p.model?.id && { modelId: p.model.id, modelName: p.model.name }) };
@@ -643,13 +647,13 @@ async function download(client, gens, folder, runFolder) {
         const dest = path.join(folder, `${n}${role}.txt`);
         fs.mkdirSync(folder, { recursive: true });
         fs.writeFileSync(dest, o.text);
-        files.push({ file: path.relative(runFolder, dest), kind: "text", generationId: g.id, bytes: Buffer.byteLength(o.text) });
+        files.push({ file: path.relative(runFolder, dest), kind: "text", generationId: g.id, bytes: Buffer.byteLength(o.text), ...(o.meta?.role && { role: o.meta.role }) });
         continue;
       }
       const ext = /^\.[a-z\d]{1,10}$/i.exec(path.extname(new URL(o.url, "http://x").pathname))?.[0] ?? ".bin";
       const dest = path.join(folder, `${n}${role}${ext}`);
       const bytes = await client.download(o.url, dest);
-      files.push({ file: path.relative(runFolder, dest), url: o.url, kind: o.kind, contentType: o.contentType ?? null, generationId: g.id, bytes, ...(o.meta?.role && { role: o.meta.role }), ...(o.meta?.demo && { demo: true }) });
+      files.push({ file: path.relative(runFolder, dest), url: o.url, kind: o.kind, contentType: o.contentType ?? null, generationId: g.id, bytes, ...(o.meta?.role && { role: o.meta.role }), ...(o.meta?.stem && { stem: o.meta.stem }), ...(o.meta?.demo && { demo: true }) });
     }
   }
   return files;

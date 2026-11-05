@@ -1,0 +1,47 @@
+{
+  "id": "fuobe-drone-reveal",
+  "name": "Fuobe drone reveal",
+  "kind": "motion",
+  "base": "wan2.2-i2v-a14b",
+  "media": "video",
+  "presets": [
+    "Drone Reveal",
+    "Helicopter Shot",
+    "Flying"
+  ],
+  "trigger": "fbdronereveal",
+  "dataset": {
+    "min": 30,
+    "max": 60,
+    "what": "Own drone clips flown where flying is allowed: a rising or forward reveal over a landscape or a building; no people who did not sign a release.",
+    "captions": [
+      "Every caption starts with \"fbdronereveal, \" then says \"aerial drone rising reveal\" or \"aerial drone forward reveal\" in the same words each time, then what is in the first frame.",
+      "One sentence for what moves and one for what stays still; no text, logos or names."
+    ],
+    "clipSeconds": [
+      2,
+      5
+    ],
+    "fps": 16
+  },
+  "train": {
+    "steps": 800,
+    "rank": 32,
+    "learningRate": 0.0002
+  },
+  "routes": {
+    "fal": {
+      "trainer": "fal-ai/wan-22-trainer/i2v-a14b"
+    },
+    "aiToolkit": {
+      "arch": "wan22_14b_i2v"
+    }
+  },
+  "target": {
+    "file": "fuobe-drone-reveal.safetensors",
+    "strength": 1.0,
+    "loraTarget": "both",
+    "hfRepo": "fuobe/fuobe-drone-reveal"
+  },
+  "notes": "DroneShot and Set Reveal forbid selling outputs, so the move runs on words until this is trained."
+}

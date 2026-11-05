@@ -13,12 +13,13 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { useToday } from "@/hooks/use-today";
 import type { Badge as BadgeT } from "@/lib/gpu/types";
 import { type Engine, type ModelDef, type Operation } from "@/lib/catalog/types";
-import { useEngineMode, useStatus } from "@/lib/api";
+import { askToSignUp, useEngineMode, useStatus } from "@/lib/api";
 import { groupModels, studioBest, toggleIn } from "@/lib/composer";
 import { readsBoxes } from "@/lib/layout-prompt";
 import { pickerPrice } from "@/lib/model-rows";
 import { cn } from "@/lib/utils";
-import { addKeyLabel, billedTo, CLOUD_KEY, needsKey, type CloudProvider } from "@/lib/your-keys";
+import { ownSetupLabel } from "@/lib/own-setup";
+import { addKeyLabel, billedTo, CLOUD_KEY, CLOUD_PROVIDERS, needsKey, type CloudProvider } from "@/lib/your-keys";
 import { EngineSwitch } from "./engine-switch";
 import { ResponsivePanel } from "./responsive-panel";
 import { RECENT_MODELS, STARRED_MODELS, useStoredList } from "./stored-list";
@@ -90,6 +91,7 @@ function ModelRow({
   needs,
   made,
   edits,
+  guest,
 }: {
   m: ModelDef;
   selected: boolean;
@@ -105,6 +107,8 @@ function ModelRow({
   gpuName?: string;
   /** An account's paid model it has no key for yet: dimmed, "Add your fal.ai key" in place of the price. */
   needs?: CloudProvider[] | null;
+  /** A guest: the same row says "Use your own fal.ai key" (choosing it offers a free account first). */
+  guest?: boolean;
   /** The active preset's live preview was made with this model. */
   made?: boolean;
   /** The studio edits clips (Edit video): the price is an edit's, on the seconds in and out (Kling 4.0). */
@@ -152,8 +156,8 @@ function ModelRow({
       {needs ? (
         // On a phone the short words, so the model's name keeps its room.
         <span className="shrink-0 text-right text-[11px] font-medium text-brand-text">
-          <span className="sm:hidden">Add key</span>
-          <span className="max-sm:hidden">{addKeyLabel(needs[0])}</span>
+          <span className="sm:hidden">{guest ? "Your key" : "Add key"}</span>
+          <span className="max-sm:hidden">{guest ? ownSetupLabel({ need: "key", provider: needs[0] }) : addKeyLabel(needs[0])}</span>
         </span>
       ) : (
         <span className="shrink-0 text-right text-[11px] text-muted-foreground tabular-nums">{pickerPrice(m, today, edits)}</span>
@@ -320,15 +324,28 @@ function PickerList({
   const viewer = status?.viewer?.kind === "account" ? status.viewer : null;
   const keys = viewer ? (viewer.keys ?? []) : null;
   const payer = keys?.length && engine === "cloud" ? keys : null;
-  // With no key yet it is on open models only: a search lists the paid models it matches too (dimmed), so "nano
-  // banana" finds Nano Banana and the way to run it.
-  const keyless = !!viewer && !keys?.length && viewer.paidAllowed !== false;
+  // A guest sees them as an account without a key does; choosing one offers a free account first.
+  const guest = status?.viewer?.kind === "guest" && status.viewer.paidAllowed !== false;
+  // With no key yet it is on open models only: the paid models follow, dimmed (a search lists the ones it matches), so
+  // every model shows, with the way to run it.
+  const keyless = (!!viewer && !keys?.length && viewer.paidAllowed !== false) || guest;
   const paid = useMemo(
-    () => (keyless && q.trim() && !engines.includes("cloud") ? (groupModels({ models, engine: "cloud", engines: ["cloud"], query: q, recent: [], starred: [], best: [] }).groups[0]?.models ?? []) : []),
+    () => (keyless && !engines.includes("cloud") ? (groupModels({ models, engine: "cloud", engines: ["cloud"], query: q, recent: [], starred: [], best: [] }).groups[0]?.models ?? []) : []),
     [keyless, q, engines, models],
   );
   const listed = paid.length ? [...groups, { id: "paid" as const, label: "Paid models · with your own key", models: paid }] : groups;
+  // The key a paid row needs: an account's (needsKey), or for a guest the providers that serve it.
+  const rowNeeds = (m: ModelDef): CloudProvider[] | null => {
+    if (!guest) return needsKey(m, status);
+    if (m.engine === "open") return null;
+    const served = CLOUD_PROVIDERS.filter((p) => m.routes.some((r) => r.provider === p));
+    return served.length ? served : null;
+  };
   const pick = (m: ModelDef) => {
+    if (guest && rowNeeds(m)) {
+      onPicked();
+      return askToSignUp("run");
+    }
     const needs = needsKey(m, status);
     if (needs && onNeedsKey) return onNeedsKey(m, needs[0]);
     onChange(m);
@@ -367,9 +384,22 @@ function PickerList({
               <span aria-hidden>·</span>
               <span className="min-w-0">
                 Paid models like Nano Banana and Kling need your own fal.ai or Replicate key ·{" "}
-                <button type="button" onClick={addKey} className="text-brand-text underline underline-offset-2">
-                  Add a key
-                </button>
+                {guest ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onPicked();
+                      askToSignUp("run");
+                    }}
+                    className="text-brand-text underline underline-offset-2"
+                  >
+                    Create a free account
+                  </button>
+                ) : (
+                  <button type="button" onClick={addKey} className="text-brand-text underline underline-offset-2">
+                    Add a key
+                  </button>
+                )}
               </span>
             </>
           )
@@ -398,7 +428,7 @@ function PickerList({
                 value={`${g.id}:${m.id}`}
                 onSelect={() => pick(m)}
                 data-checked={value?.id === m.id}
-                aria-label={needsKey(m, status) ? `${m.name} needs your ${CLOUD_KEY[needsKey(m, status)![0]].label} key` : undefined}
+                aria-label={rowNeeds(m) ? `${m.name} needs your ${CLOUD_KEY[rowNeeds(m)![0]].label} key` : undefined}
                 className={cn("gap-2.5 rounded-lg px-2 py-1.5 [&>svg:last-child]:hidden", value?.id === m.id && "bg-brand-faint data-selected:bg-brand-faint-hover")}
               >
                 <ModelRow
@@ -411,7 +441,8 @@ function PickerList({
                   onStar={() => setStarred((s) => toggleIn(s, m.id))}
                   gpu={m.engine === "open" ? badgeFor(badges, { modelId: m.id }) : null}
                   gpuName={badges?.gpu}
-                  needs={needsKey(m, status)}
+                  needs={rowNeeds(m)}
+                  guest={guest}
                   made={m.id === madeWith}
                   edits={editsClips}
                 />

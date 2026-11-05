@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { directorSummary, moveBySlug, type CinemaProject, type DirectorMessage, type DirectorSettings, type DirectorShot } from "@/lib/catalog/cinema";
 import { onAttr, TAB_PILL, TabRow } from "@/components/ui/tab-row";
+import { useIsOwner } from "@/lib/api";
 import { toastError } from "@/lib/refusals";
 import { useAutosave, useDirectorChat, useUpdateProject } from "./hooks";
 
@@ -44,6 +45,8 @@ function ShotCard({ shot, onLoad }: { shot: DirectorShot; onLoad: (s: DirectorSh
 }
 
 function Message({ m, onLoad, onBrief }: { m: DirectorMessage; onLoad: (s: DirectorShot) => void; onBrief: (b: string) => void }) {
+  // Connecting an AI helper is the owner's (Settings): nobody else is told about it.
+  const owner = useIsOwner();
   if (m.role === "user")
     return (
       <div className="flex justify-end">
@@ -58,7 +61,7 @@ function Message({ m, onLoad, onBrief }: { m: DirectorMessage; onLoad: (s: Direc
         </span>
         <div className="min-w-0 flex-1">
           <p className="text-[13.5px] leading-relaxed whitespace-pre-wrap">{m.text}</p>
-          {m.source === "offline" && <p className="mt-0.5 text-[11px] text-muted-foreground">Offline breakdown — connect Claude or a local model (Ollama, LM Studio or Unsloth Studio) in Settings for a smarter Director.</p>}
+          {m.source === "offline" && owner && <p className="mt-0.5 text-[11px] text-muted-foreground">Offline breakdown — connect Claude or a local model (Ollama, LM Studio or Unsloth Studio) in Settings for a smarter Director.</p>}
         </div>
       </div>
       {m.brief && (
@@ -83,6 +86,8 @@ function Message({ m, onLoad, onBrief }: { m: DirectorMessage; onLoad: (s: Direc
 
 function DirectorChat({ projectId, onLoadShot, onBrief, promptText }: { projectId: string; onLoadShot: (s: DirectorShot) => void; onBrief: (b: string) => void; promptText: string }) {
   const { messages, ask, clear } = useDirectorChat(projectId);
+  // Only the owner's Director can use an AI helper (a visitor's writes its breakdown without one).
+  const owner = useIsOwner();
   const [text, setText] = useState("");
   const end = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -163,7 +168,7 @@ function DirectorChat({ projectId, onLoadShot, onBrief, promptText }: { projectI
             </Button>
           </div>
         </div>
-        <p className="px-1 pt-1.5 text-[10.5px] text-muted-foreground">LLMs can make mistakes. The Director only proposes: nothing runs and nothing is spent until you press Generate.</p>
+        <p className="px-1 pt-1.5 text-[10.5px] text-muted-foreground">{owner && "LLMs can make mistakes. "}The Director only proposes: nothing runs and nothing is spent until you press Generate.</p>
       </div>
     </div>
   );

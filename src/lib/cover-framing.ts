@@ -37,6 +37,8 @@ export const COVER_FRAMING: Record<string, CoverFraming> = {
   "app-outfit-swap": { focus: "85% 25%" },
   "app-character-swap": { focus: "85% 25%" },
   "app-ai-influencer": { focus: "13% 25%" },
+  // Kinetic Motion's square tile: the whole title at the left, with the model beside it.
+  "kinetic-runway-titles": { focus: "0% 50%" },
 };
 
 /** The preset id of a preset cover's URL: its poster, peak frame or small copy (with or without its version). */

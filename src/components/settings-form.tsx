@@ -6,7 +6,7 @@ import Link from "next/link";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { ConnectChoice, OwnerComfyWhere } from "@/components/gpu/connect-choice";
+import { ConnectChoice, OwnerComfyWhere, WorldcastField } from "@/components/gpu/connect-choice";
 import { WorkersChip } from "@/components/workers-admin";
 import { usePagePlace } from "@/components/gpu/use-local-comfy";
 import { Label } from "@/components/ui/label";
@@ -491,6 +491,7 @@ function LocalComfy({ get, onWhere }: { get: (n: string) => PublicSetting | unde
         placeholder="http://127.0.0.1:8189"
         hint="A second ComfyUI for LatentSync 1.6 and ThinkSound, whose node packs can't share the main install. scripts/comfy/README.md shows how to start one."
       />
+      <WorldcastField get={get} />
     </>
   );
 }

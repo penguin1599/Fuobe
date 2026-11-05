@@ -5,6 +5,7 @@ import { getModel } from "@/lib/catalog";
 import {
   SWATCH_PLACEHOLDER,
   blockoutTake,
+  worldTake,
   pathTake,
   planCinema,
   withPlaceholders,
@@ -23,23 +24,29 @@ import { encodePng } from "./png";
 import { engineMode, getSetting } from "./settings";
 import { saveFile, storedMedia } from "./storage";
 import { isOffered } from "./model-access";
+import { tenantAccount } from "./tenant";
+import { worldcastContext } from "./worldcast-on";
 
 /**
  * What this install can run right now (cloud fallbacks such as reading a take's first frame, the workflows it has, a
- * camera LoRA that downloads from civitai, which fal gets only with the user's civitai key).
+ * camera LoRA that downloads from civitai, which fal gets only with the user's civitai key). Inside an account's work the
+ * engine mode is its own, and the studio's civitai key is never its (loras.ts leaves those LoRAs out of its runs).
  */
 export function cinemaContext(): CinemaContext {
-  return { cloudAllowed: engineMode() !== "open", has: (id) => !!getModel(id) && isOffered(id), civitai: !!getSetting("civitaiKey") };
+  return { cloudAllowed: engineMode() !== "open", has: (id) => !!getModel(id) && isOffered(id), civitai: !tenantAccount() && !!getSetting("civitaiKey"), worldcast: worldcastContext() };
 }
 
 declare global {
   var __fuobeSwatches: Map<string, string> | undefined;
 }
 
-/** A 12-stripe PNG of the palette: the reference image palette-transfer recolours toward. */
+/**
+ * A 12-stripe PNG of the palette: the reference image palette-transfer recolours toward. Each one's own file: an
+ * account's run reads only its own files, so an account's swatch is stored as its own (and never handed to another).
+ */
 export function swatchUrl(hex: string[]): string {
   globalThis.__fuobeSwatches ??= new Map();
-  const key = hex.join(",").toLowerCase();
+  const key = `${tenantAccount() ?? ""}|${hex.join(",").toLowerCase()}`;
   const hit = globalThis.__fuobeSwatches.get(key);
   if (hit) return hit;
   const stripe = 32;
@@ -131,6 +138,27 @@ export interface CinemaRunResult {
  * in the project (in `folderId`, the scene the user is looking at).
  */
 export function generateInProject(projectId: string, asked: CinemaRequest, folderId: string | null = null): CinemaRunResult {
+  return startCinemaRun(prepareCinemaRun(projectId, asked, folderId));
+}
+
+/** A take, planned and checked (the project's limit included): what startCinemaRun makes. */
+export interface CinemaRun {
+  projectId: string;
+  input: CinemaRequest;
+  plan: CinemaPlan;
+  folder: string | null;
+  notes: string[];
+}
+
+/**
+ * The run's steps as an account's run checks them (account-tool-run.ts): each request and how many earlier steps it
+ * waits for (one per job of the step before it, or one per step it follows).
+ */
+export const cinemaSteps = (run: CinemaRun): { request: GenerationRequest; deps: number }[] =>
+  run.plan.steps.map((s) => ({ request: s.request, deps: s.perJobOf ? 1 : (s.after?.length ?? 0) }));
+
+/** Plan a take in the project and check every step and the project's limit; nothing is made yet. */
+export function prepareCinemaRun(projectId: string, asked: CinemaRequest, folderId: string | null = null): CinemaRun {
   const project = getProject(projectId);
   if (!project) throw new CinemaError("Project not found", 404);
   // A blockout's take remembers the length its file says, as the plan films it.
@@ -157,7 +185,11 @@ export function generateInProject(projectId: string, asked: CinemaRequest, folde
       );
     }
   }
+  return { projectId, input, plan, folder, notes };
+}
 
+/** Make a planned take: its chained generations, recorded in the project. */
+export function startCinemaRun({ projectId, input, plan, folder, notes }: CinemaRun): CinemaRunResult {
   const take: CinemaTakeInfo = {
     mode: input.mode,
     action: input.action,
@@ -167,6 +199,7 @@ export function generateInProject(projectId: string, asked: CinemaRequest, folde
     ...(input.action === "recompose" && input.capture ? { camera: { lens: input.capture.lens, aperture: input.capture.aperture, pose: input.capture.pose } } : {}),
     ...(input.action === "path" && input.path ? { path: pathTake(input, plan) } : {}),
     ...(input.action === "blockout" && input.blockout ? { blockout: blockoutTake(input, plan) } : {}),
+    ...(input.action === "world" && input.world ? { world: worldTake(input) } : {}),
   };
   const batchId = nanoid(10);
   const made: Record<string, Generation[]> = {};

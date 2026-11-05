@@ -54,8 +54,10 @@ describe("record pages (real 404s)", () => {
     walk(app, []);
     expect(routes.length).toBeGreaterThan(40);
     // Ids the catalog answers for (apps, hub modes, Canvas templates, ready-made starters' pages), not stored records, and
-    // share tokens: the proxy checks those itself.
-    const catalog = /^\/(apps|audio|video-tools|upscale|s|canvas\/start)\/\[|\/start\/\[id\]$/;
+    // share tokens: the proxy checks those itself. A visitor's Canvas boards aren't records either: a ready board is the
+    // catalog's (/canvas/try), a draft lives in the browser (/canvas/draft) and an account's board is checked by its API
+    // (/canvas/saved).
+    const catalog = /^\/(apps|audio|video-tools|upscale|s|canvas\/(start|try|draft|saved))\/\[|\/start\/\[id\]$/;
     for (const route of routes) {
       if (!route.includes("[")) {
         expect(recordForPath(route), route).toBeNull();

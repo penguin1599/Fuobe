@@ -17,8 +17,17 @@ export const MAX_SPLAT_PX = 6;
  * One frame, RGB (3 bytes a pixel, rows top-down), of `cloud` (glTF axes: x right, y up, the photo looking down −Z) seen by
  * a camera-to-world `pose` in OpenCV axes (x right, y down, z forward; the world is the photo camera's own frame, as
  * camera-path framePoses makes them) with pixel intrinsic `k`. Each point is a square as wide as its size at its distance.
+ * `holes` (RGB too, for WorldCast's render_mask.mp4) is filled white where no point landed and black where one did.
  */
-export function splatFrame(cloud: Pick<PointCloud, "positions" | "colors" | "sizes" | "count">, pose: Mat4, k: Mat3, width: number, height: number, out?: Uint8Array): Uint8Array {
+export function splatFrame(
+  cloud: Pick<PointCloud, "positions" | "colors" | "sizes" | "count">,
+  pose: Mat4,
+  k: Mat3,
+  width: number,
+  height: number,
+  out?: Uint8Array,
+  holes?: Uint8Array,
+): Uint8Array {
   const rgb = out ?? new Uint8Array(width * height * 3);
   rgb.fill(0);
   const zbuf = new Float32Array(width * height).fill(Infinity);
@@ -59,5 +68,6 @@ export function splatFrame(cloud: Pick<PointCloud, "positions" | "colors" | "siz
         rgb[o * 3 + 2] = blue;
       }
   }
+  if (holes) for (let o = 0; o < zbuf.length; o++) holes[o * 3] = holes[o * 3 + 1] = holes[o * 3 + 2] = zbuf[o] === Infinity ? 255 : 0;
   return rgb;
 }

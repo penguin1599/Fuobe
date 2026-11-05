@@ -18,6 +18,7 @@ import {
   Music,
   Pencil,
   RotateCcw,
+  Sparkles,
   Trash2,
   Undo2,
   Wand2,
@@ -41,6 +42,7 @@ import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { PhoneNavButton } from "@/components/nav/phone-nav-button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { OwnSetupChip, useOwnSetupPress } from "@/components/own-setup";
 import { NotFoundState } from "@/components/empty-state";
 import { MediaThumb } from "@/components/studio/feed";
 import { Viewer } from "@/components/studio/viewer";
@@ -55,7 +57,8 @@ import {
   type StepView,
 } from "@/lib/catalog/faceless";
 import type { Generation } from "@/lib/catalog/types";
-import { useIsVisitor } from "@/lib/api";
+import { useEngineMode } from "@/lib/api";
+import { FACELESS_REGEN_COPY } from "@/lib/catalog/faceless";
 import { timeAgo } from "@/lib/format";
 import { downloadHref, downloadName } from "@/lib/library";
 import { cn } from "@/lib/utils";
@@ -221,8 +224,6 @@ const PART_OPTIONS: { value: ChangePart; label: string }[] = [
 /** Change the selected scenes: describe the change, see what re-runs and the price, apply or discard. */
 function SceneEditor({ view, scenes, onClose, onOpen }: { view: View; scenes: SceneRow[]; onClose: () => void; onOpen: (g: Generation) => void }) {
   const ep = view.episode;
-  // A guest or an account: the open engine runs on a self-hosted Fuobe only (not on their own GPU yet).
-  const visitor = useIsVisitor();
   const [part, setPart] = useState<ChangePart>("picture");
   const [instruction, setInstruction] = useState("");
   const [lines, setLines] = useState<string[]>(() => scenes.map((s) => s.narration));
@@ -349,7 +350,7 @@ function SceneEditor({ view, scenes, onClose, onOpen }: { view: View; scenes: Sc
                 : preview.isError
                   ? (preview.error as Error).message
                   : preview.data
-                    ? `Re-renders ${preview.data.labels.length} step${preview.data.labels.length === 1 ? "" : "s"} (${stepWords(preview.data.labels)})${preview.data.retime ? ", plus any scene whose timing moves" : ""} · ${preview.data.demo ? "Placeholder · free" : ep.settings.engine === "open" ? (visitor ? "Not available here" : "Free · your GPU") : preview.data.costUsd === null ? "price unknown" : `≈ ${usd(preview.data.costUsd)}${preview.data.retime ? "+" : ""}`}`
+                    ? `Re-renders ${preview.data.labels.length} step${preview.data.labels.length === 1 ? "" : "s"} (${stepWords(preview.data.labels)})${preview.data.retime ? ", plus any scene whose timing moves" : ""} · ${preview.data.demo ? "Placeholder · free" : ep.settings.engine === "open" ? "Free · your GPU" : preview.data.costUsd === null ? "price unknown" : `≈ ${usd(preview.data.costUsd)}${preview.data.retime ? "+" : ""}`}`
                     : "Pricing…"}
           </p>
           <Button variant="ghost" onClick={discard} disabled={!draft}>
@@ -468,21 +469,29 @@ export function EpisodeView({ id, backHref, backLabel }: { id: string; backHref:
   const router = useRouter();
   const { data: view, error, isLoading } = useEpisode(id);
   const action = useEpisodeAction(id);
+  const engineMode = useEngineMode();
   const update = useUpdateEpisode(id);
   const del = useDeleteEpisode();
   const [renaming, setRenaming] = useState(false);
   const [title, setTitle] = useState("");
   const [open, setOpen] = useState<Generation | null>(null);
   const [confirm, setConfirm] = useState(false);
+  // Regenerate to 1080p needs a 48 GB card (own-setup.ts): a visitor runs it on its own GPU, else gets the step that sets it up.
+  const press = useOwnSetupPress();
 
   if (error && /not found/i.test((error as Error).message)) return <NotFoundState title="This episode doesn't exist">It may have been deleted. Its videos are still in your library.</NotFoundState>;
   const ep = view?.episode;
-  // The download is the 1080p copy once it's made, else the film.
+  // The download is the 1080p copy once it's made (the newer of the upscaled and the regenerated film), else the film.
   const upscaled = view?.upscaled?.status === "succeeded" ? view.upscaled : null;
   const upscaling = !!view?.upscaled && active(view.upscaled);
-  const film = upscaled ?? view?.final;
+  const regenerated = view?.regenerated?.status === "succeeded" ? view.regenerated : null;
+  const regenerating = view?.regenerating ?? null;
+  // Regenerate runs on your GPU only: Engine mode "Paid APIs only" hides it.
+  const regenOffer = engineMode !== "cloud" ? view?.regenerate : null;
+  const sharp = [upscaled, regenerated].filter((g): g is Generation => !!g).sort((a, b) => b.createdAt - a.createdAt)[0] ?? null;
+  const film = sharp ?? view?.final;
   const filmOut = film?.outputs.find((o) => o.kind === "video");
-  const run = (a: "retry" | "rewrite" | "undo" | "upscale", ok?: string) => action.mutate(a, { onSuccess: () => ok && toast.success(ok), onError: (e) => toastError(e) });
+  const run = (a: "retry" | "rewrite" | "undo" | "upscale" | "regenerate", ok?: string) => action.mutate(a, { onSuccess: () => ok && toast.success(ok), onError: (e) => toastError(e) });
 
   return (
     <div className="flex min-h-content min-w-0 flex-col">
@@ -498,10 +507,15 @@ export function EpisodeView({ id, backHref, backLabel }: { id: string; backHref:
                 <Loader2 className="size-3 animate-spin" /> Upscaling to 1080p
               </span>
             )}
+            {regenerating && (
+              <span className="hidden items-center gap-1.5 text-[12px] text-muted-foreground sm:inline-flex" aria-live="polite">
+                <Loader2 className="size-3 animate-spin" /> Regenerating · {regenerating.done} of {regenerating.of} steps
+              </span>
+            )}
             {filmOut && film && (
               <Button asChild variant="outline" size="sm">
-                <a href={downloadHref(filmOut.url, downloadName(film, filmOut, 0))} download aria-label={upscaled ? "Download (1080p)" : "Download"}>
-                  <Download /> <span className="hidden sm:inline">{upscaled ? "Download 1080p" : "Download"}</span>
+                <a href={downloadHref(filmOut.url, downloadName(film, filmOut, 0))} download aria-label={sharp ? "Download (1080p)" : "Download"}>
+                  <Download /> <span className="hidden sm:inline">{sharp ? "Download 1080p" : "Download"}</span>
                 </a>
               </Button>
             )}
@@ -514,7 +528,7 @@ export function EpisodeView({ id, backHref, backLabel }: { id: string; backHref:
                   <MoreHorizontal />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
+              <DropdownMenuContent align="end" className="w-64">
                 <DropdownMenuItem
                   onClick={() => {
                     setTitle(ep.title);
@@ -533,6 +547,23 @@ export function EpisodeView({ id, backHref, backLabel }: { id: string; backHref:
                     <MonitorUp /> {upscaling ? "Upscaling to 1080p…" : "Upscale to 1080p"}
                     <span className="ml-auto pl-3 font-mono text-[11px] text-muted-foreground tabular-nums">
                       {view.upscale.demo ? "Placeholder" : view.upscale.costUsd === null ? "" : view.upscale.costUsd === 0 ? "Free" : `≈ ${usd(view.upscale.costUsd)}`}
+                    </span>
+                  </DropdownMenuItem>
+                )}
+                {regenOffer && !regenerated && (
+                  <DropdownMenuItem
+                    disabled={!!regenerating || action.isPending}
+                    onClick={() => press("regenerate:faceless", () => run("regenerate", "Regenerating each scene at 1080p — the download switches to it when it's done"))}
+                    className="items-start"
+                  >
+                    <Sparkles className="mt-0.5" />
+                    <span className="flex min-w-0 flex-1 flex-col">
+                      <span className="flex items-baseline gap-3">
+                        <span>{regenerating ? `Regenerating… ${regenerating.done} of ${regenerating.of}` : FACELESS_REGEN_COPY.label}</span>
+                        <span className="ml-auto font-mono text-[11px] text-muted-foreground tabular-nums">Free</span>
+                      </span>
+                      <span className="text-[11.5px] leading-snug text-muted-foreground">Sharper, may redraw · {FACELESS_REGEN_COPY.time(regenOffer.scenes)}</span>
+                      <OwnSetupChip setup="regenerate:faceless" className="mt-0.5" />
                     </span>
                   </DropdownMenuItem>
                 )}

@@ -10,13 +10,11 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Panel, ToolHero, ToolShell } from "@/components/av/tool-shell";
 import { EngineSwitch } from "@/components/studio/engine-switch";
-import { SelfHostNote } from "@/components/self-host-note";
 import { ExampleRow } from "@/components/studio/example-row";
-import { useEngine, useLikelyVisitor } from "@/lib/api";
+import { useEngine } from "@/lib/api";
 import { SWAP_STUDIO, type SwapProjectCard } from "@/lib/catalog/swap-studio";
 import { toastError } from "@/lib/refusals";
 import type { ExampleRowData } from "@/lib/examples/types";
-import { cn } from "@/lib/utils";
 import { useCreateSwapProject, useDeleteSwapProject, useSwapProjects } from "./hooks";
 
 const STEPS = [
@@ -44,8 +42,6 @@ export function SwapStudioHome({ examples }: { examples?: ExampleRowData | null 
   const [name, setName] = useState("");
   const [confirm, setConfirm] = useState<SwapProjectCard | null>(null);
   const nameId = useId();
-  // A project is saved to the studio's library, which is its owner's: a guest or an account is told so up front.
-  const visitor = useLikelyVisitor();
 
   const start = () =>
     create.mutate(
@@ -57,7 +53,7 @@ export function SwapStudioHome({ examples }: { examples?: ExampleRowData | null 
     );
 
   return (
-    <ToolShell title="Character Swap Studio" engineSwitch={false} header={<EngineSwitch value={engine} onChange={setEngine} selfHostedOnly />} wide>
+    <ToolShell title="Character Swap Studio" engineSwitch={false} header={<EngineSwitch value={engine} onChange={setEngine} />} wide>
       <ToolHero
         title="Swap a character through whole clips"
         subtitle="Put your character into whole clips, shot by shot: pick who to swap, check each shot, keep the best take."
@@ -66,7 +62,7 @@ export function SwapStudioHome({ examples }: { examples?: ExampleRowData | null 
           className="mt-6 flex w-full max-w-lg flex-col gap-2 sm:flex-row"
           onSubmit={(e) => {
             e.preventDefault();
-            if (!visitor) start();
+            start();
           }}
         >
           <label htmlFor={nameId} className="sr-only">
@@ -78,18 +74,16 @@ export function SwapStudioHome({ examples }: { examples?: ExampleRowData | null 
             maxLength={SWAP_STUDIO.maxNameChars}
             onChange={(e) => setName(e.target.value)}
             placeholder="Project name, e.g. Rain scene"
-            disabled={visitor}
             className="h-10 min-w-0 shrink-0 rounded-full border bg-background px-4 text-[14px] outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60 sm:flex-1"
           />
-          <Button type="submit" className="h-10 rounded-full px-5" disabled={create.isPending || visitor}>
+          <Button type="submit" className="h-10 rounded-full px-5" disabled={create.isPending}>
             {create.isPending ? <Loader2 className="size-4 animate-spin" /> : <Drama className="size-4" />}
-            {visitor ? "New project" : `New project · ${engine === "open" ? "your GPU" : "cloud"}`}
+            {`New project · ${engine === "open" ? "your GPU" : "cloud"}`}
           </Button>
         </form>
-        {visitor && <SelfHostNote className="mt-3 max-w-lg">Character Swap isn&apos;t available here.</SelfHostNote>}
       </ToolHero>
 
-      {examples && (visitor || (projects.isSuccess && !projects.data.length)) && <ExampleRow row={examples} className="mt-10" />}
+      {examples && projects.isSuccess && !projects.data.length && <ExampleRow row={examples} className="mt-10" />}
 
       <ol className="mx-auto mt-8 grid max-w-[1040px] gap-3 sm:grid-cols-2 lg:grid-cols-4" aria-label="How it works">
         {STEPS.map((s, i) => (
@@ -105,8 +99,8 @@ export function SwapStudioHome({ examples }: { examples?: ExampleRowData | null 
         ))}
       </ol>
 
-      {/* A guest or an account has no projects here and can't make one (the note above says why). */}
-      <section className={cn("mt-8", visitor && "hidden")} aria-labelledby="swap-projects">
+      {/* The owner's projects, or a signed-in account's own (a guest has none yet: New project offers a free account). */}
+      <section className="mt-8" aria-labelledby="swap-projects">
         <h2 id="swap-projects" className="mb-3 text-[15px] font-semibold">
           Projects
         </h2>

@@ -87,7 +87,8 @@ const manifest = JSON.parse(fs.readFileSync(path.join(process.cwd(), "workflows/
 const workflowById = new Map(manifest.workflows.map((w) => [w.id, w]));
 /** Settings the ComfyUI provider consumes itself instead of writing them into a binding. */
 // promptHelper: FLUX 3 Image Klein's Prompt helper, which the provider reads to take the helper's branch out (skipPromptHelper).
-const PROVIDER_PARAMS = new Set(["wordsPerCaption", "paletteWeights", "cues", "promptHelper"]);
+// hi3dRefine: read by the server (Refine detail · Hi3D 1.0 adds the refine step after the model, src/server/chains.ts), not the graph.
+const PROVIDER_PARAMS = new Set(["wordsPerCaption", "paletteWeights", "cues", "promptHelper", "hi3dRefine"]);
 
 describe("round-3 open models", () => {
   it.each(Object.entries(ROUND3_MODELS))("%s routes to its validated workflow", (id, want) => {
@@ -126,7 +127,12 @@ describe("round-3 open models", () => {
         for (const wid of ids) {
           const keys = Object.keys(workflowById.get(wid)?.bindings ?? {});
           // A control that stands for several settings (MOSS-Image's Quality) is the settings it writes.
-          const params = [...(m.options.sliders ?? []), ...(m.options.controls ?? [])].flatMap((s) =>
+          // A control offered on some operations only (MiniMax H3's Quality: not on References) binds there only.
+          const offered = (s: object) => {
+            const ops = "ops" in s ? (s.ops as Record<string, string[]> | undefined) : undefined;
+            return !ops || Object.values(ops).some((o) => o.includes(r.op));
+          };
+          const params = [...(m.options.sliders ?? []), ...(m.options.controls ?? [])].filter(offered).flatMap((s) =>
             "sets" in s && s.sets ? [...new Set(Object.values(s.sets).flatMap((v) => Object.keys(v)))] : [s.param],
           );
           for (const p of params) {

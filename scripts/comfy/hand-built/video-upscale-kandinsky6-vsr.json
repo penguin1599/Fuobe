@@ -1,0 +1,129 @@
+{
+  "1": {
+    "class_type": "LoadVideo",
+    "inputs": {
+      "file": "input.mp4"
+    },
+    "_meta": {
+      "title": "Clip to upscale"
+    }
+  },
+  "2": {
+    "class_type": "GetVideoComponents",
+    "inputs": {
+      "video": [
+        "1",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "Frames, sound and frame rate"
+    }
+  },
+  "3": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "Kandinsky-6.0-VSR-distilled2steps-5s-Diffusers/transformer/diffusion_pytorch_model.safetensors",
+      "weight_dtype": "default"
+    },
+    "_meta": {
+      "title": "Kandinsky VSR transformer (distilled, 2 steps)"
+    }
+  },
+  "4": {
+    "class_type": "Kandinsky6SRVAELoader",
+    "inputs": {
+      "kvae_checkpoint": "Kandinsky-6.0-VSR-distilled2steps-5s-Diffusers/vae/diffusion_pytorch_model.safetensors"
+    },
+    "_meta": {
+      "title": "Kandinsky VSR VAE"
+    }
+  },
+  "5": {
+    "class_type": "Kandinsky6LatentUpscalerLoader",
+    "inputs": {
+      "latent_upscaler_checkpoint": "Kandinsky-6.0-VSR-distilled2steps-5s-Diffusers/latent_upscaler/diffusion_pytorch_model.safetensors",
+      "target_scale": "2x"
+    },
+    "_meta": {
+      "title": "Latent upscaler (2x for 2x and 2.25x, 4x for 4x)"
+    }
+  },
+  "6": {
+    "class_type": "Kandinsky6VSRUpscale",
+    "inputs": {
+      "sr_model": [
+        "3",
+        0
+      ],
+      "sr_vae": [
+        "4",
+        0
+      ],
+      "images": [
+        "2",
+        0
+      ],
+      "seed": 42,
+      "steps": 5,
+      "tiles_batch_size": 1,
+      "scale": "2.25x",
+      "overlap": 0.2,
+      "frame_rate": [
+        "2",
+        2
+      ],
+      "target_resolution": "none",
+      "latent_upscaler": [
+        "5",
+        0
+      ],
+      "audio": [
+        "2",
+        1
+      ],
+      "use_nabla": false
+    },
+    "_meta": {
+      "title": "Upscale (tiled, at most 121 frames)"
+    }
+  },
+  "7": {
+    "class_type": "CreateVideo",
+    "inputs": {
+      "images": [
+        "6",
+        0
+      ],
+      "fps": [
+        "6",
+        1
+      ],
+      "audio": [
+        "6",
+        2
+      ],
+      "bit_depth": "auto",
+      "color_space": "sRGB"
+    },
+    "_meta": {
+      "title": "Picture and sound"
+    }
+  },
+  "8": {
+    "class_type": "SaveVideo",
+    "inputs": {
+      "video": [
+        "7",
+        0
+      ],
+      "filename_prefix": "fuobe/video-upscale-kandinsky6-vsr",
+      "format": "auto",
+      "format.codec": "auto",
+      "codec": "auto"
+    },
+    "_meta": {
+      "title": "Save video"
+    }
+  }
+}

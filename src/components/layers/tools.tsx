@@ -46,6 +46,7 @@ import {
   enhanceModels,
   expandPads,
   getNode,
+  layersLayout,
   INPAINT_SEES_TINT,
   INPAINT_TINT,
   jobStatusText,
@@ -65,6 +66,7 @@ import {
   textBlocksFrom,
   textChanges,
   textJobTitle,
+  TOOL_LABELS,
   TOOL_MODELS,
   type Box,
   type EnhanceLook,
@@ -72,6 +74,7 @@ import {
   type LayerJobInput,
   type LayerNode,
   type LayerTool,
+  type PlacedText,
   type TextBlock,
 } from "@/lib/layers";
 import { radioKeys, radioTab } from "@/components/studio/radio-keys";
@@ -97,6 +100,7 @@ export const TOOLS: { id: ToolId; label: string; icon: typeof Layers; isNew?: bo
   { id: "angles", label: "Angles", icon: Rotate3d, hint: "See it from another camera angle" },
   { id: "expand", label: "Expand & Crop", icon: Crop, isNew: true, hint: "Resize the canvas, fill it with AI" },
   { id: "grade", label: "Color grading", icon: SlidersHorizontal, hint: "Film looks and colour, in your browser" },
+  { id: "rerender", label: "Re-render from layers", icon: RefreshCw, isNew: true, hint: "Paint the arrangement again as one picture" },
 ];
 
 // ---------------------------------------------------------------------------
@@ -666,6 +670,7 @@ function SimpleTool({
   verb,
   failedTitle,
   children,
+  afterModel,
   settings,
   prompt,
   disabled,
@@ -675,6 +680,8 @@ function SimpleTool({
   verb: string;
   failedTitle: string;
   children?: React.ReactNode;
+  /** Fields that belong to the model picked (Bria guided cut-out's words): below the model select, so they appear under it. */
+  afterModel?: React.ReactNode;
   settings?: LayerJobInput["settings"];
   prompt?: string;
   disabled?: boolean;
@@ -693,11 +700,37 @@ function SimpleTool({
       <Scope node={node} />
       {children}
       <ModelSelect tool={tool} value={modelId} onChange={setModelId} />
+      {afterModel}
       <JobState job={job} failedTitle={failedTitle} onRetry={run} />
       <RunRow cost={costLabel(model, isDemo(model))} busy={busy} disabled={disabled || !model || (!!job && isRunning(job))} onClick={run}>
         {verb}
       </RunRow>
     </div>
+  );
+}
+
+/** Remove background: the subject on transparency; a guided model (Bria's) also takes words on what to keep or drop. */
+function RemoveBgTool() {
+  const picker = useToolModel("bg-remove");
+  const [guide, setGuide] = useState("");
+  const guided = !!picker.model?.guided;
+  return (
+    <SimpleTool
+      tool="bg-remove"
+      verb="Remove background"
+      failedTitle="Failed to load image. Please try again."
+      picker={picker}
+      prompt={guided ? guide.trim() || undefined : undefined}
+      afterModel={
+        guided && (
+          <Field label="What to keep or drop (optional)" htmlFor="cutout-guide">
+            <Input id="cutout-guide" value={guide} onChange={(e) => setGuide(e.target.value)} maxLength={300} placeholder="e.g. “keep the shadow” or “without the hand”" className="h-9" />
+          </Field>
+        )
+      }
+    >
+      <HowItWorks>Remove background finds the main subject of your image and cuts everything else away, giving you the subject on a transparent background.</HowItWorks>
+    </SimpleTool>
   );
 }
 
@@ -1325,6 +1358,85 @@ function GradeTool() {
 // ---------------------------------------------------------------------------
 // The rail
 
+// ---------------------------------------------------------------------------
+// Re-render from layers
+
+/**
+ * The arrangement painted again as one coherent picture: every visible layer's box and name, and the text read off the
+ * picture word for word, as a layout for a model that places boxes (MOSS-Image on both engines; Ideogram 4.5 and FLUX.3 in
+ * the cloud). The result lands as a new layer on top.
+ */
+function RerenderTool() {
+  const { doc, jobs, isDemo, endJob, setHighlight } = useEditor();
+  const { modelId, model, setModelId } = useToolModel("rerender");
+  const detector = useToolModel("text-detect");
+  const { busy, go } = useRun();
+  const [words, setWords] = useState("");
+  const [keepText, setKeepText] = useState(true);
+  const job = latestJob(jobs, ["rerender"], null);
+  const detect = latestJob(jobs, ["text-detect"], null);
+  const detecting = !!detect && isRunning(detect);
+  const [text, setText] = useState<{ id: string; lines: PlacedText[] } | null>(null);
+  // The lines of the newest reading of the whole picture, placed in the document (as Edit text lists them).
+  useEffect(() => {
+    if (!detect || detect.result?.status !== "succeeded" || text?.id === detect.id) return;
+    const out = detect.result.outputs[0];
+    const sent = typeof detect.settings?.image === "string" ? detect.settings.image : undefined;
+    const measure = out?.kind === "image" ? out.url : needsDetectedSize(out?.meta) ? sent : undefined;
+    let gone = false;
+    void (measure ? loadImage(measure).then((img) => sizeOf(img)) : Promise.resolve(undefined))
+      .catch(() => undefined)
+      .then((natural) => {
+        if (gone) return;
+        const blocks: TextBlock[] = out ? textBlocksFrom(out.meta, natural) : [];
+        setText({ id: detect.id, lines: placeTextBlocks(blocks, detect.frame).map((r) => ({ text: r.from, box: r.box })) });
+        if (detect.state === "pending") endJob(detect.id, "applied");
+      });
+    return () => {
+      gone = true;
+    };
+  }, [detect, endJob, text?.id]);
+  useEffect(() => () => setHighlight(null), [setHighlight]);
+  const plan = useMemo(() => layersLayout(doc, keepText ? (text?.lines ?? []) : [], words), [doc, keepText, text, words]);
+  const { counts } = plan;
+  const boxes = counts.layers + counts.text;
+  const run = () => void go({ tool: "rerender", target: { kind: "whole" }, modelId, prompt: words.trim() || undefined, settings: { layout: plan.draft }, label: TOOL_LABELS.rerender });
+  const read = () => void go({ tool: "text-detect", target: { kind: "whole" }, modelId: detector.modelId, label: "Detect text" });
+  const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;
+  return (
+    <div className="space-y-4">
+      <HowItWorks>Paints the whole picture again as one image, with every visible layer where it is now. Each layer&apos;s name says what it is, and text read off the picture is kept word for word. The result arrives as a new layer on top.</HowItWorks>
+      <p className="text-[12px] text-muted-foreground" role="status">
+        {boxes ? `${plural(counts.layers, "layer")} and ${plural(counts.text, "line")} of text in place` : "Show at least one layer to re-render"}
+        {counts.backdrop ? ` · ${plural(counts.backdrop, "backdrop layer")} described in words` : ""}
+      </p>
+      <Field label="Describe the picture (optional)">
+        <Textarea value={words} onChange={(e) => setWords(e.target.value)} rows={3} maxLength={1500} placeholder="e.g. a warm studio product shot, soft window light" className="min-h-20 text-[13px]" aria-label="Describe the picture" />
+      </Field>
+      {text?.lines.length ? (
+        <label className="flex items-center justify-between gap-2 text-[12px] text-muted-foreground">
+          Keep the text word for word ({plural(text.lines.length, "line")})
+          <Switch checked={keepText} onCheckedChange={setKeepText} aria-label="Keep the text word for word" />
+        </label>
+      ) : (
+        <div className="space-y-1">
+          <Button variant="secondary" size="sm" className="w-full rounded-full" onClick={read} disabled={busy || detecting || !detector.model}>
+            {detecting ? <Loader2 className="animate-spin" /> : <Type />} {detecting ? "Reading the text…" : "Read the text first"}
+          </Button>
+          <p className="text-center font-mono text-[11px] text-muted-foreground">{costLabel(detector.model, isDemo(detector.model))}</p>
+          {text && !text.lines.length && <p className="text-center text-[12px] text-muted-foreground">No text was found on this image.</p>}
+        </div>
+      )}
+      <ModelSelect tool="rerender" value={modelId} onChange={setModelId} />
+      {model?.engine === "cloud" && model.id !== "moss-image" && <p className="text-[11px] text-pretty text-muted-foreground">{model.name} places the boxes from its prompt; MOSS-Image follows them most closely.</p>}
+      <JobState job={job} failedTitle="Couldn't re-render the picture" onRetry={run} />
+      <RunRow cost={costLabel(model, isDemo(model))} busy={busy} disabled={!boxes || !model || (!!job && isRunning(job))} onClick={run}>
+        <RefreshCw /> Re-render
+      </RunRow>
+    </div>
+  );
+}
+
 export function ToolRail() {
   const { tool, openTool, mask, selected, setSplitTarget, jobs } = useEditor();
   const current = TOOLS.find((t) => t.id === tool);
@@ -1354,11 +1466,7 @@ export function ToolRail() {
               {tool === "decompose" && <DecomposeTool />}
               {/* Its rows belong to one scope: picking another layer (or the whole image) starts afresh. */}
               {tool === "edit-text" && <EditTextTool key={selected?.id ?? "whole"} />}
-              {tool === "remove-bg" && (
-                <SimpleTool tool="bg-remove" verb="Remove background" failedTitle="Failed to load image. Please try again.">
-                  <HowItWorks>Remove background finds the main subject of your image and cuts everything else away, giving you the subject on a transparent background.</HowItWorks>
-                </SimpleTool>
-              )}
+              {tool === "remove-bg" && <RemoveBgTool />}
               {tool === "regional" && <RegionalTool />}
               {/* Its painted area belongs to one layer (or the whole image): picking another starts afresh. */}
               {tool === "inpaint" && <InpaintTool key={selected?.id ?? "whole"} />}
@@ -1372,6 +1480,7 @@ export function ToolRail() {
               {tool === "angles" && <AnglesTool />}
               {tool === "expand" && <ExpandTool />}
               {tool === "grade" && <GradeTool />}
+              {tool === "rerender" && <RerenderTool />}
             </div>
           </div>
         </>

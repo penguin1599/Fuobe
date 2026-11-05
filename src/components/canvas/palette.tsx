@@ -4,6 +4,7 @@ import { PanelLeftClose, Plus, Search } from "lucide-react";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { OwnSetupChip } from "@/components/own-setup";
 import type { NodeGroup, PaletteItem } from "@/lib/catalog/canvas";
 import { NodeIcon } from "./canvas-context";
 
@@ -56,6 +57,7 @@ export const Palette = memo(function Palette({ items, onAdd, onClose }: { items:
                       </span>
                       <span className="min-w-0">
                         <span className="block truncate text-[13px] font-medium">{p.label}</span>
+                        <OwnSetupChip setup={p.data?.modelId} className="mb-0.5" />
                         <span className="line-clamp-2 text-[11px] leading-snug text-muted-foreground">{p.disabled}</span>
                       </span>
                     </div>
@@ -78,6 +80,8 @@ export const Palette = memo(function Palette({ items, onAdd, onClose }: { items:
                     </span>
                     <span className="min-w-0">
                       <span className="block truncate text-[13px] font-medium">{p.label}</span>
+                      {/* A node that needs a bigger GPU than most (Regenerate): what it runs on, in the label's own words. */}
+                      <OwnSetupChip setup={p.data?.modelId} className="mb-0.5" />
                       <span className="line-clamp-1 text-[11px] leading-snug text-muted-foreground">{p.description}</span>
                     </span>
                   </button>
@@ -140,6 +144,7 @@ export function AddMenu({ x, y, items, title, onPick, onClose }: { x: number; y:
                     <CommandItem key={p.id} value={`${p.label} ${p.keywords ?? ""}`} onSelect={() => onPick(p)} disabled={!!p.disabled} title={p.disabled} className="gap-2">
                       <NodeIcon name={p.icon} className="size-4 text-muted-foreground" />
                       <span className="truncate text-[13px]">{p.label}</span>
+                      <OwnSetupChip setup={p.data?.modelId} />
                       {p.disabled && <span className="ml-auto shrink-0 text-[11px] text-muted-foreground">not on this engine</span>}
                     </CommandItem>
                   );

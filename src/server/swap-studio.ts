@@ -1,5 +1,8 @@
 import "server-only";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { nanoid } from "nanoid";
 import { originalSoundOn, type OriginalSound } from "@/lib/av/original-sound";
+import { addKeyMessage } from "@/lib/your-keys";
 import { z } from "zod";
 import { getModel } from "@/lib/catalog";
 import { ANCHOR_MODELS, anchorModel, CHARACTER_SWAP, h3Canvas, SWAP_LORAS, swapLoraRef, TURBO_LORA } from "@/lib/catalog/character-swap";
@@ -51,13 +54,17 @@ import { REGEN_MODEL } from "@/lib/catalog/regenerate";
 import { COMPOSITE_MODEL, filmSize, SHARPEN_COPY, SHARPEN_TIERS, sharpenOptions, sharpenTierFor, type SharpenTier } from "@/lib/catalog/sharpen";
 import type { Engine, Generation, PixelPoint } from "@/lib/catalog/types";
 import { ACCESS_PLACE } from "@/lib/model-access";
+import { paidAllowed } from "./account-keys";
+import { AccountProjectError, accountProjectsWith, createAccountProject, deleteAccountProject, getAccountProject, listAccountProjects, updateAccountProject } from "./account-projects";
+import type { ToolStep } from "./account-tool-run";
 import { silenceWriter } from "./canvas";
 import { createPipeline } from "./chains";
 import { db } from "./db";
-import { cancelGeneration, getGeneration, previewChained } from "./generations";
+import { AccountRunError, asAccount, cancelGeneration, getGeneration, OPEN_ONLY_RUN, previewChained } from "./generations";
 import { isOffered, offeredLoras } from "./model-access";
 import { engineMode } from "./settings";
 import { probeSource, ShortsError } from "./shorts";
+import { tenant, tenantAccount } from "./tenant";
 
 /**
  * Character Swap Studio on the server (/character-swap): projects in swap_projects (one JSON document each, see
@@ -65,6 +72,11 @@ import { probeSource, ShortsError } from "./shorts";
  * "swap-studio-step", hidden from the Library; the assembled clip is "swap-studio" and lands in the Library). The
  * document names the generations; whoever reads a project (the page's poll, or the sweep below) fills in what they
  * made and launches takes that were waiting for the segments they continue from.
+ *
+ * A signed-in account (public sign-up) has projects of its own, kept in its account projects (account-projects.ts,
+ * kind "swap"): inside its own work (asAccount, tenant.ts) every read and change here is of its own projects only, and
+ * its jobs are its own runs on its own ComfyUI or fal.ai key. Its routes plan each job first (planSwapRun: nothing made
+ * or saved), check it as every account run is checked, then start it (startSwapRun). See swap-studio-account.ts.
  */
 
 export { ShortsError as StudioError };
@@ -93,20 +105,73 @@ function fromRow(r: Row): SwapProject {
 
 const takesOf = (p: SwapProject) => p.clips.flatMap((c) => c.shots.flatMap((s) => (s.segments ?? []).flatMap((g) => g.takes)));
 
+/** An account's projects in account-projects.ts. */
+export const ACCOUNT_KIND = "swap";
+
+/** What an account's list shows of a project (its summary): the card without its id, name and time. */
+type CardSummary = Omit<SwapProjectCard, "id" | "name" | "updatedAt">;
+
+function cardSummary(p: SwapProject, waiting: number): CardSummary {
+  return {
+    engine: p.engine,
+    clips: p.clips.length,
+    shots: p.clips.reduce((n, c) => n + c.shots.length, 0),
+    swapped: p.clips.reduce((n, c) => n + c.shots.filter((s) => s.mode === "generate").length, 0),
+    assembled: p.clips.filter((c) => c.assembly?.genId).length,
+    waiting,
+    character: p.character.image,
+  };
+}
+
+/** A project's change that doesn't fit an account's store (too big, too many): its own words and status. */
+function accountRefused<T>(fn: () => T): T {
+  try {
+    return fn();
+  } catch (e) {
+    if (e instanceof AccountProjectError) throw new ShortsError(e.message, e.status);
+    throw e;
+  }
+}
+
 function write(p: SwapProject): SwapProject {
   const next = { ...p, revision: p.revision + 1, updatedAt: Date.now() };
+  // An account's job being planned (planSwapRun): nothing is saved.
+  if (runScope()?.dry) return next;
   const waiting = takesOf(next).filter((t) => t.state === "waiting").length;
+  const t = tenant();
+  if (t?.kind === "guest") throw new ShortsError("Project not found", 404);
+  if (t?.kind === "account") {
+    const saved = accountRefused(() => updateAccountProject(t.id, ACCOUNT_KIND, next.id, { name: next.name, data: next, summary: cardSummary(next, waiting) }));
+    if (!saved) throw new ShortsError("Project not found", 404);
+    return { ...next, name: saved.name, updatedAt: saved.updatedAt };
+  }
   db()
     .prepare("UPDATE swap_projects SET name = ?, engine = ?, data_json = ?, revision = ?, waiting = ?, updated_at = ? WHERE id = ?")
     .run(next.name, next.engine, JSON.stringify(next), next.revision, waiting, next.updatedAt, next.id);
   return next;
 }
 
-function mustProject(id: string): SwapProject {
+/**
+ * The project with this id that the asker may read: the owner's, or inside an account's work only that account's own
+ * (another account's, or the owner's, is not found, the same as one that doesn't exist). A guest has none.
+ */
+function load(id: string): SwapProject | null {
+  const t = tenant();
+  if (t?.kind === "guest") return null;
+  if (t?.kind === "account") {
+    const r = getAccountProject<SwapProject>(t.id, ACCOUNT_KIND, id);
+    return r ? { ...r.data, id: r.id, name: r.name, engine: r.data.engine === "open" ? "open" : "cloud", createdAt: r.createdAt, updatedAt: r.updatedAt } : null;
+  }
   const r = rowOf(id);
-  if (!r) throw new ShortsError("Project not found", 404);
-  return fromRow(r);
+  return r ? fromRow(r) : null;
 }
+
+function mustProject(id: string): SwapProject {
+  const p = load(id);
+  if (!p) throw new ShortsError("Project not found", 404);
+  return p;
+}
+
 
 /** Change a project in one synchronous read-modify-write (no await inside: nothing else runs between). */
 function mutate(id: string, fn: (p: SwapProject) => SwapProject): SwapProject {
@@ -150,12 +215,19 @@ export function genSummary(g: Generation): GenSummary {
   };
 }
 
-/** One lookup per id for the duration of a read. */
+/**
+ * One lookup per id for the duration of a read. Inside an account's work only its own runs are found (its projects name
+ * nothing else; this keeps it so).
+ */
 function lookup(): (id: string | undefined) => Generation | null {
   const cache = new Map<string, Generation | null>();
+  const account = tenantAccount();
   return (id) => {
     if (!id) return null;
-    if (!cache.has(id)) cache.set(id, getGeneration(id, { includeDeleted: true }));
+    if (!cache.has(id)) {
+      const g = getGeneration(id, { includeDeleted: true });
+      cache.set(id, g && account && g.request.account !== account ? null : g);
+    }
     return cache.get(id)!;
   };
 }
@@ -311,7 +383,7 @@ function previousOf(shot: SwapShot, take: SwapTake, look: Look): { master?: stri
 function launchTake(project: SwapProject, clip: SwapClip, shot: SwapShot, seg: SwapSegment, take: SwapTake, shotIndex: number, segIndex: number, look: Look): SwapTake {
   const previous = previousOf(shot, take, look);
   const plan = frozenTakePlan(project, clip, shot, seg, take, { shot: shotIndex + 1, segment: segIndex + 1, take: seg.takes.findIndex((t) => t.id === take.id) + 1 }, previous);
-  const pipe = run(plan.steps);
+  const pipe = run(plan.steps, { batchId: take.batchId });
   return { ...take, state: "launched", waitsOn: undefined, genId: pipe.byKey[plan.final].id, stepIds: pipe.items.map((g) => g.id) };
 }
 
@@ -362,7 +434,21 @@ export function ensureSwapStudioRunner(): void {
     } catch (e) {
       console.error("[swap-studio] sweep:", (e as Error).message);
     }
+    // Accounts' projects (public sign-up), each read and advanced inside its own account's work.
+    try {
+      for (const r of accountProjectsWith(ACCOUNT_KIND, "waiting")) {
+        try {
+          asAccount(r.accountId, () => advanceProject(r.id));
+        } catch (e) {
+          console.error(`[swap-studio] ${r.id}:`, (e as Error).message);
+        }
+      }
+    } catch (e) {
+      console.error("[swap-studio] sweep:", (e as Error).message);
+    }
   };
+  // Started at boot (instrumentation.ts) or by the owner's queue: never from inside an account's work, whose context its
+  // timers would keep (queueTakes).
   globalThis.__fuobeSwapStudioRunner = setInterval(tick, 3000);
   globalThis.__fuobeSwapStudioRunner.unref?.();
   setTimeout(tick, 500).unref?.();
@@ -372,28 +458,27 @@ export function ensureSwapStudioRunner(): void {
 // Projects
 
 
+/** The asker's projects, most recently changed first: the owner's, or inside an account's work its own (a guest has none). */
 export function listProjects(limit = 100): SwapProjectCard[] {
+  const t = tenant();
+  if (t?.kind === "guest") return [];
+  if (t?.kind === "account") {
+    return listAccountProjects<CardSummary>(t.id, ACCOUNT_KIND)
+      .slice(0, limit)
+      .map((r) => ({ engine: "open", clips: 0, shots: 0, swapped: 0, assembled: 0, waiting: 0, character: null, ...r.summary, id: r.id, name: r.name, updatedAt: r.updatedAt }));
+  }
   const rows = db().prepare("SELECT * FROM swap_projects ORDER BY updated_at DESC LIMIT ?").all(limit) as Row[];
   return rows.map((r) => {
     const p = fromRow(r);
-    return {
-      id: p.id,
-      name: p.name,
-      engine: p.engine,
-      clips: p.clips.length,
-      shots: p.clips.reduce((n, c) => n + c.shots.length, 0),
-      swapped: p.clips.reduce((n, c) => n + c.shots.filter((s) => s.mode === "generate").length, 0),
-      assembled: p.clips.filter((c) => c.assembly?.genId).length,
-      waiting: r.waiting,
-      character: p.character.image,
-      updatedAt: p.updatedAt,
-    };
+    return { id: p.id, name: p.name, ...cardSummary(p, r.waiting), updatedAt: p.updatedAt };
   });
 }
 
 const mustMatchMode = (engine: Engine) => {
   const mode = engineMode();
   if (mode !== "both" && mode !== engine) {
+    // An account (public sign-up) runs the cloud on its own fal.ai key: its answer opens "Add your key".
+    if (tenantAccount() && engine === "cloud") throw new AccountRunError(paidAllowed() ? { error: addKeyMessage("fal"), code: "add-key", provider: "fal" } : { error: OPEN_ONLY_RUN, code: "open-only" });
     throw new ShortsError(mode === "open" ? "This install runs open-source models only (Settings → Engine mode)" : "This install runs cloud models only (Settings → Engine mode)", 422);
   }
 };
@@ -422,6 +507,13 @@ export function createProject(body: z.infer<typeof CreateSchema>): SwapProject {
     updatedAt: now,
     revision: 1,
   };
+  const t = tenant();
+  if (t?.kind === "guest") throw new ShortsError("Create a free account to make a project.", 401);
+  // An account's project is its own (account-projects.ts): its id is the one its store gives it.
+  if (t?.kind === "account") {
+    const made = accountRefused(() => createAccountProject<SwapProject, CardSummary>(t.id, ACCOUNT_KIND, { name: p.name, data: p, summary: cardSummary(p, 0) }));
+    return { ...p, id: made.id, name: made.name, createdAt: made.createdAt, updatedAt: made.updatedAt };
+  }
   db()
     .prepare("INSERT INTO swap_projects (id, name, engine, data_json, revision, waiting, created_at, updated_at) VALUES (?, ?, ?, ?, 1, 0, ?, ?)")
     .run(p.id, p.name, p.engine, JSON.stringify(p), now, now);
@@ -433,7 +525,9 @@ export async function deleteProject(id: string): Promise<void> {
   const p = mustProject(id);
   const look = lookup();
   const active = projectGenIds(p).filter((g) => ACTIVE.has(look(g)?.status ?? ""));
-  db().prepare("DELETE FROM swap_projects WHERE id = ?").run(id);
+  const account = tenantAccount();
+  if (account) deleteAccountProject(account, ACCOUNT_KIND, id);
+  else db().prepare("DELETE FROM swap_projects WHERE id = ?").run(id);
   for (const g of active) await cancelGeneration(g).catch(() => undefined);
 }
 
@@ -591,7 +685,8 @@ export async function editProject(projectId: string, body: EditBody): Promise<Sw
     return out;
   });
   for (const g of after.orphans) await cancelGeneration(g).catch(() => undefined);
-  if (!after.engine) return next;
+  // An account's copies are runs of its own, started from the clip's "Prepare at 24 fps" (the checks every run gets).
+  if (!after.engine || tenantAccount()) return next;
   // Switched engines: on your GPU the clips need their 24 fps copies, on the cloud the page may need browser copies.
   for (const c of next.clips) {
     if (after.engine === "open" && !c.normalized) prepareClipQuietly(next.id, c.id);
@@ -603,10 +698,72 @@ export async function editProject(projectId: string, body: EditBody): Promise<Sw
 // ---------------------------------------------------------------------------
 // Steps run as one pipeline
 
-function run(steps: PlanStep[], existing?: Record<string, string>) {
+/**
+ * An account's job as its route runs it (swap-studio-account.ts): planned first (`dry`: the steps it would start are
+ * kept, nothing is made or saved), then started, every pipeline of it in one batch (one run, as its limits count it).
+ */
+interface RunScope {
+  dry: boolean;
+  steps: PlanStep[];
+  batchId?: string;
+}
+
+declare global {
+  var __fuobeSwapRunScope: AsyncLocalStorage<RunScope> | undefined;
+}
+
+const runScopes = () => (globalThis.__fuobeSwapRunScope ??= new AsyncLocalStorage<RunScope>());
+const runScope = () => runScopes().getStore();
+
+/** The stand-in files the planners price with (no file is read): never one of the account's files to check. */
+const STAND_IN = "/api/files/placeholder-";
+
+const withChain = (s: PlanStep) => ({ ...s.request, ...(s.chain ? { chain: s.chain } : {}) });
+
+/** An account's job planned, not started: the runs it would make (for the checks every account run gets) and the files they read. */
+export interface PlannedSwapJob {
+  steps: ToolStep[];
+  files: string[];
+}
+
+/**
+ * Plan an account's job (call it inside the account's work): `fn` goes as it will, but nothing is made or saved. The
+ * steps it would start, and those it checks now and starts later (a take waiting for the one it continues from), come
+ * back with every file they read.
+ */
+export async function planSwapJob(fn: () => unknown): Promise<PlannedSwapJob> {
+  const scope: RunScope = { dry: true, steps: [] };
+  await runScopes().run(scope, fn);
+  const files = new Set<string>();
+  for (const m of JSON.stringify(scope.steps.map((s) => s.request)).matchAll(/\/api\/files\/[^"\\\s?#]+/g)) if (!m[0].startsWith(STAND_IN)) files.add(m[0]);
+  return { steps: scope.steps.map((s) => ({ request: withChain(s), deps: s.after?.length ?? 0 })), files: [...files] };
+}
+
+/** Start an account's job (inside its work, after its checks): every pipeline it makes is one run (one batch). */
+export function startSwapJob<T>(fn: () => T): T {
+  return runScopes().run({ dry: false, steps: [], batchId: nanoid(10) }, fn);
+}
+
+/** Steps checked now that may start later (a waiting take's): planned with the job, never made here. */
+function checkLater(steps: PlanStep[]): void {
+  const scope = runScope();
+  if (scope?.dry) scope.steps.push(...steps);
+}
+
+function run(steps: PlanStep[], opts: { existing?: Record<string, string>; batchId?: string } = {}) {
+  const scope = runScope();
+  if (scope?.dry) {
+    // Planned only: stand-in generations, so the job goes on as it will.
+    const n = scope.steps.push(...steps);
+    const byKey = Object.fromEntries(steps.map((s) => [s.key, { id: `planned-${n}-${s.key}`, status: "queued", outputs: [] } as unknown as Generation]));
+    return { batchId: "planned", items: Object.values(byKey), byKey };
+  }
+  const batchId = opts.batchId ?? scope?.batchId;
   try {
-    return createPipeline(steps, existing ? { existing } : {});
+    return createPipeline(steps, { ...(opts.existing && { existing: opts.existing }), ...(batchId && { batchId }) });
   } catch (e) {
+    // An account's refusal stays one (Connect your GPU, Add your key).
+    if (e instanceof AccountRunError) throw e;
     throw new ShortsError((e as Error).message, 422);
   }
 }
@@ -743,7 +900,7 @@ export function transcribe(projectId: string, clipId: string, opts: { cleanVoice
   return mutate(projectId, (cur) => mapClip(cur, clipId, (c) => ({ ...c, transcript: { genId, modelId, cues: null, voices: c.transcript?.voices ?? {} } })));
 }
 
-const look1 = (gid?: string) => (gid ? getGeneration(gid, { includeDeleted: true }) : null);
+const look1 = (gid?: string) => lookup()(gid);
 
 // ---------------------------------------------------------------------------
 // Masks
@@ -934,12 +1091,15 @@ export function queueTakes(projectId: string, body: z.infer<typeof QueueSchema>)
   const { lora, note } = loraFor(cur.engine, shot.settings.lora);
   const items = currentSegments(shot).map((g) => ({ ...g }));
   const made = new Map<string, SwapTake>();
+  // An account's queue is one run: a take that starts later joins it.
+  const batchId = tenantAccount() ? runScope()?.batchId : undefined;
   for (const e of planned.entries) {
     const seg = items[e.index];
     if (seg.takes.length >= SWAP_STUDIO.maxTakes) throw new ShortsError(`Segment ${e.index + 1} keeps ${SWAP_STUDIO.maxTakes} takes — remove one first`, 422);
     // Takes it continues from in this queue are named by their new ids (they become the selection when made).
     const deps = e.dependencies.map((d) => ({ ...d, takeId: made.get(d.segmentId)?.id ?? d.takeId }));
     const take = newTake(cur, clip, shot, seg, deps, lora, masterKeep(items, e.index, shot.settings));
+    if (batchId) take.batchId = batchId;
     made.set(seg.id, take);
   }
   // Every take's steps checked now (models switched off, demo and real mixed, a request a route refuses).
@@ -950,11 +1110,15 @@ export function queueTakes(projectId: string, body: z.infer<typeof QueueSchema>)
     const take = made.get(items[e.index].id)!;
     const plan = takeSteps(cur, clip, checked, items[e.index], take, { shot: shotIndex + 1, segment: e.index + 1, take: items[e.index].takes.length + 1 });
     const priced = price(plan.steps);
+    if (priced.refusal) throw priced.refusal;
     if (priced.problem) throw new ShortsError(priced.problem, 422);
     if (demo !== null && demo !== priced.demo) throw new ShortsError("Some takes would run as a demo and others for real — connect the missing provider in Settings", 422);
     demo = priced.demo;
+    // An account's take that waits is checked with the queue, before anything starts.
+    checkLater(plan.steps);
   }
-  ensureSwapStudioRunner();
+  // (An account's takes are swept by the runner the server starts at boot: never started from inside its work.)
+  if (!tenant()) ensureSwapStudioRunner();
   const project = mutate(projectId, (p) => {
     const next = mapClip(p, clip.id, (c) =>
       mapShot(c, shot.id, (s) => {
@@ -1023,12 +1187,13 @@ export function assemble(projectId: string, clipId: string, opts: { originalSoun
     return url;
   };
   const plan = planAssembly({ engine: p.engine, clip, pieces: found.pieces, videoOf, originalSound: sound });
-  // A silent clip's cloud assembly ends on its silence: the WAV is written now (silenceRef, as Genjutsu and Canvas do).
-  const withSilence = silenceWriter();
+  // A silent clip's cloud assembly ends on its silence: the WAV is written now (silenceRef, as Genjutsu and Canvas do),
+  // not while an account's job is only planned.
+  const withSilence = runScope()?.dry ? (r: (typeof plan.steps)[number]["request"]) => r : silenceWriter();
   // The takes count as steps already made: a demo join of real takes is refused.
   const pipe = run(
     plan.steps.map((s) => ({ ...s, request: withSilence(s.request) })),
-    existing,
+    { existing },
   );
   const assembly = { genId: pipe.byKey[plan.final].id, stepIds: pipe.items.map((g) => g.id), takes, ...(sound !== "everything" && { originalSound: sound }), createdAt: Date.now() };
   return mutate(projectId, (cur) => mapClip(cur, clipId, (c) => ({ ...c, assembly })));
@@ -1103,12 +1268,14 @@ export async function sharpenClip(projectId: string, body: z.infer<typeof Sharpe
   let demo: boolean | null = null;
   for (const x of todo) {
     const priced = price(x.plan.steps);
+    if (priced.refusal) throw priced.refusal;
     if (priced.problem) throw new ShortsError(priced.problem, 422);
     if (demo !== null && demo !== priced.demo) throw new ShortsError("Some takes would run as a demo and others for real — connect the missing provider in Settings", 422);
     demo = priced.demo;
   }
   // A version still being made at another size is replaced: it is stopped first (nothing would show it or stop it after).
-  for (const x of todo) for (const gid of finishIds(x.take.finish)) if (ACTIVE.has(look(gid)?.status ?? "")) await cancelGeneration(gid).catch(() => undefined);
+  // Not while an account's job is only planned.
+  if (!runScope()?.dry) for (const x of todo) for (const gid of finishIds(x.take.finish)) if (ACTIVE.has(look(gid)?.status ?? "")) await cancelGeneration(gid).catch(() => undefined);
   const made = new Map<string, TakeFinish>();
   for (const x of todo) {
     const pipe = run(x.plan.steps);
@@ -1179,10 +1346,11 @@ export async function stopJob(projectId: string, body: z.infer<typeof StopSchema
 // ---------------------------------------------------------------------------
 // Prices
 
-const withChain = (s: PlanStep) => ({ ...s.request, ...(s.chain ? { chain: s.chain } : {}) });
-
-/** What steps cost together (null when a price is unknown), whether they'd run as a demo, and what stops them. */
-function price(steps: PlanStep[]): { costUsd: number | null; demo: boolean; problem: string | null } {
+/**
+ * What steps cost together (null when a price is unknown), whether they'd run as a demo, and what stops them. `refusal`:
+ * an account's own answer (Add your key…), which a run gives as it is.
+ */
+function price(steps: PlanStep[]): { costUsd: number | null; demo: boolean; problem: string | null; refusal?: AccountRunError } {
   let cost: number | null = 0;
   let demo = false;
   let real = false;
@@ -1191,7 +1359,7 @@ function price(steps: PlanStep[]): { costUsd: number | null; demo: boolean; prob
     try {
       p = previewChained(withChain(s), s.after?.length ?? 0);
     } catch (e) {
-      return { costUsd: null, demo: false, problem: (e as Error).message };
+      return { costUsd: null, demo: false, problem: (e as Error).message, ...(e instanceof AccountRunError && { refusal: e }) };
     }
     if (p.demo) demo = true;
     else real = true;
@@ -1331,7 +1499,7 @@ export function studioNotes(engine: Engine): string[] {
   if (engine === "open") {
     return [
       WORKERS_NOTE,
-      "Needs H3 Relay 2.0's nodes on your ComfyUI (scripts/comfy/install-comfyui.sh with H3_RELAY=1) and a 24 GB GPU with offloading; the masks need SAM 3.1",
+      "Needs H3 Relay 2.0's nodes on your ComfyUI (add them with Fuobe's ComfyUI setup) and a 24 GB GPU with offloading; the masks need SAM 3.1",
       "Each segment is one H3 Relay pass with the approved mask, its anchor and the previous take's last frames as continuation history (a lossless 16-bit FFV1 master, about 3 MB a frame at 1 MP: ComfyUI takes uploads up to 100 MB unless started with a higher --max-upload-size, so keep history to about 30 frames or raise it)",
     ];
   }

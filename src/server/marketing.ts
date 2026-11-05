@@ -65,6 +65,7 @@ import { engineMode } from "./settings";
 import { encodePng } from "./png";
 import { localHead, saveFile, storedMedia } from "./storage";
 import { imageSize } from "@/lib/image-size";
+import { targetShortEdge } from "@/lib/av/upscale";
 import { isH3Graph } from "@/lib/h3-prompt";
 
 /**
@@ -1125,7 +1126,17 @@ const ISO: Record<string, string> = {
 };
 /** The spoken language for the cloud captioner (ISO code); English needs none. */
 const languageCode = (name?: string) => (name && name !== "English" ? ISO[name] : undefined);
-const nearestRes = (want: string, m: ModelDef) => (m.options.resolutions?.includes(want) ? want : (m.options.resolutions?.filter((r) => parseInt(r) <= parseInt(want)).pop() ?? m.options.resolutions?.[0] ?? want));
+/**
+ * The model's tier for the one asked: the same, else the tallest at or below it, else its first. Ranked by the height a
+ * tier names (targetShortEdge: "2K" is 1440, never 2), so a finishing tier can't pass for the smallest.
+ */
+function nearestRes(want: string, m: ModelDef): string {
+  const offered = m.options.resolutions ?? [];
+  if (offered.includes(want)) return want;
+  const h = targetShortEdge(want);
+  const below = h === undefined ? [] : offered.filter((r) => (targetShortEdge(r) ?? Infinity) <= h).sort((a, b) => targetShortEdge(a)! - targetShortEdge(b)!);
+  return below.pop() ?? offered[0] ?? want;
+}
 
 // ---------------------------------------------------------------------------
 // Estimates and launching

@@ -12,8 +12,9 @@ import { PRESETS as GRADE_PRESETS } from "./grade";
 import { storedPath } from "./share";
 import { decodeMoss, LAYOUT_PARAM, readLayout, type LayoutDraft } from "./layout-prompt";
 import { REMOVE_DIALOGUE_FEATURE } from "./av/remove-dialogue";
-import { canRerender, REGEN_OFFERED, regenerateFamily, regenerateHref, rerenderLabel } from "./catalog/regenerate";
+import { canEnhance, canRerender, ENHANCE_LABEL, REGEN_OFFERED, regenerateFamily, regenerateHref, rerenderLabel } from "./catalog/regenerate";
 import { CLEAN_FEATURE } from "./av/clean-voice";
+import { exportsCleanly } from "./av/keying";
 import { anyAngleHref } from "./catalog/any-angle";
 import { isInstrumental, lyricsOf, songFormat, STEMS_FORMATS } from "./lyrics";
 import { CLEAN_DIALOGUE_FEATURE, cleanDialogueHref } from "./av/clean-dialogue";
@@ -47,6 +48,7 @@ export type OutputActionId =
   | "remove-person"
   | "clean-voice"
   | "clean-dialogue"
+  | "edit-speech"
   | "remove-watermark"
   | "copy-text"
   | "view-3d"
@@ -63,6 +65,7 @@ export type OutputActionId =
   | "finalize"
   | "regenerate"
   | "rerender-2k"
+  | "enhance-h3"
   | "compare"
   | "reuse"
   | "make-skill"
@@ -75,6 +78,7 @@ export type OutputActionId =
   | "delete-own"
   | "restore"
   | "restore-video"
+  | "export-pro"
   | "delete-forever";
 
 export interface OutputAction {
@@ -86,6 +90,8 @@ export interface OutputAction {
   /** Set on file links: the browser downloads instead of navigating. */
   download?: string;
   destructive?: boolean;
+  /** An item that runs on the visitor's own setup (src/lib/own-setup.ts): its label sits next to the action's. */
+  ownSetup?: string;
 }
 
 export interface ActionContext {
@@ -111,10 +117,12 @@ export interface ActionContext {
 /** A draft's one-tap 1080p render: a new paid run, said before the tap (left out while placeholders are on). */
 export const draftRenderPaid = (placeholders: boolean | undefined): string => (placeholders ? "" : " · paid");
 
-/** Hand-offs to tools a guest or an account can't open (they run on a self-hosted Fuobe only). */
-const OWNER_ONLY_ACTIONS: ReadonlySet<OutputActionId> = new Set<OutputActionId>(["restore-video", "remove-dialogue", "remove-person", "clean-dialogue"]);
-
 const q = (url: string) => encodeURIComponent(url);
+
+/** Image to 3D → Splat on Idol 3D's Quick look with a picture in the slot (the link Image to 3D reads: readModel3dLink). */
+export function make3dHref(url: string, photo = false): string {
+  return `/image-to-3d?mode=splat&model=oss-idol&quality=quick&image=${q(url)}${photo ? "&photo=1" : ""}`;
+}
 
 /** The model a Kinetic Motion result records (components/motion/save.ts MOTION_MODEL). */
 const KINETIC_MODEL = "local-motion";
@@ -135,7 +143,7 @@ export function outputActions(g: Generation, index: number, ctx: ActionContext =
   }
   const out: OutputAction[] = [];
   const link = (id: OutputActionId, label: string, href: string, placement: OutputAction["placement"] = "menu") => {
-    if (!(ctx.visitor && OWNER_ONLY_ACTIONS.has(id))) out.push({ id, label, href, placement });
+    out.push({ id, label, href, placement });
   };
   // A Kinetic Motion result (a clip, a frame, a contact sheet or a version) opens its recipe in the Kinetic editor.
   // A visitor opens only their own (an owner's result shown on a public page would not open for them).
@@ -182,8 +190,12 @@ export function outputActions(g: Generation, index: number, ctx: ActionContext =
       link("reframe", "Reframe", `/reframe?video=${q(o.url)}`);
       link("lipsync", "Lipsync", `/lipsync?video=${q(o.url)}`);
       link("upscale", "Upscale", `/upscale/video?video=${q(o.url)}`);
-      // Old, faded or black-and-white footage (Fuobe Restore): Video tools → Restore & colourise with the clip in.
-      link("restore-video", "Restore & colourise", `/video-tools/restore?video=${q(o.url)}`);
+      // Old, faded or black-and-white footage (Fuobe Restore): Video tools → Restore & colourise with the clip in. It runs
+      // on the viewer's own GPU or fal.ai key (own-setup.ts), and says so.
+      out.push({ id: "restore-video", label: "Restore & colourise", href: `/video-tools/restore?video=${q(o.url)}`, placement: "menu", ownSetup: "video-tools:restore" });
+      // A mask or clean foreground from Remove background or Green screen: on to ProRes 4444 or EXR for the edit (Export runs on
+      // your GPU). A cut-out isn't offered: Export would drop its transparency (src/lib/av/keying.ts).
+      if (ctx.engineMode !== "cloud" && exportsCleanly(g.op, g.request?.params)) link("export-pro", "Export as ProRes or EXR", `/upscale/export?video=${q(o.url)}&format=prores_4444`);
       link("add-sound", "Add sound", `/audio/video?video=${q(o.url)}`);
       link("split-soundtrack", "Split soundtrack", `/audio/split?video=${q(o.url)}`);
       link("remove-dialogue", "Remove dialogue", `/video-tools/remove-dialogue?video=${q(o.url)}`);
@@ -193,6 +205,8 @@ export function outputActions(g: Generation, index: number, ctx: ActionContext =
       if (g.feature === "upload" || (g.op && SOUNDED_VIDEO_OPS.has(g.op))) link("clean-voice", "Clean up voice", `/audio/clean?video=${q(o.url)}`);
       // Clean up dialogue (Split soundtrack's preset): the music and effects out from under the speech, or a cloud cleaner.
       if ((g.feature === "upload" || (g.op && SOUNDED_VIDEO_OPS.has(g.op))) && g.feature !== CLEAN_DIALOGUE_FEATURE) link("clean-dialogue", "Clean up dialogue", cleanDialogueHref("video", o.url));
+      // Edit speech (AuK, your GPU only): change what someone says in a clip with sound.
+      if ((g.feature === "upload" || (g.op && SOUNDED_VIDEO_OPS.has(g.op))) && ctx.engineMode !== "cloud") link("edit-speech", "Edit speech", `/audio/edit-speech?video=${q(o.url)}`);
       // A Fuobe DoP colour-grade effect: the clip opens in Color grading with its grade picked (one click to export).
       const dopGrade = gradeOf(o);
       link("grade", dopGrade ? `Apply the ${dopGrade.name} grade` : "Color grade", `/color-grade?video=${q(o.url)}${dopGrade ? `&preset=${q(dopGrade.id)}` : ""}`);
@@ -223,6 +237,8 @@ export function outputActions(g: Generation, index: number, ctx: ActionContext =
       // Not on music or sound effects (it keeps only a voice), nor on a voice it already cleaned.
       if (g.op !== "music" && g.op !== "sfx" && g.feature !== CLEAN_FEATURE) link("clean-voice", "Clean up voice", `/audio/clean?audio=${q(o.url)}`);
       if (g.op !== "music" && g.op !== "sfx" && g.feature !== CLEAN_DIALOGUE_FEATURE) link("clean-dialogue", "Clean up dialogue", cleanDialogueHref("audio", o.url));
+      // Edit speech (AuK, your GPU only): change a word, the pitch, the pace or the mood of what was said.
+      if (g.op !== "music" && g.op !== "sfx" && ctx.engineMode !== "cloud") link("edit-speech", "Edit speech", `/audio/edit-speech?audio=${q(o.url)}`);
       break;
     case "text":
       out.push({ id: "copy-text", label: "Copy", placement: "primary" }, file, { id: "favorite", label: g.favorite ? "Unfavorite" : "Favorite", placement: "bar" });
@@ -249,7 +265,8 @@ export function outputActions(g: Generation, index: number, ctx: ActionContext =
   // delete that first checks nothing uses the file.
   if (g.feature === "upload") {
     // An upload's Regenerate (it has no words of its own) sits with its other hand-offs.
-    if (REGEN_OFFERED && o.kind === "video" && ctx.engineMode !== "cloud") link("regenerate", "Regenerate in 2K", regenerateHref(o.url));
+    // Open-H3 Regenerate needs a 48 GB card: the item says so (own-setup.ts), and a visitor runs it on its own GPU only.
+    if (o.kind === "video" && ctx.engineMode !== "cloud") out.push({ id: "regenerate", label: "Regenerate in 2K", placement: "menu", href: regenerateHref(o.url), ownSetup: "regenerate:upscale" });
     return [...out.filter((a) => a.id !== "favorite"), { id: "delete-upload", label: "Delete for good…", placement: "menu", destructive: true }];
   }
   if (g.outputs.length > 1) out.push({ id: "download-all", label: `Download all ${g.outputs.length} (.zip)`, placement: "menu", href: `/api/generations/zip?ids=${g.id}`, download: "" });
@@ -259,7 +276,9 @@ export function outputActions(g: Generation, index: number, ctx: ActionContext =
   // results keep their upscalers in Upscale.
   if (o.kind === "video" && g.status === "succeeded") {
     if (canRerender(g, ctx.engineMode)) out.push({ id: "rerender-2k", label: rerenderLabel(g.modelId), placement: "menu" });
-    else if (REGEN_OFFERED && (g.engine === "open" || g.feature === "upload") && ctx.engineMode !== "cloud") out.push({ id: "regenerate", label: "Regenerate in 2K", placement: "menu", href: regenerateHref(o.url, g.feature === "upload" ? null : g.request.prompt) });
+    else if ((g.engine === "open" || g.feature === "upload") && ctx.engineMode !== "cloud") out.push({ id: "regenerate", label: "Regenerate in 2K", placement: "menu", href: regenerateHref(o.url, g.feature === "upload" ? null : g.request.prompt), ownSetup: "regenerate:upscale" });
+    // An Edit video result (up to 15 s): redrawn at 1080p on your GPU, from the edit's own words (a 48 GB card).
+    if (canEnhance(g, o, ctx.engineMode)) out.push({ id: "enhance-h3", label: ENHANCE_LABEL, placement: "menu", ownSetup: "regenerate:enhance" });
   }
   if (ctx.compare) out.push({ id: "compare", label: "Compare with original", placement: "menu" });
   if (ctx.reuse) out.push({ id: "reuse", label: "Reuse settings", placement: "menu" });

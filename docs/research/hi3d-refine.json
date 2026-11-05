@@ -1,0 +1,175 @@
+{
+  "asOf": "2026-11-02",
+  "scope": "Hi3D v1.0 (Sparc3D's refinement stage, released open): what it is, its weights, licence, hardware, ComfyUI support and hosting, read for package hi3d-refine.",
+  "sources": {
+    "readme": "https://github.com/hi3d-official/Hi3Dv1.0 README.md (read from a local copy)",
+    "licence": "https://github.com/hi3d-official/Hi3Dv1.0 LICENSE (read from a local copy)",
+    "weights": "https://huggingface.co/hi3d-official/Hi3Dv1.0 (API read 2026-11-02)",
+    "site": "https://www.hi3d.ai/hi3d-1-0-open-source"
+  },
+  "model": {
+    "name": "Hi3D v1.0",
+    "released": "2026-10-23",
+    "releasedNote": "The README says 'Released on October 23, 2026'; the weights' last commit is 2026-10-23T16:04:31Z. new-models-10 had 10-16 (corrected here).",
+    "what": "Refines a coarse mesh into high-resolution geometry, conditioned on a reference image of the same object (README L15). It does not make a mesh from nothing: the README's end-to-end demo makes the coarse mesh with Hunyuan3D-2 mini (L170-185).",
+    "output": "Geometry only, batch size one: no textures, materials or vertex colours; recentred and normalised to unit maximum radius, so input world coordinates and absolute scale are not preserved (L189). Not guaranteed watertight or printable.",
+    "resolutions": [
+      512,
+      1024,
+      1536
+    ],
+    "passes": {
+      "512": 1,
+      "1024": 2,
+      "1536": 3
+    },
+    "passesNote": "Pass 1: 64^3 structure / 512^3 extraction grid with transformer_512; pass 2: 128^3 / 1024^3 with transformer_1024; pass 3: 192^3 / 1536^3 with transformer_1024 (L27-33). Nominal sparse grids, not a triangle count.",
+    "stepsPerPass": 25,
+    "encoders": "facebook/dinov2-large and openai/clip-vit-large-patch14, loaded separately on first use (L96).",
+    "cpuPath": false,
+    "offload": "Optional Accelerate sequential CPU offload (enable_sequential_cpu_offload); it does not establish a minimum GPU memory (L121-130).",
+    "failure": "A request that cannot reach the target resolution raises instead of silently returning a lower one (L191)."
+  },
+  "weights": {
+    "repo": "hi3d-official/Hi3Dv1.0",
+    "revision": "d502e938cbedc6e87aba8884614c5ca6d177a4b6",
+    "format": "safetensors + JSON; the loader neither executes repository Python nor unpickles (L94)",
+    "files": [
+      {
+        "path": "transformer_512/model.safetensors",
+        "bytes": 3675679280,
+        "sha256": "8ba88311dccf23463c6e10dd0d3bd5e0c5c35d1608c6f466413b6428b5ad8e56"
+      },
+      {
+        "path": "transformer_1024/model.safetensors",
+        "bytes": 3675679280,
+        "sha256": "a2ca5e44dde51cacecd59b42fceeb5f14e75d55e6dd047337752c4e6f281008c"
+      },
+      {
+        "path": "vae/model.safetensors",
+        "bytes": 376629712,
+        "sha256": "605d207c77f8db0b33c567a5861252f0090cf3c3604dfda1cfee09e8f0b53f3e"
+      },
+      {
+        "path": "model_index.json",
+        "bytes": 224
+      },
+      {
+        "path": "scheduler/scheduler_config.json",
+        "bytes": 127
+      },
+      {
+        "path": "vae/config.json",
+        "bytes": 131
+      },
+      {
+        "path": "transformer_512/config.json",
+        "bytes": 1336
+      },
+      {
+        "path": "transformer_1024/config.json",
+        "bytes": 1337
+      }
+    ],
+    "totalBytes": 7727990432,
+    "encoders": [
+      {
+        "repo": "facebook/dinov2-large",
+        "revision": "47b73eefe95e8d44ec3623f8890bd894b6ea2d6c",
+        "path": "model.safetensors",
+        "bytes": 1217522888,
+        "sha256": "399fba97a95f22c36834418bc69373364a99af3a1153da1c0fb31db567c92e23",
+        "licence": "Apache-2.0"
+      },
+      {
+        "repo": "openai/clip-vit-large-patch14",
+        "revision": "32bd64288804d66eefd0ccbe215aa642df71cc41",
+        "path": "model.safetensors",
+        "bytes": 1710540580,
+        "sha256": "a2bf730a0c7debf160f7a6b50b3aaf3703e7e88ac73de7a314903141db026dcb",
+        "licence": "MIT (OpenAI CLIP)"
+      }
+    ],
+    "totalWithEncodersBytes": 10656053900,
+    "note": "The brief's 7.74 GB is the three safetensors (7.728 GB); with the two encoders the open route downloads 10.66 GB. t8star/Hi3d-Comfy at 6ae7235d5f03857713ccdcb717a22b16f483aa43 repackages the same files (identical SHA-256) under hi3d/, dino/ and clip/."
+  },
+  "requirements": {
+    "official": "Linux, Python 3.10, an NVIDIA GPU of compute capability 8.0+ (Ampere or newer), a CUDA toolkit 12.0-12.5 matching torch; measured with torch 2.5.0+cu124, CUDA 12.4.131, flash-attn 2.7.4.post1, spconv-cu120 2.3.6, on a 96 GB H20. 1536 validated only on that GPU; smaller cards not established (README L60, L75).",
+    "flashAttn": "flash-attn has no fallback attention path in the official code (L191).",
+    "comfyPack": "T8's pack (below) keeps ComfyUI's own torch and adds an SDPA attention adapter (the Hi3D Model Loader's attention: sdpa | flash); its requirements pin spconv-cu126 2.3.8 and triton 3.3-3.x. Tested by its author on Windows, RTX 5090 Laptop 24 GB, 512 to 1536; lower-VRAM GPUs not validated."
+  },
+  "licence": {
+    "name": "Hi3D Open License Agreement Version 1.0",
+    "licensor": "OCEANO HK HOLDING LIMITED",
+    "commercial": "Permitted (Section 2.1), subject to Sections 5-8.",
+    "scale": "If a related product or service exceeds 200,000 monthly active users or reaches USD 1,000,000 monthly revenue, notify the licensor and apply for a separate written licence within 60 days (Sections 5.1-5.2).",
+    "branding": "Commercial integrations must display 'Powered by Hi3D 1.0' with reasonable prominence, in the interface, on an About page or in acknowledgements, linking to http://hi3d.ai/ where a link is possible (Section 7, Schedule 2).",
+    "brandingUrl": "http://hi3d.ai/",
+    "outputs": "Outputs that contain no Hi3D Materials can be used, sold and distributed without the branding, NOTICE or scale obligations (Section 8; README).",
+    "distribution": "Recipients of the weights get the Agreement's full text or a link to it, and the NOTICE text (Sections 3, 9).",
+    "aup": "Schedule 1 Acceptable Use Policy applies.",
+    "class": "conditions"
+  },
+  "comfyui": {
+    "nativeSupport": false,
+    "note": "comfyui-oss-4 (2026-10-22) found no ComfyUI support; community packs appeared from 2026-10-23.",
+    "packs": [
+      {
+        "name": "Comfyui-Hi3d-T8",
+        "repo": "https://github.com/T8mars/Comfyui-Hi3d-T8",
+        "commit": "73848490976e6a9b0c735ce02984c03866a495e7",
+        "version": "0.5.1",
+        "registry": "hi3d-t8 (publisher t8star)",
+        "licence": "MIT integration code; vendored Hi3D code and weights under the Hi3D Open License 1.0",
+        "nodes": {
+          "Hi3DModelLoader": "model_root (empty: ComfyUI/models/Hi3D with hi3d/, dino/, clip/), cpu_offload, attention sdpa | flash, keep_model_loaded, download_missing -> HI3D_MODEL",
+          "Hi3DLoadMesh": "mesh_file: a .glb / .ply / .stl / .npz under ComfyUI's input folder -> MESH",
+          "Hi3DRefine": "model, image, mesh, resolution 512 | 1024 | 1536, steps 1-100 (25), seed, optional mask -> refined_mesh MESH, report_json STRING"
+        },
+        "output": "Core SaveGLB saves the refined MESH as a self-contained binary GLB.",
+        "chosen": true,
+        "why": "In the ComfyUI Registry, native MESH in and out (core SaveGLB writes the GLB, so Fuobe's finish takes it), mesh input from ComfyUI's input folder (Fuobe uploads the coarse GLB like any input), official source pinned inside, pinned core weights with SHA-256. Its separate Windows workbench is not used."
+      },
+      {
+        "name": "ComfyUI-Hi3D-Refinement",
+        "repo": "https://github.com/wadi-k/ComfyUI-Hi3D-Refinement",
+        "commit": "2c77b8d6b8f3a91a8d32be6f37fb2d44b6c1f53d",
+        "licence": "Apache-2.0 code",
+        "chosen": false,
+        "note": "One node with model pickers from diffusion_models/vae; can run Hi3D in a separate venv (HI3D_PYTHON). Its example shows TRELLIS.2's texture stage baked onto the refined mesh with a TRELLIS.2 pack (BakeTextureFromVoxel), not core."
+      },
+      {
+        "name": "Rizzlord/ComfyUI-Hi3D",
+        "repo": "https://github.com/Rizzlord/ComfyUI-Hi3D",
+        "chosen": false
+      },
+      {
+        "name": "thatname/ComfyUI-Hi3D",
+        "repo": "https://github.com/thatname/ComfyUI-Hi3D",
+        "chosen": false
+      }
+    ]
+  },
+  "texture": {
+    "verdict": "Not on this base: the refined mesh ships as geometry only, labelled so. 'Texture it' needs one more node (owner step below).",
+    "checked": [
+      "Live core ComfyUI 0.41.0 (2026-11-02, object_info): BakeTextureFromVoxel (mesh, voxel_colors, texture_size, optional reference_mesh) and PaintMesh bake TRELLIS.2's texture voxels onto ANY mesh with UVs (UnwrapMesh), then ApplyTextureToMesh. So core can texture an outside mesh, but only with voxel colours made in the same run (VaeDecodeTextureTrellis output is not saved between runs), and only when that mesh sits in the voxels' frame.",
+      "Hi3D's output is recentred and normalised to unit radius (README L189), so the refined mesh is not in TRELLIS.2's / Pixal3D's frame. Core has no node that translates or scales a MESH (RotateMesh rotates; WeldVertices, FillHoles, DecimateMesh, RemeshMesh, UnwrapMesh, MergeMeshes don't move it). Neither Hi3D pack's node maps its output back (T8's Hi3DRefine returns the normalised mesh; wadi-k's node likewise).",
+      "Pixal3D's graph is the same TRELLIS.2 pipeline (Pixal3D conditioning): same limit. Hunyuan3D 2.1 in core is shape only (no Hunyuan3D-Paint nodes)."
+    ],
+    "ownerStep": "Either (a) a small node that fits the refined mesh back onto the coarse mesh's bounding box (scale + offset), so one graph can run Pixal3D / TRELLIS.2 -> Hi3D -> fit -> UnwrapMesh -> BakeTextureFromVoxel (reference_mesh = the refined mesh) -> ApplyTextureToMesh -> SaveGLB (a few lines; could live in Fuobe's own pack like ComfyUI-RE-USE), or (b) a mesh-conditioned texture pack such as Hunyuan3D-Paint 2.1 (e.g. visualbruno/ComfyUI-Hunyuan3d-2-1; its licence excludes the EU, UK and South Korea). Each needs the owner's go-ahead and a licence record."
+  },
+  "hosted": {
+    "open": [],
+    "checked": "2026-11-02: fal model search for 'hi3d', 'sparc3d', 'mesh refine': only hitem3d/hi3d/* (Hitem3D's own closed API: image-to-3d, multi-view-to-3d v3.0, texture, split, relief, multicolor; proxy, none takes a coarse mesh). Replicate search: nothing.",
+    "verdict": "Nobody hosts the open Hi3D v1.0 refine. Hitem3D's API is a different, closed product (v2/v3) and is not used. Hi3D refine is open-engine only."
+  },
+  "fuobe": {
+    "workflow": "mesh-refine-hi3d",
+    "model": "oss-hi3d-refine",
+    "op": "refine-3d",
+    "graph": "LoadImage -> core RemoveBackground (BiRefNet) mask -> InvertMask (the pack reads mask 1 as transparent: comfy_nodes.py image_to_pil sets alpha = 1 - mask); Hi3DLoadMesh (the coarse GLB, uploaded as an input) ; Hi3DModelLoader (models/Hi3D, cpu_offload on, sdpa attention: the pack's requirements carry no flash-attn, and 'flash' without it raises at run time) -> Hi3DRefine (resolution, 25 steps, seed, mask) -> SaveGLB",
+    "chain": "Image to 3D's 'Refine detail' runs the picked open model, then the refine step on its GLB (chain slot model3d) with the same photo.",
+    "print": "The Print-ready export (STL / 3MF) is made in the browser from the finished GLB: watertight check, scaled to the height the user sets (Hi3D normalises size)."
+  }
+}

@@ -368,14 +368,16 @@ export function preflightPath(method: "GET" | "POST", path: string): string {
 /**
  * Can this browser reach a ComfyUI on its own computer? Chrome, Edge, Brave and Firefox on a computer can. Safari
  * can't (an https page may not call http://127.0.0.1), nor can any browser on an iPhone or iPad (all are Safari
- * underneath), nor a phone (no ComfyUI there): those get the link instead.
+ * underneath), nor a phone (no ComfyUI there): those get the link instead. An iPad's browsers say "Macintosh", as a
+ * Mac's do: its touch screen tells them apart (no Mac has one).
  */
 export function browserSupport(
-  nav: { userAgent?: string; userAgentData?: { mobile?: boolean; platform?: string } },
+  nav: { userAgent?: string; maxTouchPoints?: number; userAgentData?: { mobile?: boolean; platform?: string } },
   screen: { narrow: boolean; coarse?: boolean },
 ): "ok" | "safari" | "phone" {
   const ua = nav.userAgent ?? "";
   if (/iPhone|iPad|iPod/.test(ua) || nav.userAgentData?.mobile || /Android.+Mobile|Mobile Safari/.test(ua)) return "phone";
+  if (/Macintosh/.test(ua) && (nav.maxTouchPoints ?? 0) > 1) return "phone";
   if (screen.narrow && screen.coarse !== false) return "phone";
   if (!nav.userAgentData && /Safari\//.test(ua) && !/Chrome|Chromium|CriOS|FxiOS|Edg|Firefox|OPR/.test(ua)) return "safari";
   return "ok";

@@ -16,7 +16,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { EngineSwitch } from "@/components/studio/engine-switch";
 import type { PromptInputHandle } from "@/components/studio/prompt-input";
-import { useElements, useEngine, useSaveElement } from "@/lib/api";
+import { useElements, useEngine, useIsOwner, useSaveElement } from "@/lib/api";
 import { rigError, type CinemaFolder, type DirectorSettings, type DirectorShot } from "@/lib/catalog/cinema";
 import type { StudioElement } from "@/lib/catalog/elements";
 import type { OutputFile } from "@/lib/catalog/types";
@@ -38,6 +38,7 @@ import { SceneCreateDialog, askSceneConfirmAgain, sceneTake, skipSceneConfirm, u
 import { SidePanel } from "./side-panel";
 import { SoulCastDialog, SoulLocationDialog } from "./soul-builders";
 import { BlockoutPanel, initialBlockout, withBuilt, type BlockoutDraft } from "./blockout-panel";
+import { WorldPanel } from "./world-panel";
 import type { BlockoutScene } from "@/lib/blockout";
 
 /** What a browser that can only write WebM is told: Seedance 2.5 takes MP4 or MOV reference clips. */
@@ -211,8 +212,12 @@ function Workspace({ data, items, loading }: { data: ProjectView; items: CinemaG
   const { project, folders, spentUsd, context } = data;
   const id = project.id;
   const router = useRouter();
-  const share = useShare();
-  const [engine, setEngine] = useEngine();
+  // Sharing a project and saving elements keep to the studio's library: the owner's only. A signed-in account's project
+  // is its own, with everything else here.
+  const owner = useIsOwner();
+  const shareApi = useShare();
+  const share = owner ? shareApi : null;
+  const [engine, setEngine, engineMode] = useEngine();
   const [view, setView] = useState<CinemaView>({ kind: "home" });
   const [nested, setNested] = useState(true);
   const [draft, setDraftState] = useState<CinemaDraft>(() => restoreDraft(id));
@@ -253,6 +258,9 @@ function Workspace({ data, items, loading }: { data: ProjectView; items: CinemaG
   // A starter's film: how many shots the AI Director proposed, once shot 1 is in the prompt bar.
   const [starterShots, setStarterShots] = useState(0);
   const [blockoutOpen, setBlockoutOpen] = useState(() => search.get("blockout") === "1");
+  // World mode: /cinema/<id>?world=1 (the GPU board's World mode row) opens it. Hidden when the engine mode is "Paid APIs
+  // only": Hy-Nomas runs on your GPU alone.
+  const [worldOpen, setWorldOpen] = useState(() => search.get("world") === "1");
   const [blockout, setBlockout] = useState<BlockoutDraft>(initialBlockout);
   const [builder, setBuilder] = useState<BlockoutScene | null>(null);
   const [dropping, setDropping] = useState(false);
@@ -373,7 +381,9 @@ function Workspace({ data, items, loading }: { data: ProjectView; items: CinemaG
       setDraft((d) => (d.refs.some((r) => r.ref === url) ? {} : { refs: [...d.refs, { id: nanoid(6), ref: url, preview: url, kind }] }));
       toast("Added to references", { duration: 1500 });
     },
-    onSaveElement: (g, url, kind) =>
+    onSaveElement: !owner
+      ? undefined
+      : (g, url, kind) =>
       saveElement.mutate(
         { name: nameFrom(g.take?.prompt ?? g.request.prompt, kind === "character" ? "New character" : "New location"), kind, references: [url] },
         {
@@ -450,13 +460,14 @@ function Workspace({ data, items, loading }: { data: ProjectView; items: CinemaG
       }}
       counts={counts}
       onDropItems={(ids, f) => void actions.move(ids, f).then(() => toast(`Moved ${ids.length} take${ids.length > 1 ? "s" : ""}`, { duration: 1500 }))}
+      elements={owner}
       className="h-full"
     />
   );
   const sidePanel = panel && (
     <SidePanel project={project} tab={panel} setTab={setPanel} onClose={() => setPanel(null)} onLoadShot={onLoadShot} promptText={draft.prompt} />
   );
-  const builderProps = { projectId: id, folderId, engine, settings, context, brief: project.brief.body };
+  const builderProps = { projectId: id, folderId, engine, settings, context, brief: project.brief.body, canSave: owner };
   const proposedShot = Number(search.get("shot")) || 0;
 
   return (
@@ -640,6 +651,7 @@ function Workspace({ data, items, loading }: { data: ProjectView; items: CinemaG
                 onCast={() => setCastOpen(true)}
                 onLocation={() => setLocationOpen(true)}
                 onBlockout={() => setBlockoutOpen(true)}
+                onWorld={engineMode === "cloud" ? undefined : () => setWorldOpen(true)}
               />
             </div>
           </div>
@@ -680,6 +692,7 @@ function Workspace({ data, items, loading }: { data: ProjectView; items: CinemaG
       />
       {openScene && (
         <SceneViewer
+          key={openScene.generation.id}
           take={openScene}
           projectId={id}
           engine={engine}
@@ -731,6 +744,19 @@ function Workspace({ data, items, loading }: { data: ProjectView; items: CinemaG
           }}
         />
       )}
+      <WorldPanel
+        open={worldOpen && engineMode !== "cloud"}
+        onOpenChange={setWorldOpen}
+        projectId={id}
+        folderId={folderId}
+        engine={engine}
+        onEngine={setEngine}
+        openAllowed={engineMode !== "cloud"}
+        settings={settings}
+        brief={project.brief.body}
+        context={context}
+        takes={items}
+      />
       <SoulCastDialog open={castOpen} onOpenChange={setCastOpen} {...builderProps} />
       <SoulLocationDialog open={locationOpen} onOpenChange={setLocationOpen} {...builderProps} />
       <ProjectDialog open={settingsOpen} onOpenChange={setSettingsOpen} project={project} spentUsd={spentUsd} onDone={() => setSettingsOpen(false)} onDeleted={() => router.push("/cinema")} />

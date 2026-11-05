@@ -2,7 +2,7 @@ import { getModel } from "@/lib/catalog";
 import { SIGNATURE_MODELS } from "@/lib/catalog/palettes";
 import { FACE_MOSAIC_MODELS } from "@/lib/catalog/open-tools";
 import { UPSCALE_FIRST_STEPS } from "@/lib/catalog/upscale-first";
-import { FINISH_CHOICES, REGEN_OFFERED } from "@/lib/catalog/regenerate";
+import { FINISH_CHOICES, REGEN_MODEL } from "@/lib/catalog/regenerate";
 import type { Preset } from "@/lib/catalog/types";
 import type { StudioConfig } from "@/components/studio/studio-context";
 
@@ -129,6 +129,8 @@ export const LIPSYNC_STUDIO: StudioConfig = {
   promptOptional: true,
   voiceFacts: true,
   voiceFirst: true,
+  // A talking character from words, not a re-sync of footage: Kandinsky 6.0 speaks the prompt's quoted lines with its own voice.
+  related: { href: "/video", label: "No voice yet? Make a talking character from words with Kandinsky 6.0", models: { cloud: "kandinsky-6", open: "oss-kandinsky6" } },
 };
 
 export const UPSCALE_STUDIO: StudioConfig = {
@@ -155,8 +157,12 @@ export const VIDEO_UPSCALE_STUDIO: StudioConfig = {
   subtitle: "Upscale a clip to 1080p, 4K or up to 8K, and restore faces, textures and text.",
   // Archive footage (scans, tape, black and white) is restored and colourised first: Fuobe Restore rebuilds it, then upscales.
   firstSteps: UPSCALE_FIRST_STEPS,
-  // On your GPU: SeedVR2 "Restore · faithful" and Open-H3 "Regenerate · creative" side by side (GPU-only: nobody hosts it).
-  ...(REGEN_OFFERED && { finishChoices: FINISH_CHOICES }),
+  // On your GPU: SeedVR2 "Restore · faithful" and NVIDIA's "Quick · RTX" side by side (the row adds Quick · RTX), with
+  // Open-H3 "Regenerate · creative" beside them (GPU-only: nobody hosts it). It needs a 48 GB card, so its choice says so
+  // (own-setup.ts), and a visitor runs it on its own GPU only.
+  finishChoices: FINISH_CHOICES,
+  // Open-H3 Regenerate stays out of the model list (its choice above is how it is picked); the composer still finds it.
+  extraModels: [REGEN_MODEL],
   slots: [{ key: "video", label: "Video", accept: "video", required: true }],
   defaultModels: { cloud: "topaz-video", open: "oss-seedvr2" },
   clipFacts: true,
@@ -477,6 +483,22 @@ export const VIDEO_MATTE_STUDIO: StudioConfig = {
   slots: [{ key: "video", label: "Video", accept: "video", required: true }],
   defaultModels: { cloud: "bria-video-bg", open: "oss-video-matte-birefnet" },
   promptOptional: true,
+};
+
+/**
+ * Video tools → Green screen (nm10-keying): footage shot on a green screen, keyed with the green spill cleaned off the
+ * edges (both keyers despill green only). Its models are the keyers (ModelOptions.greenScreen): CorridorKey 2.0 on your GPU,
+ * Bria's green-screen despill in the cloud. Remove background lists the others.
+ */
+export const VIDEO_KEY_STUDIO: StudioConfig = {
+  ...VIDEO_MATTE_STUDIO,
+  hero: "Key out a green screen",
+  subtitle:
+    "Footage shot on a green screen, keyed clean with the green spill taken off hair and edges. On your GPU, get the cut-out, its mask or the clean foreground as WebM, ProRes 4444 or EXR; in the cloud, the cut-out as a transparent WebM.",
+  placeholder: "",
+  greenScreen: true,
+  defaultModels: { cloud: "bria-green-screen", open: "oss-video-key-corridorkey" },
+  hidePrompt: true,
 };
 
 export const VIDEO_DEPTH_STUDIO: StudioConfig = {

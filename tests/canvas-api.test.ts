@@ -216,7 +216,7 @@ describe("canvas API", () => {
       // Cloud nodes are refused with a reason.
       res = await run.POST(req("POST", { graph: board }), ctx(id));
       expect(res.status).toBe(422);
-      expect(((await res.json()) as { error: string }).error).toMatch(/^Nano Banana Pro is a cloud model, which isn't available here/);
+      expect(((await res.json()) as { error: string }).error).toMatch(/^Nano Banana Pro is a cloud model: pick an open-source model/);
       // The open variant runs.
       res = await run.POST(req("POST", {}), ctx(c.id));
       expect(res.status).toBe(201);

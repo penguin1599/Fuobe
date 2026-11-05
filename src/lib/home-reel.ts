@@ -6,14 +6,15 @@
 import { pickWidth, type Sized } from "@/lib/media-pick";
 
 /**
- * One clip of the reel: its preset, where the tile anchors it (object-position), and its copies in each width.
+ * One clip of the reel: its preset (or its name, for a clip made for the tile), where the tile anchors it
+ * (object-position; without one, the tile's stylesheet frames it), and its copies in each width.
  * `hold`: how long its last frame stays once it ends, before the next clip fades in over it (ms). Without one, the fade
  * starts a fade's length before its end. `fade`: how long its crossfade into the next clip takes (ms; REEL_FADE_MS
  * unless set).
  */
 export interface ReelClip {
   id: string;
-  position: string;
+  position?: string;
   clips: Sized[];
   hold?: number;
   fade?: number;
@@ -52,3 +53,19 @@ export const fadeDue = (t: number, d: number, c: Pick<ReelClip, "fade" | "hold">
 
 /** How far through the whole reel it is (0 to 1), playing clip `i` of `n` at `t` of its `d` seconds. */
 export const reelProgress = (i: number, n: number, t: number, d: number): number => (i + (d > 0 ? Math.min(1, Math.max(0, t / d)) : 0)) / n;
+
+/**
+ * A clip that shows a swap as it happens (the Genjutsu tile, scripts/gen-home-bento.mjs WIPES): a divider sweeps across
+ * it, the swapped take left of it and the original right of it. `labels`: the words for either side (the original,
+ * then the swap). `line`: where the divider is on each frame, a share of the frame's width (under 0 or over 1 when it
+ * is outside the frame). `fadeFrom`: the frame its fade to dark starts on (the words go with the picture).
+ */
+export interface ReelWipe {
+  labels: readonly string[];
+  fps: number;
+  fadeFrom: number;
+  line: readonly number[];
+}
+
+/** The frame of wipe `w` on screen at `t` seconds into its clip (its first or its last outside the clip). */
+export const wipeFrame = (w: Pick<ReelWipe, "fps" | "line">, t: number): number => Math.min(w.line.length - 1, Math.max(0, Math.floor(t * w.fps + 0.01)));

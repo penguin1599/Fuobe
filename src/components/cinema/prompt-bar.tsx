@@ -1,35 +1,6 @@
 "use client";
 
-import {
-  ArrowLeftToLine,
-  ArrowRightToLine,
-  ArrowUp,
-  AtSign,
-  AudioLines,
-  Box,
-  Check,
-  ChevronDown,
-  Clapperboard,
-  Clock,
-  Copy as CopyIcon,
-  FileVideo,
-  Grid2x2,
-  ImageIcon,
-  ImagePlus,
-  Loader2,
-  MapPin,
-  Maximize,
-  Plus,
-  RectangleHorizontal,
-  SlidersHorizontal,
-  Sparkles,
-  UserRoundPlus,
-  Video,
-  Volume2,
-  VolumeX,
-  Wand2,
-  X,
-} from "lucide-react";
+import { ArrowLeftToLine, ArrowRightToLine, ArrowUp, AtSign, AudioLines, Box, Check, ChevronDown, Clapperboard, Clock, Copy as CopyIcon, FileVideo, Globe, Grid2x2, ImageIcon, ImagePlus, Loader2, MapPin, Maximize, Plus, RectangleHorizontal, SlidersHorizontal, Sparkles, UserRoundPlus, Video, Volume2, VolumeX, Wand2, X } from "lucide-react";
 import { nanoid } from "nanoid";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -44,6 +15,8 @@ import { ShotsEditor } from "@/components/studio/shots-editor";
 import { ResponsivePanel } from "@/components/studio/responsive-panel";
 import { useEdgeFade } from "@/components/studio/use-edge-fade";
 import { uploadFile, useAssets, useIsOwner, useModelAccess, useStatus } from "@/lib/api";
+import { OwnSetupChip, OwnSetupMark } from "@/components/own-setup";
+import { ownSetupLabel, ownSetupOnly } from "@/lib/own-setup";
 import { offered } from "@/lib/model-access";
 import { getModel } from "@/lib/catalog";
 import {
@@ -57,8 +30,8 @@ import {
   IMAGE_RESOLUTIONS,
   ORIGINAL_LINES,
   VIDEO_ASPECTS,
-  VIDEO_RESOLUTIONS,
   checkReferences,
+  videoResolutionsFor,
   modelLine,
   planCinema,
   type DirectorSettings,
@@ -333,7 +306,7 @@ export interface PromptBarProps {
   onSettings: (patch: Partial<DirectorSettings>) => void;
   palettes: { name: string; hex: string[] }[];
   onPalettes: (p: { name: string; hex: string[] }[]) => void;
-  context: { cloudAllowed: boolean; civitai?: boolean };
+  context: { cloudAllowed: boolean; civitai?: boolean; worldcast?: boolean; worldReady?: boolean };
   brief: string;
   spentUsd: number;
   costCapUsd: number | null;
@@ -343,6 +316,8 @@ export interface PromptBarProps {
   onLocation: () => void;
   /** Blockout to film: a grey-box blockout (uploaded or built) as the take's camera, blocking and timing. */
   onBlockout?: () => void;
+  /** World mode (nm10-hy-nomas-world): a world described once, steered turn by turn. Absent when the engine mode is "Paid APIs only". */
+  onWorld?: () => void;
 }
 
 const ACTIONS: { id: BarAction; label: string; icon: typeof Video; hint: string }[] = [
@@ -355,6 +330,9 @@ const ACTIONS: { id: BarAction; label: string; icon: typeof Video; hint: string 
 export function PromptBar(props: PromptBarProps) {
   const { projectId, folderId, engine, draft, setDraft, settings, onSettings, context, brief, spentUsd, costCapUsd, elements, promptRef } = props;
   const generate = useCinemaGenerate(projectId);
+  // World mode on a visitor's own GPU: its mark until its graph has passed on this studio's GPU (src/lib/own-setup.ts).
+  const owner = useIsOwner();
+  const worldSetup = !owner && !context.worldReady ? ownSetupOnly("cinema:world") : null;
   const status = useStatus().data;
   const [movesOpen, setMovesOpen] = useState(false);
   const [preparing, setPreparing] = useState(false);
@@ -386,8 +364,6 @@ export function PromptBar(props: PromptBarProps) {
   // Reference clips make the take reference-to-video: the first image is then a reference, not the start frame.
   const refMode = plan.steps.find((s) => s.key === "main")?.request.op === "ref2v";
   const video = draft.mode === "video";
-  // Exact orbits start with a 3D depth step and run on the studio's own GPU: the owner's for now.
-  const owner = useIsOwner();
   const action = input.action;
   const busy = generate.isPending || preparing;
   // The take's length: the main clip, plus what an extend adds (Fuobe Cinema past 20 s in the cloud).
@@ -475,6 +451,10 @@ export function PromptBar(props: PromptBarProps) {
       ? "Describe the scene – the whole grid shares it"
       : "Describe your still – use @ to add characters & locations";
 
+  // MiniMax H3 adds a 2K tier (fal's 2K, or a 768p draft finished by Open-H3 Regenerate on your GPU).
+  const videoTiers = videoResolutionsFor(model);
+  // 2K on your GPU finishes with Open-H3 Regenerate: a 48 GB card, said with the tier (own-setup.ts).
+  const twoKSetup = ownSetupOnly("regenerate:h3-2k");
   // Secondary settings: inline on wide bars, in one Settings popover on narrow ones.
   const settingsItems: { label: string; node: React.ReactNode }[] = [
     {
@@ -489,8 +469,9 @@ export function PromptBar(props: PromptBarProps) {
           key="resolution"
           icon={Maximize}
           label="Resolution"
-          value={draft.resolution[draft.mode]}
-          options={video ? VIDEO_RESOLUTIONS : IMAGE_RESOLUTIONS}
+          value={video && !videoTiers.includes(draft.resolution.video) ? "1080p" : draft.resolution[draft.mode]}
+          options={video ? videoTiers : IMAGE_RESOLUTIONS}
+          describe={video && videoTiers.includes("2K") ? (v) => (v !== "2K" ? "" : model.engine === "open" ? `768p draft, then redrawn at 2K${twoKSetup ? ` · ${ownSetupLabel(twoKSetup)}` : " on your GPU"}` : "Rendered from a 768P base") : undefined}
           onChange={(v) => setDraft((d) => ({ resolution: { ...d.resolution, [d.mode]: v } }))}
         />
       ),
@@ -607,6 +588,23 @@ export function PromptBar(props: PromptBarProps) {
           <TooltipContent>Blockout to film: a grey box from Blender or built here sets the camera and timing</TooltipContent>
         </Tooltip>
       )}
+      {draft.mode === "video" && props.onWorld && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button type="button" onClick={() => {
+                setDirectorOpen(false);
+                props.onWorld!();
+              }} className={cn(chip, chipIdle)} aria-label="World: describe a world, then steer it turn by turn">
+              <Globe className="size-3.5" /> World
+              {worldSetup && <OwnSetupMark setup={worldSetup} />}
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>
+            World: describe a world once, then steer it turn by turn with words and camera moves (your GPU)
+            {worldSetup && <span className="block">{ownSetupLabel(worldSetup)}</span>}
+          </TooltipContent>
+        </Tooltip>
+      )}
     </>
   );
   const picks = directorPicks(settings, draft.mode);
@@ -685,9 +683,11 @@ export function PromptBar(props: PromptBarProps) {
       </div>
 
       {video && <MoveChips moves={draft.moves} onChange={(moves) => setDraft(withMoves(draft, moves))} />}
-      {video && owner && action === "generate" && takesExact(draft.moves[0]) && (
+      {video && action === "generate" && takesExact(draft.moves[0]) && (
         <div className="px-2 pb-1.5">
           <ExactOrbitControls compact engine={engine} value={draft.exact ?? null} defaults={exactDefaults(draft.moves[0])} onChange={(exact) => setDraft({ exact })} />
+          {/* The exact orbit films with a 48 GB GPU or a fal.ai key: said with its controls (own-setup.ts). */}
+          {!owner && <OwnSetupChip setup="fly-around:exact-orbit" className="mt-1" />}
         </div>
       )}
 

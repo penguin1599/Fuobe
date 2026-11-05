@@ -19,11 +19,16 @@ import {
   type PlanCaps,
 } from "@/lib/catalog/packs";
 import type { Engine, Generation, GenerationRequest } from "@/lib/catalog/types";
+import { accountInputProblem } from "./account-inputs";
+import { generationAccount } from "./account-library";
+import { AccountProjectError, createAccountProject, deleteAccountProject, getAccountProject, listAccountProjects, projectRefsProblem } from "./account-projects";
 import { createPipeline } from "./chains";
 import { db } from "./db";
 import { getElement } from "./elements";
 import { createGenerations, currentRequest, getGeneration, pickOutput, previewGeneration } from "./generations";
-import { trashGenerations } from "./library";
+import { deleteForever, trashGenerations } from "./library";
+import { ShortsError } from "./shorts";
+import { tenant, tenantAccount } from "./tenant";
 import { engineMode } from "./settings";
 import { isOffered } from "./model-access";
 import { loadManifest } from "./providers/comfyui";
@@ -32,7 +37,15 @@ import { loadManifest } from "./providers/comfyui";
  * Photodump / Instadump, Fashion Factory and Character Sheet runs: plan with the pure pack logic
  * (src/lib/catalog/packs.ts), validate every request, then create them as one batch so the feed and
  * the Library stack them under the run's name.
+ *
+ * A signed-in account (public sign-up) runs them inside asAccount (src/server/account-tool-run.ts): its packs and its
+ * characters are its own projects (account-projects.ts, kinds PACK_KIND and CHARACTER_KIND), never the owner's packs or
+ * elements, and its runs are its own generations on its own GPU or key. Which applies goes by tenantAccount().
  */
+
+/** An account's own packs and characters, in the account project store. */
+export const PACK_KIND = "photodump-pack";
+export const CHARACTER_KIND = "photo-character";
 
 // ---------------------------------------------------------------------------
 // User packs (Instadump "Create pack")
@@ -53,30 +66,100 @@ export interface UserPack {
 
 const toPack = (r: PackRow): UserPack => ({ id: r.id, name: r.name, refs: JSON.parse(r.refs_json) as string[], createdAt: r.created_at });
 
+/** A guest has no packs, characters or runs of its own: nothing to list, nothing to find. */
+const isGuest = () => tenant()?.kind === "guest";
+
+/** Your own packs, newest first: the owner's, or an account's own (never the owner's or another account's). */
 export function listUserPacks(): UserPack[] {
+  const account = tenantAccount();
+  if (account) return listAccountProjects(account, PACK_KIND).flatMap((p) => getUserPack(p.id) ?? []);
+  if (isGuest()) return [];
   return (db().prepare("SELECT * FROM photodump_packs ORDER BY created_at DESC").all() as PackRow[]).map(toPack);
 }
 
 export function getUserPack(id: string): UserPack | null {
+  const account = tenantAccount();
+  if (account) {
+    const p = getAccountProject<{ refs: string[] }>(account, PACK_KIND, id);
+    return p ? { id: p.id, name: p.name, refs: p.data.refs, createdAt: p.createdAt } : null;
+  }
+  if (isGuest()) return null;
   const r = db().prepare("SELECT * FROM photodump_packs WHERE id = ?").get(id) as PackRow | undefined;
   return r ? toPack(r) : null;
 }
 
-export function createUserPack(input: { name: string; refs: string[] }): UserPack {
+/** A pack's name and photos, checked (the same words for the owner and an account). */
+function packInput(input: { name: string; refs: string[] }): { name: string; refs: string[] } {
   const name = input.name.trim();
   if (!name) throw new Error("Give the pack a name");
   if (name.length > 60) throw new Error("Keep the pack name under 60 characters");
   const refs = [...new Set(input.refs)];
   if (!refs.length) throw new Error("Upload your reference set up to 15 photos");
   if (refs.length > MAX_PACK_REFS) throw new Error(`A pack holds up to ${MAX_PACK_REFS} photos`);
+  return { name, refs };
+}
+
+/** Only an account's own files (its uploads and results): another's, or the owner's, is refused with its status. */
+function ownFiles(account: string, files: string[]): void {
+  const problem = projectRefsProblem(account, { files });
+  if (problem) throw new AccountProjectError(problem.error, problem.status);
+}
+
+export function createUserPack(input: { name: string; refs: string[] }): UserPack {
+  const { name, refs } = packInput(input);
+  const account = tenantAccount();
+  if (account) {
+    ownFiles(account, refs);
+    const p = createAccountProject(account, PACK_KIND, { name, data: { refs }, summary: { count: refs.length } });
+    return { id: p.id, name: p.name, refs, createdAt: p.createdAt };
+  }
   const row: PackRow = { id: `user-${nanoid(8)}`, name, refs_json: JSON.stringify(refs), created_at: Date.now() };
   db().prepare("INSERT INTO photodump_packs (id, name, refs_json, created_at) VALUES (@id, @name, @refs_json, @created_at)").run(row);
   return toPack(row);
 }
 
 export function deleteUserPack(id: string): boolean {
+  const account = tenantAccount();
+  if (account) return deleteAccountProject(account, PACK_KIND, id);
+  if (isGuest()) return false;
   return db().prepare("DELETE FROM photodump_packs WHERE id = ?").run(id).changes > 0;
 }
+
+// ---------------------------------------------------------------------------
+// An account's characters (the owner's are elements, src/server/elements.ts)
+
+/** The photos an account's character keeps (Save as character takes a sheet, its views and the photos it came from). */
+export const MAX_CHARACTER_PHOTOS = 20;
+
+/** An account's character: a name and photos of one person. Its runs start from its first photo. */
+export interface PhotoCharacter {
+  id: string;
+  name: string;
+  references: string[];
+  createdAt: number;
+}
+
+export function listPhotoCharacters(account: string): PhotoCharacter[] {
+  return listAccountProjects(account, CHARACTER_KIND).flatMap((p) => getPhotoCharacter(account, p.id) ?? []);
+}
+
+export function getPhotoCharacter(account: string, id: string): PhotoCharacter | null {
+  const p = getAccountProject<{ references: string[] }>(account, CHARACTER_KIND, id);
+  return p ? { id: p.id, name: p.name, references: p.data.references, createdAt: p.createdAt } : null;
+}
+
+export function createPhotoCharacter(account: string, input: { name: string; references: string[] }): PhotoCharacter {
+  const name = input.name.replace(/\s+/g, " ").trim();
+  if (!name) throw new Error("Give the character a name");
+  if (name.length > 60) throw new Error("Keep the name under 60 characters");
+  const references = [...new Set(input.references)].slice(0, MAX_CHARACTER_PHOTOS);
+  if (!references.length) throw new Error("Add a photo of them first");
+  ownFiles(account, references);
+  const p = createAccountProject(account, CHARACTER_KIND, { name, data: { references }, summary: { cover: references[0], photos: references.length } });
+  return { id: p.id, name: p.name, references, createdAt: p.createdAt };
+}
+
+export const deletePhotoCharacter = (account: string, id: string): boolean => deleteAccountProject(account, CHARACTER_KIND, id);
 
 // ---------------------------------------------------------------------------
 // Planning helpers
@@ -94,6 +177,15 @@ export function runEngine(asked: Engine): Engine {
 
 export function subjectFor(input: { elementId?: string; selfie?: string }): PhotoSubject {
   if (input.elementId) {
+    // An account's own character: its first photo goes in as the picture (an @mention reaches the owner's elements
+    // only). A guest has none, and neither ever reaches the owner's.
+    const account = tenantAccount();
+    if (account) {
+      const c = getPhotoCharacter(account, input.elementId);
+      if (!c?.references.length) throw new Error("That character no longer exists");
+      return { kind: "selfie", url: c.references[0], name: c.name };
+    }
+    if (isGuest()) throw new Error("That character no longer exists");
     const el = getElement(input.elementId);
     if (!el) throw new Error("That character no longer exists");
     if (el.kind !== "character") throw new Error(`${el.name} isn't a character`);
@@ -161,6 +253,25 @@ export function createBatch(requests: GenerationRequest[], title: string): { bat
   return { batchId, items };
 }
 
+/** One step of a run as it will be created, for an account's checks: its request, and how many earlier steps it waits for. */
+export interface PlannedStep {
+  request: GenerationRequest;
+  deps?: number;
+}
+
+/**
+ * A run's steps for an account's checks (src/server/account-tool-run.ts plan): sized as they will be created, and
+ * every file they read must be the account's own (a pack's or a character's photos too). Called inside asAccount.
+ */
+export function ownSteps(steps: PlannedStep[]): PlannedStep[] {
+  const account = tenantAccount();
+  for (const s of steps) {
+    const problem = account ? accountInputProblem(s.request, account) : null;
+    if (problem) throw new ShortsError(problem.error, problem.status);
+  }
+  return steps.map((s) => ({ ...s, request: fitted(s.request) }));
+}
+
 /** The steps a generation waited for (its chain), by id. */
 function dependsOn(id: string): string[] {
   const dep = (db().prepare("SELECT depends_on FROM generations WHERE id = ?").get(id) as { depends_on: string | null } | undefined)?.depends_on;
@@ -192,8 +303,27 @@ const RETRY_FEATURES = new Set(["photodump", "fashion", "character-sheet", "app:
  * retried as one job of its own share of photos.
  */
 export function retryPhoto(id: string): Generation[] {
+  return startRetry(planRetry(id));
+}
+
+/** How a photo runs again (planRetry), before anything is created. */
+export type RetryPlan =
+  /** Its earlier step failed too: both run again, chained as before. */
+  | { kind: "both"; g: Generation; step: Generation; request: GenerationRequest }
+  /** Its earlier steps finished but it never launched: it waits for them again. */
+  | { kind: "wait"; g: Generation; request: GenerationRequest; deps: string[] }
+  /** On its own: the same request (one job's share of photos). */
+  | { kind: "again"; g: Generation; request: GenerationRequest };
+
+/**
+ * Check a photo can run again and plan how, creating nothing. An account retries only its own photos (another's, or
+ * the owner's, reads as gone); a guest has none.
+ */
+export function planRetry(id: string): RetryPlan {
   const g = getGeneration(id);
-  if (!g) throw new Error("That photo is gone");
+  const account = tenantAccount();
+  const mine = !g ? false : account ? generationAccount(id) === account : !isGuest();
+  if (!g || !mine) throw new ShortsError("That photo is gone", 404);
   if (!RETRY_FEATURES.has(g.feature)) throw new Error("This result isn't part of a photo run");
   if (g.status !== "failed" && g.status !== "canceled") throw new Error("Only a failed or canceled photo can be retried");
   // A photo made on a model Fuobe retired (Soul 2.0 for a Cast sheet, the AI Influencer app's model) runs again on the
@@ -206,28 +336,45 @@ export function retryPhoto(id: string): Generation[] {
   if (before.some((d) => d?.status !== "succeeded")) {
     const step = before[0];
     if (deps.length !== 1 || !step || dependsOn(step.id).length || (step.status !== "failed" && step.status !== "canceled")) throw new Error("The step before it didn't finish — press Generate to run both again");
-    const { items } = createPipeline(
-      [
-        { key: "before", request: currentRequest(step.request).request },
-        { key: "photo", request, after: "before" },
-      ],
-      g.batchId ? { batchId: g.batchId } : {},
-    );
-    trashGenerations([step.id, id]);
-    return items;
+    return { kind: "both", g, step, request };
   }
   // Its earlier steps finished, but it never launched (it failed or was canceled while it waited): it waits
   // for them again, so the runner hands it their outputs (the sheet goes in as image 1) and launches it.
-  if (deps.length && !gotChainInputs(g, before as Generation[])) {
-    const items = createGenerations(fitted(request), { ...(g.batchId && { batchId: g.batchId }), dependsOn: deps });
-    trashGenerations([id]);
-    return items;
-  }
+  if (deps.length && !gotChainInputs(g, before as Generation[])) return { kind: "wait", g, request: fitted(request), deps };
   const req = fitted(request);
   const p = previewGeneration(req);
   const per = p.jobs > 1 ? Math.max(1, Math.round(p.outputs / p.jobs)) : undefined;
-  const items = createGenerations(per ? { ...req, params: { ...req.params, numOutputs: per } } : req, g.batchId ? { batchId: g.batchId } : {});
-  trashGenerations([id]);
+  return { kind: "again", g, request: per ? { ...req, params: { ...req.params, numOutputs: per } } : req };
+}
+
+/** A retry's requests, for an account's checks: each one, and how many earlier steps it waits for. */
+export function retrySteps(p: RetryPlan): { request: GenerationRequest; deps?: number }[] {
+  if (p.kind === "both") return [{ request: currentRequest(p.step.request).request }, { request: p.request, deps: 1 }];
+  if (p.kind === "wait") return [{ request: p.request, deps: p.deps.length }];
+  return [{ request: p.request }];
+}
+
+/**
+ * Run it again in its batch. The photo it replaces goes to the owner's Trash; an account has no Trash, so its own is
+ * deleted for good.
+ */
+export function startRetry(p: RetryPlan): Generation[] {
+  const { g } = p;
+  const batch = g.batchId ? { batchId: g.batchId } : {};
+  const drop = (list: string[]) => (tenantAccount() ? void deleteForever(list) : void trashGenerations(list));
+  if (p.kind === "both") {
+    const { items } = createPipeline(
+      [
+        { key: "before", request: currentRequest(p.step.request).request },
+        { key: "photo", request: p.request, after: "before" },
+      ],
+      batch,
+    );
+    drop([p.step.id, g.id]);
+    return items;
+  }
+  const items = p.kind === "wait" ? createGenerations(p.request, { ...batch, dependsOn: p.deps }) : createGenerations(p.request, batch);
+  drop([g.id]);
   return items;
 }
 
@@ -258,9 +405,12 @@ export function previewPhotodump(input: PhotodumpRun) {
   }
 }
 
+/** A Photodump's steps, for an account's checks. */
+export const photodumpSteps = (input: PhotodumpRun) => ownSteps(photodumpPlan(input).plan.requests.map((request) => ({ request })));
+
 export function createPhotodump(input: PhotodumpRun) {
   const { pack, subject, plan } = photodumpPlan(input);
-  const who = subject.kind === "element" ? subject.name : "Selfie";
+  const who = subject.kind === "element" ? subject.name : (subject.name ?? "Selfie");
   const { batchId, items } = createBatch(plan.requests, `${pack.name} · ${who}`);
   return { batchId, items, notes: plan.notes, modelId: plan.modelId };
 }
@@ -279,7 +429,7 @@ function fashionRequests(input: FashionRun): { requests: GenerationRequest[]; ti
   const engine = runEngine(input.engine);
   if (input.step === "base") {
     const subject = subjectFor({ elementId: input.elementId });
-    if (subject.kind !== "element") throw new Error("Pick or create a character first");
+    if (subject.kind === "selfie" && !subject.name) throw new Error("Pick or create a character first");
     return { requests: [fashionBaseRequest(t, subject, engine, planCaps())], title: `${t.name} · ${subject.name}` };
   }
   // A model switched off in Settings → Models & licences (or Fuobe Try-On with its try-on LoRA off) moves on to the next.
@@ -294,6 +444,9 @@ export function previewFashion(input: FashionRun) {
     return { error: (e as Error).message, notes: [] };
   }
 }
+
+/** A Fashion Factory step's requests, for an account's checks. */
+export const fashionSteps = (input: FashionRun) => ownSteps(fashionRequests(input).requests.map((request) => ({ request })));
 
 export function createFashion(input: FashionRun) {
   const { requests, title } = fashionRequests(input);
@@ -358,6 +511,9 @@ export function previewSheet(input: SheetRun) {
     return { error: (e as Error).message, notes: [] };
   }
 }
+
+/** A Character Sheet's request, for an account's checks. */
+export const sheetSteps = (input: SheetRun) => ownSteps([{ request: { ...sheetRequest(input).request, title: "Character sheet" } }]);
 
 export function createSheet(input: SheetRun) {
   const { request, notes } = sheetRequest(input);

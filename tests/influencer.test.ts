@@ -28,6 +28,7 @@ import {
   planInfluencer,
   RAIL_ORDER,
   resetPicks,
+  RETIRED_OPTIONS,
   seededRandom,
   setTier,
   shuffleInfluencer,
@@ -57,7 +58,8 @@ describe("option data (generated from the research JSON)", () => {
   it("has the 19 categories, every option with its id, label, swatch and slot, and the 6 creature types", () => {
     expect(INFLUENCER_CATEGORIES).toHaveLength(19);
     expect(INFLUENCER_CATEGORIES.map((c) => [c.id, c.label, c.max])).toEqual(research.categories.map((c) => [c.id, c.label, c.max]));
-    for (const c of research.categories) {
+    // Gender is Fuobe's own (Male, Female, Other: see "gender" below); the rest is the research's.
+    for (const c of research.categories.filter((x) => x.id !== "gender")) {
       const ours = INFLUENCER_CATEGORIES.find((x) => x.id === c.id)!;
       expect(ours.options.map((o) => [o.id, o.label, o.swatch, o.slot])).toEqual(c.options.map((o) => [o.id, o.label, o.swatch?.toLowerCase(), o.slot]));
     }
@@ -106,6 +108,44 @@ describe("what each tier shows", () => {
       expect(visible(c.id, "hair")).toContain("hs_lampshade");
     }
     expect(optionVisible(getOption("skin_tone", "st_fair")!, "cats", "skin_tone")).toBe(false);
+  });
+});
+
+describe("gender", () => {
+  it("is exactly Male, Female and Other, in that order, in every human tier", () => {
+    for (const t of HUMAN) {
+      const gender = categoriesFor(t).find((c) => c.id === "gender")!;
+      expect(gender.options.filter((o) => optionVisible(o, t, "gender")).map((o) => [o.id, o.label])).toEqual([
+        ["male", "Male"],
+        ["female", "Female"],
+        ["other", "Other"],
+      ]);
+    }
+    expect(INFLUENCER_CATEGORIES.find((c) => c.id === "gender")!.options.map((o) => o.id)).toEqual(["male", "female", "other"]);
+  });
+
+  it("words each option in the prompt", () => {
+    expect(describeInfluencer(S("normal", { gender: ["male"] }))).toBe("A man.");
+    expect(describeInfluencer(S("normal", { gender: ["female"] }))).toBe("A woman.");
+    expect(describeInfluencer(S("normal", { gender: ["other"] }))).toBe("An androgynous person.");
+    expect(describeInfluencer(S("normal", { gender: ["other"], age: ["senior"] }))).toContain("androgynous person");
+    expect(describeInfluencer(S("cats", { gender: ["other"] }))).toBe("An androgynous anthropomorphic cat.");
+    for (const id of ["male", "female", "other"]) expect(compileSheetPrompt({ state: S("freak", { gender: [id] }), direction: "" })).toContain(PHRASES[id]);
+  });
+
+  it("turns old Trans man, Trans woman and Non-binary picks into Male, Female and Other", () => {
+    expect(RETIRED_OPTIONS.gender).toEqual({ trans_man: "male", trans_woman: "female", non_binary: "other" });
+    for (const [old, now] of [["trans_man", "male"], ["trans_woman", "female"], ["non_binary", "other"]]) {
+      for (const tier of HUMAN) expect(cleanState({ tier, picks: { gender: [old] } }).state.picks).toEqual({ gender: [now] });
+      expect(cleanState({ tier: "cats", picks: { gender: [old] } }).state.picks).toEqual({ gender: [now] });
+    }
+    expect(cleanState({ tier: "normal", picks: { gender: ["trans_man", "male"] } }).state.picks).toEqual({ gender: ["male"] });
+    expect(cleanState({ tier: "normal", picks: { gender: ["toString"] } }).state.picks).toEqual({});
+  });
+
+  it("Shuffle picks only shown options", () => {
+    const shown = new Set(["male", "female", "other"]);
+    for (let i = 1; i <= 200; i++) expect(shown.has(shuffleInfluencer(S("normal"), seededRandom(i)).picks.gender[0])).toBe(true);
   });
 });
 
@@ -301,25 +341,25 @@ describe("Shuffle", () => {
     for (const s of check(lock("normal", { body_type: ["body_heavy"], proportions: ["pr_waist"] }))) expect(tall).not.toContain(s.picks.height?.[0]);
   });
 
-  it("gives facial hair only to men and trans men", () => {
+  it("gives facial hair only to men", () => {
     for (const s of runs(S("total"), 600)) {
       const g = s.picks.gender[0];
-      if (g !== "male" && g !== "trans_man") expect(s.picks.facial_hair).toEqual(["fh_none"]);
+      if (g !== "male") expect(s.picks.facial_hair).toEqual(["fh_none"]);
     }
     expect(new Set(runs(S("total"), 600).filter((s) => s.picks.gender[0] === "male").map((s) => s.picks.facial_hair[0])).size).toBeGreaterThan(4);
   });
 
   it("keeps locked picks, and what a photo decides", () => {
-    const locked = toggleLock(S("freak", { gender: ["non_binary"], hair: ["hs_wings"] }), "hair");
+    const locked = toggleLock(S("freak", { gender: ["other"], hair: ["hs_wings"] }), "hair");
     for (const s of runs(locked, 50)) expect(s.picks.hair).toEqual(["hs_wings"]);
-    const fixed = S("normal", { gender: ["trans_woman"], ethnicity_origin_base: ["indian"], skin_tone: ["st_tan"], age: ["senior"], eye_color: ["eye_green"] });
+    const fixed = S("normal", { gender: ["other"], ethnicity_origin_base: ["indian"], skin_tone: ["st_tan"], age: ["senior"], eye_color: ["eye_green"] });
     for (const s of runs(fixed, 50, { reference: true })) expect(s.picks).toMatchObject(fixed.picks);
     // Bold keeps gender, ethnicity and age; skin and eyes shuffle.
     const bold = runs({ ...fixed, tier: "freak" }, 50, { reference: true });
-    for (const s of bold) expect(s.picks).toMatchObject({ gender: ["trans_woman"], ethnicity_origin_base: ["indian"], age: ["senior"] });
+    for (const s of bold) expect(s.picks).toMatchObject({ gender: ["other"], ethnicity_origin_base: ["indian"], age: ["senior"] });
     expect(bold.some((s) => s.picks.skin_tone[0] !== "st_tan")).toBe(true);
     // Without a photo nothing is kept.
-    expect(runs(fixed, 50).some((s) => s.picks.gender[0] !== "trans_woman")).toBe(true);
+    expect(runs(fixed, 50).some((s) => s.picks.gender[0] !== "other")).toBe(true);
   });
 
   it("leaves the type, species and body colour alone", () => {

@@ -2,6 +2,7 @@ import "server-only";
 import crypto from "node:crypto";
 import { nanoid } from "nanoid";
 import type { ComputerFacts } from "@/lib/relay";
+import { accountById } from "../auth";
 import { db } from "../db";
 import type { Principal } from "./tasks";
 
@@ -286,7 +287,19 @@ export function denyPairing(code: string): boolean {
   return !!c && db().prepare("UPDATE relay_pairings SET state = 'denied' WHERE code = ? AND state = 'waiting'").run(c).changes > 0;
 }
 
-export type PollAnswer = { state: "waiting"; expiresAt: number } | { state: "approved"; token: string; workerId: string; name: string } | { state: "gone" };
+export type PollAnswer = { state: "waiting"; expiresAt: number } | { state: "approved"; token: string; workerId: string; name: string; account: string } | { state: "gone" };
+
+/**
+ * Who approved a pairing, for the ComfyUI's own window ("Approved by a•••@example.com"): the account's email with most
+ * of its name hidden, or the studio's owner.
+ */
+export function approverLabel(principal: string | null): string {
+  if (principal === "owner") return "the studio's owner";
+  const account = principal?.startsWith("acct:") ? accountById(principal.slice(5)) : undefined;
+  if (!account) return "an account";
+  const [name, domain] = account.email.split("@");
+  return `${name.slice(0, name.length > 4 ? 2 : 1)}•••@${domain ?? ""}`;
+}
 
 /**
  * The ComfyUI asks whether its code was approved (with its secret). Approved: its token, once (made now; only its hash
@@ -303,6 +316,6 @@ export function pollPairing(id: unknown, secret: unknown, now = Date.now()): Pol
     if (row.state !== "approved" || !row.worker_id) return { state: "gone" };
     const token = newWorkerToken();
     const ok = d.prepare("UPDATE relay_workers SET token_hash = ? WHERE id = ? AND token_hash = ? AND revoked_at IS NULL").run(sha(token), row.worker_id, `pending:${row.id}`).changes > 0;
-    return ok ? { state: "approved", token, workerId: row.worker_id, name: row.name } : { state: "gone" };
+    return ok ? { state: "approved", token, workerId: row.worker_id, name: row.name, account: approverLabel(row.principal) } : { state: "gone" };
   })();
 }

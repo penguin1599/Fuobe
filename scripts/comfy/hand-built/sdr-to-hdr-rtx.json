@@ -1,0 +1,80 @@
+{
+  "1": {
+    "class_type": "LoadVideo",
+    "inputs": {
+      "file": "input.mp4"
+    },
+    "_meta": {
+      "title": "SDR video (video)"
+    }
+  },
+  "2": {
+    "class_type": "GetVideoComponents",
+    "inputs": {
+      "video": [
+        "1",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "Frames, sound, fps"
+    }
+  },
+  "3": {
+    "class_type": "RTXTrueHDR",
+    "inputs": {
+      "images": [
+        "2",
+        0
+      ],
+      "contrast": 100,
+      "saturation": 100,
+      "middle_gray": 50,
+      "luminance": 650,
+      "debanding": true,
+      "output_colorspace": "HDR"
+    },
+    "_meta": {
+      "title": "RTX Video HDR (peak nits; HDR = BT.2020 HLG, HDR PQ = BT.2020 PQ)"
+    }
+  },
+  "4": {
+    "class_type": "CreateVideo",
+    "inputs": {
+      "images": [
+        "3",
+        0
+      ],
+      "fps": [
+        "2",
+        2
+      ],
+      "audio": [
+        "2",
+        1
+      ],
+      "bit_depth": 10,
+      "color_space": "HDR",
+      "codec": "h264"
+    },
+    "_meta": {
+      "title": "10-bit, tagged with the same transfer as node 3"
+    }
+  },
+  "5": {
+    "class_type": "SaveVideo",
+    "inputs": {
+      "video": [
+        "4",
+        0
+      ],
+      "filename_prefix": "fuobe/sdr-to-hdr-rtx",
+      "format": "mp4",
+      "format.codec": "h264",
+      "codec": "auto"
+    },
+    "_meta": {
+      "title": "Save HDR MP4"
+    }
+  }
+}

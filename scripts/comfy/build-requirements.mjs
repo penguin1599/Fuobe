@@ -25,12 +25,14 @@ export const LIBRARY = path.join(REPO, 'workflows', 'comfyui');
 
 /** ComfyUI's folder_paths.supported_pt_extensions: the files a folder listing shows. */
 export const PT_EXTENSIONS = ['.ckpt', '.pt', '.pt2', '.bin', '.pth', '.safetensors', '.pkl', '.sft'];
-
 /**
- * Folders ComfyUI lists only when a loaded pack registers them (GET /models/<folder>): ComfyUI-Qwen-Watermark reads
- * models/sams by its path without registering it, so a listing can't tell whether its SAM file is there.
+ * Model folders a pack reads straight from disk without registering them with ComfyUI, so GET /models never lists them
+ * and a folder listing can't tell whether their files are there: their files are 'unobservable' rather than missing.
+ * Hi3D: Comfyui-Hi3d-T8 reads folder_paths.models_dir/Hi3D (a 'hi3d' folder only exists when extra_model_paths.yaml adds one).
+ * sams: ComfyUI-Qwen-Watermark reads models/sams by its path without registering it, so a listing can't tell whether its
+ * SAM file is there.
  */
-const UNLISTED_FOLDERS = new Set(['sams']);
+export const UNLISTED_FOLDERS = new Set(['Hi3D', 'sams']);
 
 /** Core classes of the newest families, read one by one when /object_info can't be: an older ComfyUI lacks them first. */
 const NEWEST_CORE = /^(SeedVR2|Trellis2|SAM3|LTXV|LTXAV|ComfyMathExpression|TextEncodeQwenImage21|QwenImage21Cache|Ideogram4|TextEncodeFibo2|DualModelGuider|CFGOverride)/;
@@ -122,6 +124,10 @@ export function buildIndex({ manifest, graphs, subset, packs, pins, packClasses 
   }
   const packFolder = new Map();
   for (const [name, p] of Object.entries(packs)) for (const f of p.folders ?? []) packFolder.set(f, name);
+  // A pack that registers models/<folder> under another name (kandinsky6: models/audio_vae as kandinsky6_audio_vae):
+  // ComfyUI lists the folder only under that name, so the presence check reads that listing.
+  const listAs = new Map();
+  for (const p of Object.values(packs)) for (const [f, as] of Object.entries(p.listAs ?? {})) listAs.set(f, as);
 
   const files = {};
   for (const key of [...refs.keys()].sort()) {
@@ -155,6 +161,7 @@ export function buildIndex({ manifest, graphs, subset, packs, pins, packClasses 
       ...(pin?.sha256 && (ext !== '.safetensors' || !hfParts(url)) && { sha256: pin.sha256 }),
       gated: r.gated,
       ...(packFolder.has(r.folder) && { packFolder: packFolder.get(r.folder) }),
+      ...(listAs.has(r.folder) && { listFolder: listAs.get(r.folder) }),
       presence,
       ...(loaders.size && { loaders: [...loaders.values()].sort((a, b) => (a[0] + a[1]).localeCompare(b[0] + b[1])) }),
     };
@@ -172,7 +179,7 @@ export function buildIndex({ manifest, graphs, subset, packs, pins, packClasses 
     const core = new Set();
     const byPack = {};
     for (const n of wf.customNodes) byPack[n.name] ??= new Set();
-    for (const cls of new Set(Object.values(graph).map((n) => n.class_type))) {
+    for (const cls of new Set([...Object.values(graph).map((n) => n.class_type), ...(wf.runtimeNodes ?? [])])) {
       const owner = ownerOf(cls, wf);
       if (!owner) continue;
       if (owner === 'core') core.add(cls);
@@ -189,6 +196,8 @@ export function buildIndex({ manifest, graphs, subset, packs, pins, packClasses 
       optional: uniq(wf.models.filter((m) => m.optional).map((m) => `${m.folder}/${m.file}`)),
       vramGb: Number(wf.vramGb) || 0,
       isolated: wf.worker === 'isolated',
+      // The card its nodes need (the NVIDIA RTX Video nodes): readiness checks it against the GPU's name.
+      ...(wf.gpu && { gpu: wf.gpu }),
       firstRun: wf.autoDownloads ?? [],
       ...(wf.validated && { validated: true }),
     };
@@ -233,7 +242,7 @@ export function buildIndex({ manifest, graphs, subset, packs, pins, packClasses 
     v: 1,
     hash: '',
     comfyui: { min: manifest.comfyuiVersion, testedCommit: String(manifest.comfyuiCommit ?? '').slice(0, 8) },
-    folders: uniq(Object.values(files).map((f) => f.folder)),
+    folders: uniq(Object.values(files).map((f) => f.listFolder ?? f.folder)),
     sentinels,
     packs: indexPacks,
     files,

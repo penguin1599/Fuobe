@@ -110,14 +110,15 @@ describe("the proxy: PR #15's routes as main treats their kind", () => {
     process.env.FUOBE_PUBLIC_SIGNUP = "1";
     for (const p of ["/api/turnaround/estimate", "/api/turnaround?preview=1", "/api/audio-tools?preview=1"]) expect(passed(proxy(req(p, { method: "POST" }))), p).toBe(true);
     // Signing up wouldn't run these (an account's own GPU or key doesn't either): the account's answer, not the card.
-    for (const p of ["/api/turnaround", "/api/audio-tools", "/api/shorts/sessions", "/api/katana", "/api/marketing/runs", "/api/layers/l1/jobs", "/api/layout/plan"]) {
+    for (const p of ["/api/marketing/runs", "/api/layers/l1/jobs", "/api/layout/plan"]) {
       const r = proxy(req(p, { method: "POST" }));
       expect(r.status, p).toBe(403);
       expect(r.headers.get(access.GUEST_HEADER), p).toBeNull();
       expect(await r.json(), p).toEqual({ error: access.OWN_GPU_TOOL_MESSAGE, code: "own-gpu-tool" });
     }
-    // The studios' runs, an upload and a save to the library: signing up is the next step there.
-    for (const p of ["/api/generations", "/api/media/probe", "/api/audio-tools/export?offset=0", "/api/canvases"]) {
+    // The studios' runs, the tools an account runs on its own GPU (Shorts, Turnaround video, Katana, the Audio tools), an
+    // upload and a save to the library: signing up is the next step there.
+    for (const p of ["/api/generations", "/api/shorts/sessions", "/api/turnaround", "/api/katana", "/api/audio-tools", "/api/media/probe", "/api/audio-tools/export?offset=0", "/api/canvases"]) {
       const r = proxy(req(p, { method: "POST" }));
       expect(r.status, p).toBe(401);
       expect(r.headers.get(access.GUEST_HEADER), p).toBe("1");
@@ -125,36 +126,37 @@ describe("the proxy: PR #15's routes as main treats their kind", () => {
     }
   });
 
-  it("gives an account the price checks, own-gpu-tool for the runs (a GPU wouldn't run them), and library for the Export mix", async () => {
+  it("gives an account the price checks, Connect your GPU for the Audio tools, and its own Export mix", async () => {
     process.env.FUOBE_PUBLIC_SIGNUP = "1";
     const cookie = auth.createSession(newAccount().id).value;
     for (const p of ["/api/turnaround/estimate", "/api/turnaround?preview=1", "/api/audio-tools?preview=1"]) expect(passed(proxy(req(p, { method: "POST", cookie }))), p).toBe(true);
-    for (const p of ["/api/turnaround", "/api/audio-tools"]) {
-      const r = proxy(req(p, { method: "POST", cookie }));
-      expect(r.status, p).toBe(403);
-      expect(r.headers.get(access.CONNECT_GPU_HEADER), p).toBeNull();
-      expect((await r.json()).code, p).toBe("own-gpu-tool");
-    }
-    // The mix is saved to the owner's Library: a library change, whatever the GPU.
-    const save = proxy(req("/api/audio-tools/export?offset=0", { method: "POST", cookie }));
-    expect(save.status).toBe(403);
-    expect(save.headers.get(access.CONNECT_GPU_HEADER)).toBeNull();
-    expect((await save.json()).code).toBe("library");
+    // The Audio tools run on its own GPU or key (tests/account-audio.test.ts): with neither, it's asked to connect one.
+    const tools = proxy(req("/api/audio-tools", { method: "POST", cookie }));
+    expect(tools.status).toBe(403);
+    expect(tools.headers.get(access.CONNECT_GPU_HEADER)).toBe("1");
+    expect((await tools.json()).code).toBe("connect-gpu");
+    // The mix is kept as the account's own run (the route checks its room, run rate and the studio's checks), whatever the GPU.
+    expect(passed(proxy(req("/api/audio-tools/export?offset=0", { method: "POST", cookie })))).toBe(true);
   });
 
-  it("runs an account's MOSS-Image on its own GPU (the studios' generations); the tools say own-gpu-tool", async () => {
+  it("runs an account's MOSS-Image and the Audio tools on its own GPU; the other tools say own-gpu-tool", async () => {
     process.env.FUOBE_PUBLIC_SIGNUP = "1";
     const a = newAccount();
     const cookie = auth.createSession(a.id).value;
     auth.setAccountGpu(a.id, { url: "https://gpu.example" });
     expect(passed(proxy(req("/api/generations", { method: "POST", cookie })))).toBe(true);
-    for (const p of ["/api/turnaround", "/api/audio-tools", "/api/cinema/projects/p1/generate", "/api/layout/plan"]) {
+    // Turnaround video and the Audio tools run on its own GPU too (tests/account-video-tools.test.ts, account-audio.test.ts).
+    expect(passed(proxy(req("/api/turnaround", { method: "POST", cookie })))).toBe(true);
+    expect(passed(proxy(req("/api/audio-tools", { method: "POST", cookie })))).toBe(true);
+    for (const p of ["/api/layout/plan"]) {
       const r = proxy(req(p, { method: "POST", cookie }));
       expect(r.status, p).toBe(403);
       expect(r.headers.get(access.CONNECT_GPU_HEADER), p).toBeNull();
       expect((await r.json()).code, p).toBe("own-gpu-tool");
     }
-    expect((await proxy(req("/api/audio-tools/export?offset=0", { method: "POST", cookie })).json()).code).toBe("library");
+    expect(passed(proxy(req("/api/audio-tools/export?offset=0", { method: "POST", cookie })))).toBe(true);
+    // Cinema Studio's takes run on its own GPU too (tests/account-cinema.test.ts).
+    expect(passed(proxy(req("/api/cinema/projects/p1/generate", { method: "POST", cookie })))).toBe(true);
   });
 
   it("keeps the owner's runs and saves unchanged", () => {
@@ -165,19 +167,19 @@ describe("the proxy: PR #15's routes as main treats their kind", () => {
 });
 
 describe("Fly around under the sign-up rules", () => {
-  it("opens its price check to guests and accounts, and answers its run with own-gpu-tool", async () => {
+  it("opens its price check to guests and accounts; an account runs it on its own GPU and a guest signs up first", async () => {
     process.env.FUOBE_PUBLIC_SIGNUP = "1";
     expect(access.isPriceCheck("POST", "/api/fly-around", "?preview=1")).toBe(true);
     expect(access.isPriceCheck("POST", "/api/fly-around", "")).toBe(false);
     const a = newAccount();
     auth.setAccountGpu(a.id, { url: "https://gpu.example" });
     const cookie = auth.createSession(a.id).value;
-    for (const c of [undefined, cookie]) {
-      expect(passed(proxy(req("/api/fly-around?preview=1", { method: "POST", cookie: c })))).toBe(true);
-      const r = proxy(req("/api/fly-around", { method: "POST", cookie: c }));
-      expect(r.status).toBe(403);
-      expect((await r.json()).code).toBe("own-gpu-tool");
-    }
+    for (const c of [undefined, cookie]) expect(passed(proxy(req("/api/fly-around?preview=1", { method: "POST", cookie: c })))).toBe(true);
+    // Its run goes to the route, which runs it on the account's own GPU or key (tests/account-video-tools.test.ts).
+    expect(passed(proxy(req("/api/fly-around", { method: "POST", cookie })))).toBe(true);
+    const guest = proxy(req("/api/fly-around", { method: "POST" }));
+    expect(guest.status).toBe(401);
+    expect(guest.headers.get(access.GUEST_HEADER)).toBe("1");
     expect(passed(proxy(req("/api/fly-around", { method: "POST", cookie: auth.createSession().value })))).toBe(true);
   });
 
@@ -281,7 +283,7 @@ describe("the routes: a visitor's price is its own GPU's, and the owner's charac
 });
 
 describe("Clean up dialogue (DBS D5) on /api/audio-tools", () => {
-  it("prices a visitor's run on its own GPU, never a demo, only of its own file; the cloud cleaners use the install's keys, so a run is own-gpu-tool", async () => {
+  it("prices a visitor's run on its own GPU, never a demo, only of its own file; a run without a GPU or key asks to connect one", async () => {
     process.env.FUOBE_PUBLIC_SIGNUP = "1";
     const who = newAccount();
     const cookie = auth.createSession(who.id).value;
@@ -298,12 +300,12 @@ describe("Clean up dialogue (DBS D5) on /api/audio-tools", () => {
     expect(await owner.json()).toMatchObject({ steps: 1, demo: true });
     const run = proxy(req("/api/audio-tools", { method: "POST", cookie }));
     expect(run.status).toBe(403);
-    expect((await run.json()).code).toBe("own-gpu-tool");
+    expect((await run.json()).code).toBe("connect-gpu");
   });
 });
 
 describe("Remove dialogue (DBS D2) on /api/audio-tools", () => {
-  it("prices a visitor's run on its own GPU, never a demo, and only of its own video; the run is own-gpu-tool at the proxy", async () => {
+  it("prices a visitor's run on its own GPU, never a demo, and only of its own video; a run without a GPU or key asks to connect one", async () => {
     process.env.FUOBE_PUBLIC_SIGNUP = "1";
     const who = newAccount();
     const cookie = auth.createSession(who.id).value;
@@ -321,13 +323,13 @@ describe("Remove dialogue (DBS D2) on /api/audio-tools", () => {
     expect(await owner.json()).toMatchObject({ steps: 2, demo: true });
     const run = proxy(req("/api/audio-tools", { method: "POST", cookie }));
     expect(run.status).toBe(403);
-    expect((await run.json()).code).toBe("own-gpu-tool");
+    expect((await run.json()).code).toBe("connect-gpu");
   });
 });
 
-describe("Split soundtrack's and Remove dialogue's pages tell a visitor up front (their runs are own-gpu-tool)", () => {
+describe("Split soundtrack's, Remove dialogue's and Edit speech's pages are open to guests and accounts", () => {
   const src = (f: string) => fs.readFileSync(path.join(__dirname, "..", f), "utf8");
-  it("read 'Not available here', not 'Free', to a guest or an account", async () => {
+  it("still say 'Not available here' only where a price function is asked to", async () => {
     const { openToolPrice } = await import("@/lib/av/split");
     expect(openToolPrice({ demo: false })).toBe("Free");
     expect(openToolPrice({ demo: true })).toBe("Placeholder · free");
@@ -335,25 +337,26 @@ describe("Split soundtrack's and Remove dialogue's pages tell a visitor up front
     for (const p of [{ demo: false }, { demo: true }, undefined]) expect(openToolPrice(p, true)).toBe("Not available here");
   });
 
-  it("say it runs on a self-hosted Fuobe, and turn off the upload, the library pick and the run (as Remove object does)", () => {
-    for (const [file, tool] of [
-      ["src/components/audio-tools/split-tool.tsx", "Split soundtrack"],
-      ["src/components/audio-tools/remove-dialogue-tool.tsx", "Remove dialogue"],
-    ] as const) {
+  it("carry no 'isn't available here' note, and ask a guest to sign up (an account to connect its GPU) before an upload", () => {
+    for (const file of ["src/components/audio-tools/split-tool.tsx", "src/components/audio-tools/remove-dialogue-tool.tsx", "src/components/audio-tools/speech-edit-tool.tsx", "src/components/dub/dub-studio.tsx"]) {
       const page = src(file).replace(/\s+/g, " ");
-      expect(page).toContain("const visitor = useLikelyVisitor();");
-      expect(page).toContain(`const SELF_HOSTED = "${tool} isn't available here";`);
-      expect(page).toMatch(/blocker = visitor \? SELF_HOSTED/);
-      expect(page).toMatch(/\{visitor && (\( ?)?<SelfHostNote className="mt-3 max-w-xl">\{SELF_HOSTED\}\.<\/SelfHostNote> ?\)?\}/);
-      expect(page).toMatch(/<ToolShell title="[^"]+" selfHostedOnly>/);
-      expect(page).toMatch(/onUpdate=\{setSource\} disabled=\{visitor\}/);
-      // The upload button, From library, the hidden file input and the drop all honour it.
-      expect(page.match(/disabled=\{disabled\}/g)?.length).toBe(3);
-      expect(page).toMatch(/if \(!f \|\| disabled \|\| askFirst\(\)\) return;/);
-      expect(page).toMatch(/open=\{picking && !disabled\}/);
-      expect(page).toMatch(/disabled=\{(busy \|\| visitor|visitor \|\| run\.isPending)/);
-      expect(page).toContain("openToolPrice(p, true)");
+      expect(page, file).not.toContain("SelfHostNote");
+      expect(page, file).not.toContain("useLikelyVisitor");
+      expect(page, file).not.toContain("selfHostedOnly");
+      expect(page, file).not.toMatch(/isn(&apos;|')t available here/);
+      expect(page, file).not.toContain("openToolPrice(p, true)");
     }
+    for (const file of ["src/components/audio-tools/split-tool.tsx", "src/components/audio-tools/remove-dialogue-tool.tsx", "src/components/audio-tools/speech-edit-tool.tsx"]) {
+      expect(src(file).replace(/\s+/g, " "), file).toMatch(/if \(!f \|\| disabled \|\| askFirst\(\)\) return;/);
+    }
+    // Edit speech needs its own GPU (AuK, 24 GB): its own-setup label, and its runs ask for the GPU first.
+    const speech = src("src/components/audio-tools/speech-edit-tool.tsx").replace(/\s+/g, " ");
+    expect(speech).toContain('const OWN_SETUP = "audio:edit-speech";');
+    expect(speech).toContain("useAskBeforeUpload({ gpuOnly: true })");
+    // The label the page read (ownSetupsNow: none once AuK's graph is validated), else the static entry.
+    expect(speech).toContain("const item = setup === undefined ? OWN_SETUP : setup;");
+    expect(speech.match(/press\(item\)/g)?.length).toBe(2);
+    expect(src("src/components/studio/mode-switch-studio.tsx")).toContain('<SpeechEditTool setup={ownSetupsNow(["audio:edit-speech"])["audio:edit-speech"]} />');
   });
 });
 

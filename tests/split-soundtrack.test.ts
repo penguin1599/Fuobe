@@ -253,26 +253,26 @@ describe("planSplit", () => {
 });
 
 describe("time on the open engine", () => {
-  it("uses the measured CPU speeds (0.27x / 0.09x per pass) and the reference GPU's", () => {
-    expect(DBS_SPEED.cpu).toEqual({ fast: 0.27, best: 0.09 });
-    // 60 s on a CPU with DBS-BSRNN: about 222 s of work, 3 s to load and save.
-    expect(splitTime({ seconds: 60, quality: "fast", mode: "mono", device: "cpu" })).toEqual({ low: 181, high: 359 });
+  it("uses the measured CPU speeds (0.25x / 0.10x per pass, DBS D4) and the reference GPU's", () => {
+    expect(DBS_SPEED.cpu).toEqual({ fast: 0.25, best: 0.1 });
+    // 60 s on a CPU with DBS-BSRNN: about 240 s of work, 3 s to load and save.
+    expect(splitTime({ seconds: 60, quality: "fast", mode: "mono", device: "cpu" })).toEqual({ low: 195, high: 387 });
     // Stereo stems: one pass per channel.
     const stereo = splitTime({ seconds: 60, quality: "fast", mode: "each channel", channels: 2, device: "cpu" });
-    expect(stereo.high).toBe(Math.round(3 + ((60 * 2) / 0.27) * 1.6));
-    expect(splitTime({ seconds: 60, quality: "best", mode: "mono" }).low).toBe(Math.round(3 + (60 / 0.09) * 0.8));
+    expect(stereo.high).toBe(Math.round(3 + ((60 * 2) / 0.25) * 1.6));
+    expect(splitTime({ seconds: 60, quality: "best", mode: "mono" }).low).toBe(Math.round(3 + (60 / 0.1) * 0.8));
     // A mono file with stereo stems asked for: one pass (DBS runs once per channel).
-    expect(splitTime({ seconds: 60, quality: "fast", mode: dbsChannelsFor("each channel", 1), channels: 1, device: "cpu" })).toEqual({ low: 181, high: 359 });
+    expect(splitTime({ seconds: 60, quality: "fast", mode: dbsChannelsFor("each channel", 1), channels: 1, device: "cpu" })).toEqual({ low: 195, high: 387 });
     // Each channel is one pass per channel (the measured 5.1 run: six passes); a 5.1 split is mono now, one pass.
-    expect(splitTime({ seconds: 10, quality: "fast", mode: "each channel", channels: 6, device: "cpu" }).low).toBe(Math.round(3 + (60 / 0.27) * 0.8));
-    expect(splitTime({ seconds: 10, quality: "fast", mode: dbsChannelsFor("each channel", 6), channels: 6, device: "cpu" }).low).toBe(Math.round(3 + (10 / 0.27) * 0.8));
+    expect(splitTime({ seconds: 10, quality: "fast", mode: "each channel", channels: 6, device: "cpu" }).low).toBe(Math.round(3 + (60 / 0.25) * 0.8));
+    expect(splitTime({ seconds: 10, quality: "fast", mode: dbsChannelsFor("each channel", 6), channels: 6, device: "cpu" }).low).toBe(Math.round(3 + (10 / 0.25) * 0.8));
     // CUDA: well over real time, a range up to 4x slower than the reference card.
     expect(splitTime({ seconds: 600, quality: "best", mode: "mono", device: "cuda" })).toEqual({ low: 41, high: 154 });
   });
 
   it("says it in words", () => {
     expect(durationWords({ low: 20, high: 50 })).toBe("under a minute");
-    expect(durationWords({ low: 181, high: 359 })).toBe("about 3–6 min");
+    expect(durationWords({ low: 195, high: 387 })).toBe("about 3–6 min");
     expect(durationWords({ low: 120, high: 130 })).toBe("about 2 min");
     expect(durationWords({ low: 7200, high: 10800 })).toBe("about 2–3 h");
   });
@@ -420,10 +420,9 @@ describe("the mixer", () => {
 });
 
 describe("Split soundtrack in the Audio hub", () => {
-  it("is a mode after Transcribe and Clean up voice, with its own path", () => {
+  it("is a mode after Transcribe, with its own path", () => {
     const ids = HUB_MODES.audio.map((m) => m.id);
-    expect(ids.indexOf("split")).toBe(ids.indexOf("clean") + 1);
-    expect(ids.indexOf("clean")).toBe(ids.indexOf("transcribe") + 1);
+    expect(ids.indexOf("split")).toBe(ids.indexOf("transcribe") + 1);
     expect(HUB_MODES.audio.find((m) => m.id === "split")?.label).toBe("Split soundtrack");
     expect(modeHref("audio", "split")).toBe("/audio/split");
   });

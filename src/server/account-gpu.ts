@@ -10,10 +10,14 @@ import { offeredSummary } from "./model-access";
 import { MODELS } from "@/lib/catalog";
 import { hostedUntestedSummary } from "@/lib/catalog/hosted-untested";
 import { PROVIDERS } from "./providers";
-import { blockedForAccounts, fetchPublic, isLoopbackGpu } from "./remote-fetch";
+import { blockedForAccounts, fetchPublic, isLoopbackGpu, peekText } from "./remote-fetch";
 import { isInstallHost, REFUSED_ADDRESS } from "./gpu/hosts";
 import { balance as billingBalance, OPEN_POLICY, policy as billingPolicy, type Action, type Balance } from "./billing";
 import { poolReady } from "./hosted";
+import { diagnoseAddress, diagnoseGpu, gpuHostOf, type Diagnosis, type GpuFailure, type GpuPlace, type GpuStage } from "@/lib/diagnose";
+
+/** A diagnosis as the status strip sends it. */
+const visitorTrouble = (d: Diagnosis): VisitorTrouble => ({ cause: d.cause, words: d.words, actions: d.actions, retryable: d.retryable, ...(d.details && { details: d.details }) });
 
 /**
  * "Your GPU" (public sign-up): the ComfyUI an account connects, where its runs go. The server calls
@@ -22,48 +26,88 @@ import { poolReady } from "./hosted";
  * ComfyUI. A ComfyUI on the visitor's own computer (localhost) is the browser's to reach, never sent here.
  */
 
-export class GpuError extends Error {}
+/**
+ * A check of an account's GPU that failed: its plain words (the message), and what helps (diagnose.ts). `failure`:
+ * what came back, so a run can say the same in its own words (diagnoseGpu at its stage).
+ */
+export class GpuError extends Error {
+  constructor(
+    readonly trouble: Diagnosis,
+    readonly failure?: GpuFailure,
+  ) {
+    super(trouble.words);
+  }
+}
+
+/** A check's failure, read for the person. */
+const failed = (f: GpuFailure, place: GpuPlace) => new GpuError(diagnoseGpu(f, place), f);
 
 const allowPrivate = () => process.env.FUOBE_ALLOW_PRIVATE_URLS === "1";
 
-export const LOCAL_GPU_MESSAGE =
-  "That address only works on your own network. Use the ComfyUI on this computer instead, or paste the https address your tunnel prints.";
+export const LOCAL_GPU_MESSAGE = diagnoseAddress("local").words;
 
 /** An address as stored and compared: origin and path, no trailing slash. */
 const normal = (u: URL) => `${u.origin}${u.pathname.replace(/\/+$/, "")}`;
 
-/** Check an account's ComfyUI address: http(s), a public host, not the install's own ComfyUI. Returns it normalised. */
-export async function checkGpuAddress(raw: string, o: { resolve?: (host: string) => Promise<string[]> } = {}): Promise<string> {
+/** What checkGpuAddress fixed by itself in an address as pasted: "https://" added at its start, a "?…" or "#…" part left out. */
+export type AddressFix = "scheme" | "query";
+
+/**
+ * An address as pasted, made whole: spaces trimmed, https:// added when it has no scheme (abc-8188.proxy.runpod.net),
+ * and a "?…" or "#…" copied from the browser's bar left out. A password inside it is refused: it goes in the token box.
+ */
+export function cleanGpuAddress(raw: string): { url: URL; fixed: AddressFix[] } {
+  const fixed: AddressFix[] = [];
+  let text = raw.trim();
+  // "abc-8188.proxy.runpod.net" or "localhost:8188": no scheme (a host:port reads as one to URL), so https:// goes first.
+  if (text && !/^[a-z][a-z0-9+.-]*:\/\//i.test(text)) {
+    text = `https://${text.replace(/^\/+/, "")}`;
+    fixed.push("scheme");
+  }
   let u: URL;
   try {
-    u = new URL(raw.trim());
+    u = new URL(text);
   } catch {
-    throw new GpuError("Enter the full address, like https://your-tunnel.trycloudflare.com");
+    throw new GpuError(diagnoseAddress("format"));
   }
-  if (u.protocol !== "http:" && u.protocol !== "https:") throw new GpuError("Use an http or https address");
-  if (u.username || u.password) throw new GpuError("Put the token in the token field, not in the address");
-  if (u.search || u.hash) throw new GpuError("Use the address without ? or #");
+  if (u.protocol !== "http:" && u.protocol !== "https:") throw new GpuError(diagnoseAddress("scheme"));
+  if (u.username || u.password) throw new GpuError(diagnoseAddress("credentials"));
+  if (u.search || u.hash) {
+    u.search = "";
+    u.hash = "";
+    fixed.push("query");
+  }
+  return { url: u, fixed };
+}
+
+/**
+ * Check an account's ComfyUI address: http(s), a public host, not the install's own ComfyUI. Returns it normalised (made
+ * whole first by cleanGpuAddress; `fixed` gets what that changed).
+ */
+export async function checkGpuAddress(raw: string, o: { resolve?: (host: string) => Promise<string[]>; fixed?: AddressFix[] } = {}): Promise<string> {
+  const { url: u, fixed } = cleanGpuAddress(raw);
+  o.fixed?.push(...fixed);
   const host = u.hostname.replace(/^\[|\]$/g, "").toLowerCase();
   const local = host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".lan") || host.endsWith(".internal") || !host.includes(".");
   // A stand-in ComfyUI on this machine is allowed in tests and `next dev` only (remote-fetch.ts loopbackGpuPort).
   if (!isLoopbackGpu(u)) {
-    if (local && !net.isIP(host) && !allowPrivate()) throw new GpuError(LOCAL_GPU_MESSAGE);
+    if (local && !net.isIP(host) && !allowPrivate()) throw new GpuError(diagnoseAddress("local"));
     const resolve = o.resolve ?? (async (h: string) => (await dns.lookup(h, { all: true, verbatim: true })).map((a) => a.address));
     let addrs: string[];
     try {
       addrs = net.isIP(host) ? [host] : await resolve(host);
     } catch {
-      throw new GpuError(`We couldn't find ${host}. Check the address, and that your tunnel is running.`);
+      throw new GpuError(diagnoseAddress("not-found", host));
     }
-    if (!addrs.length) throw new GpuError(`We couldn't find ${host}. Check the address, and that your tunnel is running.`);
+    if (!addrs.length) throw new GpuError(diagnoseAddress("not-found", host));
     // Private networks, this machine's own addresses (loopback too, even with FUOBE_ALLOW_PRIVATE_URLS), wrapped IPv4.
-    if (addrs.some(blockedForAccounts)) throw new GpuError(LOCAL_GPU_MESSAGE);
+    if (addrs.some(blockedForAccounts)) throw new GpuError(diagnoseAddress("local"));
   }
   const url = normal(u);
   // The install's own ComfyUI on any scheme, port or path (ComfyUI answers every route under /api too), compared by
   // host. One message for every such refusal, so it never confirms a guessed address.
   // (The tests' and `next dev`'s stand-in on this machine is on a port of its own: loopbackGpuPort.)
-  if (!isLoopbackGpu(u) && isInstallHost(url)) throw new GpuError(REFUSED_ADDRESS);
+  if (!isLoopbackGpu(u) && isInstallHost(url)) throw new GpuError({ ...diagnoseAddress("studio"), words: REFUSED_ADDRESS });
   return url;
 }
 
@@ -73,38 +117,118 @@ export interface GpuInfo {
   version?: string;
 }
 
-/** Ask the account's ComfyUI for /system_stats, the check the studio makes of its own. */
-export async function testGpu(gpu: { url: string; token?: string }, o: { resolve?: (host: string) => Promise<string[]>; timeoutMs?: number; maxBytes?: number } = {}): Promise<GpuInfo> {
+/** An answer's text, up to `max` (ComfyUI's /system_stats is a few KB; an error page's start, for the details line). */
+async function headText(res: Response, max = 4096): Promise<string> {
+  try {
+    return (await res.text()).slice(0, max);
+  } catch {
+    return "";
+  }
+}
+
+const safeUrl = (u: string, base?: string): URL | null => {
+  try {
+    return new URL(u, base);
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Ask the account's ComfyUI for /system_stats, the check the studio makes of its own. Anything but ComfyUI's answer
+ * throws a GpuError that says what it is (diagnose.ts: a stopped RunPod pod, a GPU starting up, a password…). An
+ * http:// address that sends to the same host's https:// is followed once (`url` then names the https address).
+ */
+export async function testGpu(
+  gpu: { url: string; token?: string },
+  o: { resolve?: (host: string) => Promise<string[]>; timeoutMs?: number; maxBytes?: number; stage?: GpuStage } = {},
+): Promise<GpuInfo & { url?: string }> {
+  const ask = (url: string) =>
+    fetchPublic(
+      `${url}/system_stats`,
+      // ngrok's free addresses show their warning page instead unless this is sent.
+      { headers: { "ngrok-skip-browser-warning": "1", ...(gpu.token ? { Authorization: `Bearer ${gpu.token}` } : {}) } },
+      { timeoutMs: o.timeoutMs ?? 10_000, deadlineMs: (o.timeoutMs ?? 10_000) + 5_000, maxBytes: o.maxBytes ?? 1 * 2 ** 20, resolve: o.resolve },
+    );
+  const place = { kind: "link" as const, url: gpu.url, hasToken: !!gpu.token };
+  const stage = o.stage ?? "test";
+  let url = gpu.url;
   let res: Response;
   try {
-    res = await fetchPublic(`${gpu.url}/system_stats`, { headers: gpu.token ? { Authorization: `Bearer ${gpu.token}` } : {} }, { timeoutMs: o.timeoutMs ?? 10_000, deadlineMs: (o.timeoutMs ?? 10_000) + 5_000, maxBytes: o.maxBytes ?? 1 * 2 ** 20, resolve: o.resolve });
+    res = await ask(url);
+    // http:// sent to the same host's https://: followed once.
+    const to = res.status >= 300 && res.status < 400 ? res.headers.get("location") : null;
+    const next = to ? safeUrl(to, url) : null;
+    const from = safeUrl(url);
+    if (next && from && from.protocol === "http:" && next.protocol === "https:" && next.hostname === from.hostname) {
+      res.body?.cancel().catch(() => {});
+      url = normal(new URL(`https://${from.hostname}${from.pathname}`));
+      res = await ask(url);
+    }
   } catch (e) {
     console.warn(`[your-gpu] ${gpu.url}: ${(e as Error).message}`);
-    throw new GpuError("Your ComfyUI didn't answer at that address. Check that ComfyUI and your tunnel are running, then try again.");
+    throw failed({ stage, error: (e as Error).message }, place);
   }
-  if (res.status === 401 || res.status === 403) throw new GpuError("Your ComfyUI asked for a password. Add it under Access token.");
-  if (!res.ok) throw new GpuError("That address isn't a ComfyUI. Check that your tunnel points at ComfyUI's port.");
-  const s = (await res.json().catch(() => null)) as { system?: { comfyui_version?: string }; devices?: { name?: string; vram_total?: number }[] } | null;
-  if (!s?.system) throw new GpuError("That address isn't a ComfyUI. Check that your tunnel points at ComfyUI's port.");
+  const contentType = res.headers.get("content-type") ?? undefined;
+  if (!res.ok) {
+    const redirect = res.status >= 300 && res.status < 400;
+    // An error page's start only, briefly: one that never ends can't hold the check.
+    const body = redirect ? "" : await peekText(res);
+    res.body?.cancel().catch(() => {});
+    const retryAfterS = Number(res.headers.get("retry-after")) || undefined;
+    throw failed({ stage, status: res.status, body, contentType, location: res.headers.get("location") ?? undefined, retryAfterS }, place);
+  }
+  const text = await headText(res, o.maxBytes ?? 1 * 2 ** 20);
+  let s: { system?: { comfyui_version?: string }; devices?: { name?: string; vram_total?: number }[] } | null = null;
+  try {
+    s = JSON.parse(text);
+  } catch {}
+  if (!s?.system) throw failed({ stage, status: res.status, body: text.slice(0, 4096), contentType }, place);
   const dev = s.devices?.[0];
-  return { device: dev?.name, vramBytes: typeof dev?.vram_total === "number" ? dev.vram_total : undefined, version: s.system.comfyui_version };
+  return { device: dev?.name, vramBytes: typeof dev?.vram_total === "number" ? dev.vram_total : undefined, version: s.system.comfyui_version, ...(url !== gpu.url && { url }) };
 }
 
 declare global {
-  /** Each account's GPU as last asked (Your GPU: online or not, and what it is), for the status strip. */
-  var __fuobeAccountGpus: Map<string, { url: string; at: number; online: boolean; info: GpuInfo }> | undefined;
+  /** Each account's GPU as last asked (Your GPU: online or not, what it is, and why not), for the status strip. */
+  var __fuobeAccountGpus: Map<string, { url: string; at: number; online: boolean; info: GpuInfo; trouble?: Diagnosis }> | undefined;
   /** The checks on their way, one per account: status requests that arrive meanwhile wait for it. */
-  var __fuobeAccountGpuChecks: Map<string, Promise<{ online: boolean } & GpuInfo>> | undefined;
+  var __fuobeAccountGpuChecks: Map<string, Promise<GpuStateAnswer>> | undefined;
 }
 
 /** What a status check reads of /system_stats at most: a ComfyUI's answer is a few KB. */
 const STATUS_MAX_BYTES = 64 * 1024;
 
+/** What the status check says of an account's GPU: online or not, what it is, and (offline) why, with what helps. */
+export type GpuStateAnswer = { online: boolean; comfy?: "down" | "no-setting"; trouble?: Diagnosis } & GpuInfo;
+
+/** How long a status check's answer is kept: the status strip asks an account's GPU at most this often. */
+export const GPU_STATE_MS = 30_000;
+
+/**
+ * Note what a check or a run just learnt of an account's link (Settings' Check my GPU, a run that couldn't reach it, or
+ * one that did): the status strip, the composer's check before Run and the next run read it without asking again.
+ */
+export function noteGpuState(id: string, url: string, online: boolean, o: { info?: GpuInfo; trouble?: Diagnosis } = {}): void {
+  const cache = (globalThis.__fuobeAccountGpus ??= new Map());
+  const hit = cache.get(id);
+  const info = o.info ?? (hit?.url === url ? hit.info : {});
+  cache.delete(id);
+  cache.set(id, { url, at: Date.now(), online, info, ...(!online && o.trouble && { trouble: o.trouble }) });
+  if (cache.size > 5000) cache.delete(cache.keys().next().value!);
+}
+
+/** The last status check's answer for an account's saved link, while it is fresh: never asks the GPU. */
+export function cachedGpuState(id: string, url: string): GpuStateAnswer | undefined {
+  const hit = globalThis.__fuobeAccountGpus?.get(id);
+  if (!hit || hit.url !== url || Date.now() - hit.at >= GPU_STATE_MS) return undefined;
+  return { online: hit.online, ...hit.info, ...(hit.trouble && { trouble: hit.trouble }) };
+}
+
 /**
  * Is the account's ComfyUI answering, and what is it? Asked at most every 30 s per account, and one check at a time:
  * status requests that arrive while one is on its way share its answer.
  */
-export async function gpuState(id: string, gpu: AccountGpu): Promise<{ online: boolean; comfy?: "down" | "no-setting" } & GpuInfo> {
+export async function gpuState(id: string, gpu: AccountGpu): Promise<GpuStateAnswer> {
   // On the person's own computer: what its Fuobe tab last said (online while it beats and its ComfyUI answers; `comfy`:
   // the tab is open, but ComfyUI is closed or runs without Fuobe's setting).
   if (gpu.mode === "computer") {
@@ -113,21 +237,25 @@ export async function gpuState(id: string, gpu: AccountGpu): Promise<{ online: b
   }
   const cache = (globalThis.__fuobeAccountGpus ??= new Map());
   const hit = cache.get(id);
-  if (hit && hit.url === gpu.url && Date.now() - hit.at < 30_000) return { online: hit.online, ...hit.info };
+  if (hit && hit.url === gpu.url && Date.now() - hit.at < GPU_STATE_MS) return { online: hit.online, ...hit.info, ...(hit.trouble && { trouble: hit.trouble }) };
   const checks = (globalThis.__fuobeAccountGpuChecks ??= new Map());
   const key = `${id} ${gpu.url}`;
   const going = checks.get(key);
   if (going) return going;
-  const check = (async () => {
+  const check = (async (): Promise<GpuStateAnswer> => {
     let online = false;
     let info: GpuInfo = hit?.url === gpu.url ? hit.info : {};
+    let trouble: Diagnosis | undefined;
     try {
-      info = await testGpu(gpu, { timeoutMs: 5000, maxBytes: STATUS_MAX_BYTES });
+      const { url: _moved, ...read } = await testGpu(gpu, { timeoutMs: 5000, maxBytes: STATUS_MAX_BYTES, stage: "status" });
+      void _moved;
+      info = read;
       online = true;
-    } catch {}
-    cache.set(id, { url: gpu.url, at: Date.now(), online, info });
-    if (cache.size > 5000) cache.delete(cache.keys().next().value!);
-    return { online, ...info };
+    } catch (e) {
+      if (e instanceof GpuError) trouble = e.trouble;
+    }
+    noteGpuState(id, gpu.url, online, { info, trouble });
+    return { online, ...info, ...(trouble && { trouble }) };
   })().finally(() => checks.delete(key));
   checks.set(key, check);
   return check;
@@ -171,7 +299,18 @@ export function computerView(principal: Principal): OwnerGpuView {
 export interface VisitorView {
   kind: "guest" | "account";
   /** `mode` "computer": the ComfyUI on the person's own computer, which their Fuobe tab runs. */
-  gpu: { connected: boolean; mode?: "link" | "computer"; online?: boolean; comfy?: "down" | "no-setting"; device?: string; vramBytes?: number };
+  gpu: {
+    connected: boolean;
+    mode?: "link" | "computer";
+    online?: boolean;
+    comfy?: "down" | "no-setting";
+    device?: string;
+    vramBytes?: number;
+    /** A link that didn't answer its last status check: why, in plain words, and what helps (diagnose.ts). */
+    trouble?: VisitorTrouble;
+    /** A link's kind: a RunPod pod's port gets "Start your pod". */
+    host?: "runpod" | "tunnel" | "web";
+  };
   /** The providers it has its own key for that this server can open ("Your keys"): never a key. */
   keys: CloudProvider[];
   /** The studio lets accounts run paid models on their own keys (it isn't open-source only). */
@@ -189,6 +328,9 @@ export interface VisitorView {
   notice?: { id: string; text: string; url?: string };
 }
 
+/** What the status strip and the composer show of a GPU that didn't answer: never more than the person's own GPU said. */
+export type VisitorTrouble = Pick<Diagnosis, "cause" | "words" | "actions" | "retryable" | "details">;
+
 /**
  * GET /api/status for a guest or an account: ComfyUI is its own GPU (taken as there until it has one,
  * so the studios offer Generate and the run asks it to connect one), fal.ai and Replicate are its own
@@ -202,7 +344,16 @@ export async function visitorStatus(account: Account | null) {
   const viewer: VisitorView = {
     kind: account ? "account" : "guest",
     gpu: gpu
-      ? { connected: true, mode: gpu.mode === "computer" ? "computer" : "link", online: !!live?.online, ...(live?.comfy && { comfy: live.comfy }), ...(live?.device && { device: live.device }), ...(live?.vramBytes && { vramBytes: live.vramBytes }) }
+      ? {
+          connected: true,
+          mode: gpu.mode === "computer" ? "computer" : "link",
+          online: !!live?.online,
+          ...(live?.comfy && { comfy: live.comfy }),
+          ...(live?.device && { device: live.device }),
+          ...(live?.vramBytes && { vramBytes: live.vramBytes }),
+          ...(gpu.mode !== "computer" && { host: gpuHostOf(gpu.url).kind }),
+          ...(!live?.online && live?.trouble && { trouble: visitorTrouble(live.trouble) }),
+        }
       : { connected: false },
     keys,
     paidAllowed: paidAllowed(),

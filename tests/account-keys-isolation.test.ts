@@ -429,7 +429,7 @@ describe("routing for an account", () => {
   it("text steps, the AI helpers, 3D and the other tools stay closed to an account with a key", async () => {
     expect(gens.accountRun(A, "llm")).toMatchObject({ code: "own-gpu-tool" });
     const at = (url: string) => proxy(new NextRequest(`http://localhost:3000${url}`, { method: "POST", headers: { cookie: cookies.A }, body: "{}" }));
-    for (const url of ["/api/assist", "/api/enhance", "/api/shorts", "/api/faceless/episodes"]) {
+    for (const url of ["/api/assist", "/api/enhance", "/api/shorts", "/api/content-factory/claude", "/api/explainer/link"]) {
       const r = at(url);
       expect(r.status, url).toBe(403);
     }

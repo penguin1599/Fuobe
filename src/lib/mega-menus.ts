@@ -6,6 +6,7 @@
  */
 import type { CoverFraming } from "./cover-framing";
 import { area } from "./nav-areas";
+import type { StillSources } from "./preset-hd";
 import { entriesFor, launcherColumns, studioCount, studioSubs, STUDIO_SUBS, subLabel, subParent, type NavEntry, type NavIconName, type ViewerKind } from "./nav-model";
 
 export type MegaId = "studios" | "apps" | "motions" | "canvas";
@@ -25,6 +26,12 @@ export interface MegaCover {
   thumb: string;
   /** Its 96 px copy, for a row and a phone tile (a preset's own poster only). */
   mini?: string;
+  /**
+   * Its larger copies' srcsets (preset-hd.ts, template-hd.ts), so a box wider than the poster on a 2x or 3x screen
+   * gets a copy at least as wide as it shows: the Canvas menu's tiles and lead. Made on the server, so no client chunk
+   * carries the lists of copies.
+   */
+  hd?: StillSources;
   /** How it sits in a box of another shape (cover-framing.ts). */
   framing?: CoverFraming;
 }

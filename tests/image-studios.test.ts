@@ -589,6 +589,11 @@ describe("Photodump: model choice and retries", () => {
     expect(photodumpModel(selfie, "cloud", {}).modelId).toBe("qwen-image-edit-2511-cloud");
     expect(photodumpModel(selfie, "open", {}, "fuobe-soul", true).note).toMatch(/Your own packs recreate each reference photo/);
     expect(photodumpModel(selfie, "open", {}).note).toBeUndefined();
+    // An account's own character (its photo, no Soul ID) picked with Fuobe Soul: the run says what makes its photos,
+    // with no step it couldn't take.
+    const mine: PhotoSubject = { kind: "selfie", url: "/api/files/accounts/a/maya.png", name: "Maya" };
+    expect(photodumpModel(mine, "cloud", {}, "fuobe-soul")).toEqual({ modelId: "qwen-image-edit-2511-cloud", note: "Qwen-Image-Edit 2511 makes Maya's photos from their saved photo, keeping their face" });
+    expect(photodumpModel(mine, "open", {}, "fuobe-soul").note).not.toMatch(/Elements|trained|train/);
     // A demo training's stand-in isn't a Soul ID.
     const demo: PhotoSubject = { kind: "element", handle: "Maya", name: "Maya", references: ["/a.png"], loras: [{ engine: "cloud", modelId: "fuobe-soul", family: "z-image-turbo", file: "fuobe/x.safetensors", trigger: "t", demo: true }] };
     expect(photodumpModel(demo, "open", {}).modelId).toBe("oss-qwen-image-21");

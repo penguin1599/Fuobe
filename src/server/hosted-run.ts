@@ -3,6 +3,8 @@ import crypto from "node:crypto";
 import { nanoid } from "nanoid";
 import type { GenerationRequest } from "@/lib/catalog/types";
 import { OWN_GPU_TOOL_MESSAGE } from "@/lib/guest-access";
+import { RTX_CLASSES, rtxCardOf } from "@/lib/catalog/rtx-video";
+import { gpuFits } from "@/lib/gpu/readiness";
 import { gpuState } from "./account-gpu";
 import { accountGpu, type Account } from "./auth";
 import {
@@ -21,11 +23,12 @@ import {
   type RunFacts,
 } from "./billing";
 import { outputKind, previewGeneration } from "./generations";
-import { HOSTED_WORDS, inputCounts, poolAllows, poolReady, queueFacts, runFacts, runOnPool } from "./hosted";
+import { HOSTED_WORDS, inputCounts, poolAllowsRun, poolReady, queueFacts, runFacts, runOnPool } from "./hosted";
 import { hostedRunsOn } from "./hosted-switch";
 import { checkRun, moderationConfigured } from "./moderation";
 import type { RunStamp } from "./run-stamp";
 import { readRef } from "./storage";
+import { readSnapshot } from "./gpu/snapshots";
 import { ACCOUNT_LIMITS } from "./account-files";
 import { runAsTenant } from "./tenant";
 
@@ -79,6 +82,19 @@ async function ownGpuOnline(accountId: string): Promise<boolean> {
 }
 
 /**
+ * A model that needs an NVIDIA RTX card (src/lib/catalog/rtx-video.ts) on this install's GPUs: refused when the install's
+ * last GPU check says its card can't run it (a CPU, an Apple, AMD or Intel device, an older NVIDIA card) or its ComfyUI
+ * lacks the RTX Video nodes. A card the name doesn't tell, or no check yet, never refuses (the run says what it finds).
+ */
+export function poolCardRefuses(modelId: string): boolean {
+  const need = rtxCardOf(modelId);
+  if (!need) return false;
+  const inv = readSnapshot({ kind: "install", key: "install", via: "server" })?.inventory;
+  if (!inv?.reachable) return false;
+  return gpuFits(need, inv) === false || RTX_CLASSES.some((c) => inv.nodes.missing.includes(c));
+}
+
+/**
  * Where an account's run goes (hosted.ts has the order). Only with hosted runs on; otherwise always "own" (today).
  */
 export async function decidePlace(account: Account, req: GenerationRequest, wish: PlaceWish): Promise<PlaceDecision> {
@@ -99,7 +115,8 @@ export async function decidePlace(account: Account, req: GenerationRequest, wish
   // From here on the run would be this install's: what it can't take there goes to the account's own GPU when it has one.
   const notHere = (error: string): PlaceDecision => (hasGpu && wish !== "pool" ? { kind: "own" } : { kind: "refuse", refusal: { status: 403, body: { error, code: "not-offered" }, headers: { [BILLING_HEADER]: "not-offered" } } });
   if (outputKind(planned.op, planned.model) === "model3d") return hasGpu && wish !== "pool" ? { kind: "own" } : { kind: "refuse", refusal: { status: 403, body: { error: OWN_GPU_TOOL_MESSAGE, code: "own-gpu-tool" }, headers: {} } };
-  if (!poolAllows(p, planned.model.id, req.presetId)) return notHere(HOSTED_WORDS.notOffered);
+  if (!poolAllowsRun(p, planned, req.presetId)) return notHere(HOSTED_WORDS.notOffered);
+  if (poolCardRefuses(planned.model.id)) return notHere(HOSTED_WORDS.rtxCard);
   if (req.loras?.length) return notHere(HOSTED_WORDS.loras);
   const inputs = inputCounts(req);
   if ((inputs.image && !p.uploads.image) || (inputs.video && !p.uploads.video) || (inputs.audio && !p.uploads.audio)) return notHere(HOSTED_WORDS.inputs);
@@ -207,7 +224,8 @@ export async function poolQuote(account: Account | null, asked: GenerationReques
   }
   if (planned.route.provider !== "comfyui") return null;
   if (account && wish !== "pool" && accountGpu(account.id) && (await ownGpuOnline(account.id))) return null;
-  if (p && (!p.hosted || !poolAllows(p, planned.model.id, req.presetId))) return null;
+  if (p && (!p.hosted || !poolAllowsRun(p, planned, req.presetId))) return null;
+  if (poolCardRefuses(planned.model.id)) return null;
   const kind = outputKind(planned.op, planned.model);
   const q = await billingQuote(account ? accountFacts(account) : null, runFacts(req, planned, kind), queueFacts(account?.id ?? null));
   return { planned, quote: q };

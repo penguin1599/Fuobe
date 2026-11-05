@@ -1,4 +1,5 @@
 import "server-only";
+import { HI3D_CHAIN_PARAM, HI3D_MODEL, HI3D_OP, HI3D_PARAM } from "@/lib/av/hi3d";
 import type Anthropic from "@anthropic-ai/sdk";
 import { nanoid } from "nanoid";
 import { z } from "zod";
@@ -102,7 +103,7 @@ const searchModels = defineTool({
       .string()
       .optional()
       .describe(
-        "Operation id to filter by, e.g. t2i, edit, t2v, i2v, flf2v, ref2v, extend, lipsync, avatar, tts, upscale-image, layers, text-layers, trim, transcribe, captions, mux, separate-audio, translate, write, image-to-3d, splat. separate-audio splits a soundtrack into stems named in each output's stem: voice (the dialogue) and background (everything else); DBS (oss-dbs-separate) also makes music and effects, so background is music & effects together. split_soundtrack and remove_dialogue do this in one call.",
+        "Operation id to filter by, e.g. t2i, edit, t2v, i2v, flf2v, ref2v, extend, lipsync, avatar, tts, upscale-image, layers, text-layers, trim, transcribe, captions, mux, separate-audio, translate, write, image-to-3d, refine-3d, splat. separate-audio splits a soundtrack into stems named in each output's stem: voice (the dialogue) and background (everything else); DBS (oss-dbs-separate) also makes music and effects, so background is music & effects together. split_soundtrack and remove_dialogue do this in one call.",
       ),
     query: z.string().optional().describe("Words to match in the model name, vendor or description, e.g. 'kling', 'cheap', 'photoreal'."),
   }),
@@ -263,7 +264,7 @@ const Job = z.object({
     .string()
     .optional()
     .describe(
-      "Operation id (t2i, edit, t2v, i2v, flf2v, ref2v, extend, tts, layers, transcribe, translate, write, trim, captions, mux, separate-audio, image-to-3d, splat…). Usually inferred from the inputs; set it when ambiguous.",
+      "Operation id (t2i, edit, t2v, i2v, flf2v, ref2v, extend, tts, layers, transcribe, translate, write, trim, captions, mux, separate-audio, image-to-3d, refine-3d, splat…). Usually inferred from the inputs; set it when ambiguous.",
     ),
   images: z.array(ref).optional().describe("Input images: the image to edit, the start frame, or references, in order."),
   end_image: ref.optional().describe("End frame (first-and-last-frame video)."),
@@ -273,6 +274,13 @@ const Job = z.object({
     .optional()
     .describe("Mux: a second track mixed under the audio — the background stem from separate-audio (music & effects, everything but the talking; DBS also makes music and effects stems on their own), or a music bed."),
   voice_audio: ref.optional().describe("A recording of the voice to speak with (voice-cloning text to speech) or to change into (voice-change)."),
+  model3d: ref
+    .optional()
+    .describe("A 3D model (.glb) to work on: rig-3d rigs it; refine-3d (oss-hi3d-refine, Hi3D 1.0, the user's GPU only) refines its geometry from the photo in images (the photo it was made from)."),
+  mesh_resolution: z
+    .union([z.literal(512), z.literal(1024), z.literal(1536)])
+    .optional()
+    .describe("refine-3d: Hi3D's detail, 512 (one pass), 1024 (two, the default) or 1536 (three). On an open image-to-3d model, setting it also refines the model after it is built. The result is geometry only (colours and textures are lost). On oss-idol-mesh too it means that refine step, not a finer Idol mesh: leave it out to keep the vertex colours."),
   aspect_ratio: z.string().optional().describe("e.g. 16:9, 9:16, 1:1 — one the model lists."),
   resolution: z.string().optional().describe("e.g. 1080p, 2K — one the model lists."),
   duration: z.number().optional().describe("Seconds, for video and music — one the model lists."),
@@ -353,6 +361,7 @@ export function asRequest(j: JobInput): GenerationRequest {
     ...(j.audio && { audio: j.audio }),
     ...(j.background_audio && { audio2: j.background_audio }),
     ...(j.voice_audio && { voiceAudio: j.voice_audio }),
+    ...(j.model3d && { model3d: j.model3d }),
   };
   const shots = j.shots && j.shots > 1 ? shotList(getModel(currentModelId(j.model_id)), j.shots) : undefined;
   // A layout draft (the layout-poster skill): read on its own canvas, compiled by the plan for the model it runs on.
@@ -360,7 +369,12 @@ export function asRequest(j: JobInput): GenerationRequest {
   const parsed = j.layout ? parseLayout(j.layout)?.draft : undefined;
   const layout = parsed && { ...parsed, items: parsed.items.slice(0, LAYOUT_NODE_LIMITS.boxes) };
   const layoutAspect = layout?.aspect && nearestAspect(layout.aspect, getModel(currentModelId(j.model_id))?.options.aspectRatios);
-  const extra = { ...(j.system && { system: j.system }), ...(layout && { [LAYOUT_PARAM]: layout }) };
+  const extra = {
+    ...(j.system && { system: j.system }),
+    ...(layout && { [LAYOUT_PARAM]: layout }),
+    // Hi3D: the refine's own resolution, or on an image-to-3D model the refine step after it.
+    ...(j.mesh_resolution && { [j.model_id === HI3D_MODEL || j.op === HI3D_OP ? HI3D_PARAM : HI3D_CHAIN_PARAM]: j.mesh_resolution }),
+  };
   const animation = animationOf(j);
   return {
     feature: "assist",
@@ -413,7 +427,7 @@ function slotFor(kind: MediaKind, op: Operation | undefined): ChainSlot {
   // tts clones the earlier audio's voice; voice-change re-voices the earlier audio (its target voice is voice_audio);
   // a join takes it as one of its clips.
   if (kind === "audio") return { slot: op === "tts" ? "voiceAudio" : op === "audio-join" ? "audios" : "audio" };
-  // A mesh goes on to be rigged.
+  // A mesh goes on to be rigged or refined.
   if (kind === "model3d") return { slot: "model3d" };
   return { slot: "images", position: "first" };
 }

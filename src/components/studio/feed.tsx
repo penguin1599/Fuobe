@@ -16,6 +16,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { OPERATION_LABELS, type Generation } from "@/lib/catalog/types";
+import { onCloudKey } from "@/lib/before-run";
+import { TroubleActions, TroubleDetails } from "@/components/gpu/trouble";
 import { useCreateGeneration, useGenerationActions, useStatus } from "@/lib/api";
 import { placeholdersOn } from "@/lib/demo-mode";
 import { useSoulFinish } from "./soul-finish";
@@ -126,12 +128,25 @@ export function PendingTile({ g, ratio }: { g: Generation; ratio: number }) {
 }
 
 export function FailedTile({ g, ratio, onRetry }: { g: Generation; ratio: number; onRetry: () => void }) {
+  const create = useCreateGeneration();
+  const trouble = g.status === "failed" ? g.trouble : undefined;
   return (
     <div className="flex h-full max-w-full flex-col justify-between rounded-xl border border-dashed bg-background p-3" style={{ aspectRatio: Math.max(ratio, 0.8) }}>
       <div className="min-h-0 space-y-1 overflow-hidden">
         <p className="text-[13px] font-medium">{g.status === "canceled" ? "Canceled" : "Couldn't generate this one"}</p>
         {g.error && <p className="line-clamp-5 text-[12px] leading-snug break-words whitespace-pre-line text-muted-foreground">{g.error}</p>}
+        {/* An account's own GPU or key: what came back, small, for the curious. */}
+        <TroubleDetails details={trouble?.details} />
       </div>
+      {trouble && (
+        <TroubleActions
+          className="mt-2"
+          actions={trouble.actions}
+          skip={["retry"]}
+          max={3}
+          handlers={{ onRunWithKey: (a) => create.mutate(onCloudKey(g.request, a), { onError: (e) => toastError(e) }) }}
+        />
+      )}
       <div className="mt-2 flex flex-wrap gap-1.5">
         {g.status === "failed" && g.fix && (
           // Something was missing on the GPU: the guided fix shows what, and how to add it.

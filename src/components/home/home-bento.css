@@ -225,9 +225,10 @@
 /* ---------------------------------------------------------------- grid */
 
 /*
- * The reel leads; Live edit, the highlight, is the next biggest and sits right by it (right under it on a phone), and
- * Genjutsu comes next. From lg the grid is twelve narrow columns, so the top two rows (the reel, Live edit, then the
- * image and 3D tiles stacked) and the bottom row (Genjutsu, audio, the numbers, canvas) each split it their own way.
+ * The reel leads; Live edit, the highlight, and Genjutsu, whose swaps need room to be seen, are the next biggest, the
+ * same size, right by it (right under it on a phone). From lg the grid is fourteen narrow columns, so the top two rows
+ * (the reel, Live edit, Genjutsu) and the bottom row (image, 3D, audio, the numbers, canvas) each split it their own way.
+ * The audio tile, which holds a demo to play, takes four of the bottom row's columns.
  */
 .hb-grid {
   display: grid;
@@ -250,15 +251,17 @@
   .hb-live {
     aspect-ratio: 16 / 10;
   }
+  /* As big as the live tile above it: the swaps show whole, faces and all. */
   .hb-genjutsu {
-    aspect-ratio: 3 / 2;
+    aspect-ratio: 16 / 10;
   }
   .hb-image,
   .hb-three {
     aspect-ratio: 1;
   }
+  /* The demo: room for its switch over the photo and its words under her; a little smaller than Genjutsu. */
   .hb-audio {
-    aspect-ratio: 5 / 2;
+    aspect-ratio: 5 / 3;
   }
   .hb-canvas {
     aspect-ratio: 16 / 9;
@@ -267,24 +270,25 @@
 @media (min-width: 768px) {
   .hb-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
-    grid-template-rows: repeat(4, 210px) auto;
+    /* Live edit one column two rows tall, Genjutsu two columns one row tall: the same size, each bigger than the rest. */
+    grid-template-rows: 230px 230px 230px 210px auto;
     grid-template-areas:
       "video video live"
       "video video live"
       "genjutsu genjutsu image"
-      "audio canvas three"
+      "three audio canvas"
       "numbers numbers numbers";
   }
 }
 @media (min-width: 1024px) {
   .hb-grid {
-    grid-template-columns: repeat(12, minmax(0, 1fr));
+    grid-template-columns: repeat(14, minmax(0, 1fr));
     grid-template-rows: repeat(3, minmax(0, 1fr));
     height: clamp(var(--grid-min), calc(var(--content-h) - var(--bento-head) - var(--head-top) - 3.25rem), 760px);
     grid-template-areas:
-      "video video video video video video live live live live image image"
-      "video video video video video video live live live live three three"
-      "genjutsu genjutsu genjutsu genjutsu audio audio numbers numbers numbers canvas canvas canvas";
+      "video video video video video video live live live live genjutsu genjutsu genjutsu genjutsu"
+      "video video video video video video live live live live genjutsu genjutsu genjutsu genjutsu"
+      "image image three three audio audio audio audio numbers numbers numbers canvas canvas canvas";
   }
 }
 .hb-video {
@@ -485,10 +489,22 @@
     font-size: 44px;
   }
 }
-/* From lg the live tile is the second biggest: its title a size up from the small tiles'. */
+/* From a tablet the live and Genjutsu tiles are the second biggest: their titles a size up from the small tiles', and
+   from lg two. */
+@media (min-width: 768px) {
+  .hb-live .hb-title,
+  .hb-genjutsu .hb-title {
+    font-size: 28px;
+  }
+}
 @media (min-width: 1024px) {
+  .hb-live .hb-title,
+  .hb-genjutsu .hb-title {
+    font-size: 30px;
+  }
   @container (min-width: 360px) {
-    .hb-live .hb-title {
+    .hb-live .hb-title,
+    .hb-genjutsu .hb-title {
       font-size: 34px;
     }
   }
@@ -506,12 +522,6 @@
 @container (max-height: 200px) {
   .hb-meta {
     display: none;
-  }
-  .hb-board {
-    width: min(200px, 100% - 28px);
-  }
-  .hb-node-label {
-    font-size: 10px;
   }
 }
 
@@ -593,101 +603,355 @@
   }
 }
 
-/* ---------------------------------------------------------------- audio: the sample's own loudness */
+/* ---------------------------------------------------------------- audio: Clean up voice's demo, to hear */
 
-.hb-audio {
-  background:
-    radial-gradient(ellipse 85% 60% at 50% 32%, var(--bento-glow), transparent 72%),
-    var(--media);
+/*
+ * The tile holds the demo (bento-voice.tsx): the restaurant photo, and over it a layer laid out as a grid, so each part
+ * keeps to its own corner whatever size the tile is: the chip saying what is heard (top left), the Noise on / Noise off
+ * switch (top right), the tile's words, which are the link to the studio (bottom left), and the play button (bottom
+ * right), which keeps one width whatever it says. On a narrow tile (a tablet's column, 1024 px screens) the button goes
+ * top right, its icon alone, and the switch over the words, clear of her face. Every part sits in the tile's own box,
+ * so nothing moves the grid.
+ */
+.hb-voice {
+  cursor: pointer;
+  touch-action: manipulation;
 }
-.hb-wave {
+/* Her face sits about a third down the photo, in the middle: a tile wider than the photo keeps it in view. */
+.hb-voice-pics {
   position: absolute;
-  left: 14px;
-  right: 14px;
-  top: 14%;
-  height: 40%;
-  display: flex;
-  align-items: center;
-  gap: 2px;
+  inset: 0;
+  transform-origin: 50% 32%;
+  transition: transform 9s cubic-bezier(0.2, 0.6, 0.3, 1);
 }
-@container (min-width: 220px) {
-  .hb-wave {
-    left: 18px;
-    right: 18px;
-    top: 12%;
-  }
+.hb-voice-pics .hb-fill {
+  object-position: 50% 28%;
 }
-.hb-wave > i {
-  flex: 1 1 0;
-  min-width: 1px;
-  height: calc(var(--h) * 100%);
-  border-radius: 2px;
-  background: var(--bento-accent);
-  opacity: 0.7;
+/* While it plays, the photo draws in a little, as the studio's demo does. */
+.hb-voice-near {
+  transform: scale(1.045);
 }
-.dark .hb-wave > i {
-  background: color-mix(in oklch, var(--bento-accent) 70%, white);
-}
-.hb-bento[data-play] .hb-wave > i {
-  opacity: 0.45;
-  animation: bento-bar var(--wave-s, 8s) linear infinite;
-  animation-delay: var(--d);
-  animation-play-state: paused;
-}
-.hb-bento[data-play="1"] .hb-wave > i {
-  animation-play-state: running;
-}
-@keyframes bento-bar {
-  0% {
-    opacity: 1;
-    transform: scaleY(1.06);
-  }
-  3% {
-    opacity: 1;
-    transform: scaleY(0.94);
-  }
-  7% {
-    opacity: 1;
-    transform: scaleY(1.04);
-  }
-  14%,
-  100% {
-    opacity: 0.45;
-    transform: scaleY(1);
-  }
-}
-.hb-playhead {
+/* The same photo softened around her: it shows while the noise is off. */
+.hb-voice-quiet {
   position: absolute;
-  inset: -8% 0;
-  pointer-events: none;
-  transform: translateX(-100%);
+  inset: 0;
   opacity: 0;
+  transition: opacity 1s ease-in-out;
 }
-.hb-playhead::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  right: 0;
-  width: 2px;
-  border-radius: 2px;
-  background: #fff;
-  box-shadow: 0 0 10px var(--bento-glow);
-}
-.hb-bento[data-play] .hb-playhead {
+.hb-voice-quiet[data-on] {
   opacity: 1;
-  animation: bento-sweep var(--wave-s, 8s) linear infinite;
-  animation-play-state: paused;
 }
-.hb-bento[data-play="1"] .hb-playhead {
-  animation-play-state: running;
+.hb-voice .hb-shade {
+  height: 70%;
 }
-@keyframes bento-sweep {
+
+.hb-voice-ui {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    "chip switch"
+    ". ."
+    "copy play";
+  gap: 8px;
+  padding: 10px 10px 12px;
+}
+
+.hb-voice-chip,
+.hb-voice-switch {
+  display: inline-flex;
+  align-items: center;
+  align-self: start;
+  border-radius: 999px;
+  background: rgb(10 8 6 / 62%);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+}
+.hb-voice-chip {
+  grid-area: chip;
+  justify-self: start;
+  gap: 7px;
+  height: 28px;
+  padding: 0 11px 0 9px;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.hb-voice-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #ffb347;
+}
+.hb-voice[data-clean] .hb-voice-dot {
+  background: #7ee2b8;
+}
+.hb-voice-dot[data-live] {
+  animation: hb-voice-pulse 1.1s ease-out infinite;
+}
+@keyframes hb-voice-pulse {
   from {
-    transform: translateX(-100%);
+    box-shadow: 0 0 0 0 rgb(255 179 71 / 60%);
   }
   to {
-    transform: translateX(0);
+    box-shadow: 0 0 0 7px rgb(255 179 71 / 0%);
+  }
+}
+
+/* The switch: each half a button as tall as the switch, the pressed one a white pill inside it. */
+.hb-voice-switch {
+  grid-area: switch;
+  justify-self: end;
+  padding: 0 2px;
+}
+.hb-voice-switch > button {
+  min-height: 28px;
+  padding: 2px 1px;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: rgb(255 255 255 / 78%);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  touch-action: manipulation;
+  outline: none;
+}
+.hb-voice-switch > button > span {
+  display: block;
+  padding: 6px 10px;
+  border-radius: 999px;
+  transition:
+    background-color 0.25s ease,
+    color 0.25s ease;
+}
+.hb-voice-switch > button:hover {
+  color: #fff;
+}
+.hb-voice-switch > button[aria-pressed="true"] > span {
+  background: #fff;
+  color: #141210;
+}
+.hb-voice-switch > button:focus-visible > span {
+  outline: 2px solid #fff;
+  outline-offset: 1px;
+}
+
+/* The play button: one width whatever it says (Tap to listen, Loading…, Pause, Resume, Play again). */
+.hb-voice-play {
+  grid-area: play;
+  align-self: end;
+  justify-self: end;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: 132px;
+  height: 34px;
+  margin: 0 2px 0 0;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 94%);
+  color: #141210;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  touch-action: manipulation;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 35%);
+  outline: none;
+  transition:
+    background-color 0.2s ease,
+    transform 0.2s ease;
+}
+.hb-voice-play:hover {
+  background: #fff;
+}
+.hb-voice-play:active {
+  transform: scale(0.97);
+}
+.hb-voice-play:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 3px;
+}
+
+/* The tile's words, the link to the studio. */
+.hb-voice-link {
+  grid-area: copy;
+  align-self: end;
+  min-width: 0;
+  margin: 0 0 0 4px;
+  color: inherit;
+  text-decoration: none;
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.hb-voice-copy {
+  display: block;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 35%);
+}
+/* The small line keeps to one line: it may run on over the play button's column, above the button. */
+.hb-voice .hb-meta {
+  white-space: nowrap;
+}
+/* The link's words only where they fit on one line beside the button (a phone's full row); elsewhere the arrow. */
+@container (max-width: 339.98px) {
+  .hb-voice .hb-cta {
+    display: none;
+  }
+}
+/* The link's focus shows as every tile's does: the ring round the tile. */
+.hb-voice:has(.hb-voice-link:focus-visible) {
+  box-shadow:
+    0 0 0 2px var(--background),
+    0 0 0 4px var(--ring);
+}
+.hb-voice-link:hover .hb-cta,
+.hb-voice-link:focus-visible .hb-cta {
+  color: #fff;
+}
+.hb-voice-link:hover .hb-cta svg,
+.hb-voice-link:focus-visible .hb-cta svg {
+  transform: translateX(2px);
+}
+/* Where the tile has no room for the link's own words (a short or narrow tile), an arrow after the title says it opens. */
+.hb-voice-go {
+  display: inline-block;
+  width: 0.8em;
+  height: 0.8em;
+  margin-left: 0.25em;
+  vertical-align: -0.06em;
+  transition: transform 0.2s ease;
+}
+.hb-voice-link:hover .hb-voice-go,
+.hb-voice-link:focus-visible .hb-voice-go {
+  transform: translateX(2px);
+}
+
+/* The line along the bottom follows the clips (its width set as they play). */
+.hb-voice-bar {
+  position: absolute;
+  inset: auto 0 0;
+  z-index: 2;
+  height: 3px;
+  background: rgb(255 255 255 / 14%);
+  pointer-events: none;
+}
+.hb-voice-bar > i {
+  display: block;
+  width: 0;
+  height: 100%;
+  background: #fff;
+}
+
+@container (min-width: 220px) {
+  .hb-voice-ui {
+    padding-bottom: 16px;
+  }
+  .hb-voice-link {
+    margin-left: 8px;
+  }
+}
+@container (min-width: 340px) {
+  .hb-voice-go {
+    display: none;
+  }
+}
+@container (min-width: 460px) {
+  .hb-voice-ui {
+    padding: 14px 14px 18px;
+  }
+  .hb-voice-link {
+    margin-left: 12px;
+  }
+}
+/* (Height is measured from lg, where the grid fixes every tile's box: the bottom row is short up to 1080 px screens.) */
+@container (max-height: 200px) {
+  .hb-voice .hb-cta {
+    display: none;
+  }
+  .hb-voice-go {
+    display: inline-block;
+  }
+}
+/*
+ * A narrow tile: the chip and the play button (its icon alone; its words stay its name) on top, the switch over the
+ * title, and no small line or link words (the arrow after the title).
+ */
+@container (max-width: 299.98px) {
+  .hb-voice-ui {
+    grid-template-rows: auto minmax(0, 1fr) auto auto;
+    grid-template-areas:
+      "chip play"
+      ". ."
+      "switch switch"
+      "copy copy";
+  }
+  .hb-voice-switch {
+    justify-self: start;
+  }
+  .hb-voice-play {
+    align-self: start;
+    width: 34px;
+    padding: 0;
+  }
+  .hb-voice-play > span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .hb-voice .hb-meta {
+    display: none;
+  }
+}
+/* A phone or a tablet: every button at least 44 px to tap. */
+@media (pointer: coarse) {
+  .hb-voice-switch > button {
+    min-height: 44px;
+    padding: 4px 1px;
+  }
+  .hb-voice-switch > button > span {
+    padding: 9px 12px;
+    font-size: 13px;
+  }
+  .hb-voice-play {
+    width: 148px;
+    height: 44px;
+    font-size: 14px;
+  }
+  @container (max-width: 299.98px) {
+    .hb-voice-play {
+      width: 44px;
+    }
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hb-voice-pics,
+  .hb-voice-quiet,
+  .hb-voice-switch > button > span,
+  .hb-voice-play,
+  .hb-voice-go {
+    transition: none;
+  }
+  .hb-voice-near {
+    transform: none;
+  }
+  .hb-voice-dot[data-live] {
+    animation: none;
   }
 }
 
@@ -697,52 +961,89 @@
   height: 45%;
 }
 
-/* ---------------------------------------------------------------- genjutsu: the swap, and the clip as it was */
+/* ---------------------------------------------------------------- genjutsu: swaps, as they happen */
 
-/* The couple's faces sit in the top half of the clip (from 16 % to 43 % of its height in every frame): a wide, short
-   tile keeps them in view. */
+/* The faces sit in the top half of each clip (the couple's from 16 % to 43 % of its height in every frame): a tile
+   wider than the clip keeps them in view. From lg the tile is squarer than the clip, so all of its height shows. */
 .hb-genjutsu > .hb-pic .hb-fill,
 .hb-genjutsu .hb-clip video {
   object-position: 50% 22%;
 }
-/*
- * The original clip's first frame, in a small window in the tile's top corner: what went in, beside what came out. On
- * a layer over the clip and the shade, its size from the tile's own width (the tile is a container), so it never lays
- * out again.
- */
-.hb-original {
-  position: absolute;
-  z-index: 1;
-  top: 10px;
-  right: 10px;
-  width: clamp(76px, 27cqw, 132px);
-  aspect-ratio: 4 / 3;
-  overflow: hidden;
-  border-radius: 8px;
-  border: 1px solid rgb(255 255 255 / 55%);
-  background: #222228;
-  box-shadow: 0 6px 18px rgb(0 0 0 / 40%);
-  pointer-events: none;
+@media (min-width: 1024px) {
+  .hb-genjutsu > .hb-pic .hb-fill,
+  .hb-genjutsu .hb-clip video {
+    object-position: 50% 40%;
+  }
 }
-.hb-original-label {
+/*
+ * The words either side of the divider in the picture, riding along with it (BentoReel moves --x, the divider's place
+ * on the frame on screen, a share of the clip's width). The clip fills the tile under object-fit: cover, centred
+ * across, so the divider is at --lx in the tile (--fw: the clip's width on screen). "Original" rides on its right and
+ * keeps to the tile's left edge until the divider comes; "Swapped" rides on its left and stays at the right edge once
+ * it has gone by. Before the tile plays the divider is off the frame to the left, so "Original" names the still; under
+ * reduced motion it is half way across, as in that still. They go with the picture as a clip fades out.
+ */
+.hb-wipe {
+  --x: -0.03;
+  --fw: 100cqw;
+  --lx: calc(var(--x) * var(--fw) - (var(--fw) - 100cqw) / 2);
   position: absolute;
-  left: 5px;
-  bottom: 5px;
-  height: 16px;
+  inset: 0;
+  pointer-events: none;
+  transition: opacity 0.3s ease;
+}
+@media (min-width: 1024px) {
+  .hb-wipe {
+    --fw: max(100cqw, 133.333cqh);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hb-wipe {
+    --x: 0.5;
+  }
+}
+.hb-wipe[data-out] {
+  opacity: 0;
+}
+.hb-wipe-before,
+.hb-wipe-after {
+  position: absolute;
+  top: 12px;
   display: inline-flex;
   align-items: center;
-  padding: 0 6px;
+  height: 24px;
+  padding: 0 9px;
   border-radius: 999px;
-  background: rgb(13 13 15 / 78%);
-  font-size: 9.5px;
+  background: rgb(13 13 15 / 72%);
+  font-size: 10.5px;
   font-weight: 500;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+  white-space: nowrap;
 }
-@container (min-width: 300px) {
-  .hb-original {
-    top: 12px;
-    right: 12px;
+/* Moved, not laid out again: the words ride on a transform, so their trip is never a layout shift. */
+.hb-wipe-before {
+  left: 0;
+  transform: translateX(max(12px, calc(var(--lx) + 8px)));
+}
+.hb-wipe-after {
+  right: 0;
+  transform: translateX(min(-12px, calc(var(--lx) - 100cqw - 8px)));
+  background: color-mix(in oklch, var(--bento-accent) 82%, black);
+}
+@container (min-width: 340px) {
+  .hb-wipe-before,
+  .hb-wipe-after {
+    top: 16px;
+    height: 26px;
+    padding: 0 11px;
+    font-size: 11px;
+  }
+  .hb-wipe-before {
+    transform: translateX(max(16px, calc(var(--lx) + 9px)));
+  }
+  .hb-wipe-after {
+    transform: translateX(min(-16px, calc(var(--lx) - 100cqw - 9px)));
   }
 }
 /* The reel's clips and its still: a wide, short tile crops from the bottom, so the head always shows (a clip framed
@@ -1053,6 +1354,22 @@
     display: none;
   }
 }
+/*
+ * A short tile (from lg, the bottom row at 1024 x 768 to 1440 x 900) has about 66 px over its words: the board sits
+ * from its top, a little smaller, the steps' words whole without their icons, and the two pictures keep to themselves
+ * (the film's play mark and glow say which is which), so nothing reaches the edge or the title.
+ */
+@container (max-height: 200px) {
+  .hb-board {
+    top: 10px;
+    translate: -50% 0;
+    width: min(196px, 100% - 28px);
+  }
+  .hb-node-label,
+  .hb-step svg {
+    display: none;
+  }
+}
 .hb-edges {
   position: absolute;
   inset: 0;
@@ -1106,8 +1423,6 @@
     transform: none;
   }
   .hb-bento .hb-kenburns,
-  .hb-bento .hb-wave > i,
-  .hb-bento .hb-playhead,
   .hb-bento .hb-caret,
   .hb-bento .hb-edges path {
     animation: none !important;

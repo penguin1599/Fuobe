@@ -41,7 +41,7 @@ export async function POST(request: Request) {
   // The page says it isn't on this server's machine: a ComfyUI address on this machine or its network is never called
   // for it (it would be the server's own, not the owner's computer). Only ever skips a test.
   if (provider === "comfyui" && body.place === "hosted") {
-    const field = focus === "comfyIsolatedUrl" ? "comfyIsolatedUrl" : "comfyUrl";
+    const field = focus === "comfyIsolatedUrl" || focus === "worldcastUrl" ? focus : "comfyUrl";
     const refused = await hostedAddressRefusal(field, values[field]);
     if (refused) return Response.json(refused);
   }

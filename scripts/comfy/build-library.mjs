@@ -82,12 +82,19 @@ export const LOADER_FOLDERS = {
   OpenH3RegenFastVAEDecode: { vae_name: 'vae' },
   // Clean up voice: ComfyUI-RE-USE's loader reads models/reuse.
   REUSELoader: { model: 'reuse' },
+  // Kandinsky 6.0: the audio VAE in models/audio_vae (bigvgan_dir names a folder there: requiredModels), and
+  // the VSR's K-VAE and latent upscaler in its bundle under models/diffusion_models.
+  Kandinsky6AudioVAELoader: { tod_vae: 'audio_vae' },
+  Kandinsky6SRVAELoader: { kvae_checkpoint: 'diffusion_models' },
+  Kandinsky6LatentUpscalerLoader: { latent_upscaler_checkpoint: 'diffusion_models' },
   // Watermark Remover: ComfyUI-Qwen-Watermark's mask refiner reads SAM from models/sams.
   QWMRefineMask: { sam_model: 'sams' },
 };
 // Nodes that fetch their own weights at runtime (no manual download needed; listed in the entry's autoDownloads).
 // Zen Image Edit's adapter loader reads paths: its adapter is a requiredModels file, Qwen3.5-0.8B its autoDownloads.
-const SELF_DOWNLOADING = new Set(['RIFE VFI', 'DownloadAndLoadWav2VecModel', 'RMBG', 'AILab_Qwen3ASRSubtitle', 'Apply Whisper', 'ClothesSegment', 'LatentSyncNode', 'ZenImage21AdapterLoader',
+// AuKModelLoader (Edit speech) reads its checkpoints by path inside the AuK checkout (ckpts/…), not from a ComfyUI
+// models folder: install-comfyui.sh AUK_WEIGHTS=1 downloads them there (the entries' autoDownloads say what and where).
+const SELF_DOWNLOADING = new Set(['RIFE VFI', 'DownloadAndLoadWav2VecModel', 'RMBG', 'AILab_Qwen3ASRSubtitle', 'Apply Whisper', 'ClothesSegment', 'LatentSyncNode', 'ZenImage21AdapterLoader', 'AuKModelLoader',
   // Fix faces: H3-FaceRefine's detectors and Impact's SAM loader read their packs' own folders (the entry lists them in autoDownloads).
   'H3FaceTrackCrop', 'SAMLoader']);
 // Binding keys whose input is a user-supplied model file (not part of "models").
@@ -144,8 +151,12 @@ export const BINDING_KEYS = new Set([
   'maskPrompt', 'maskGrow', 'skipPass2', 'supersample', 'zoomStart', 'zoomEnd', 'panStartX', 'panStartY', 'panEndX', 'panEndY',
   'easeInOut', 'chunkFrames', 'crossfade', 'headroomDb', 'fadeCurve', 'format', 'profile', 'peakNits', 'resolutionLevel', 'fovX',
   'decimation', 'cutout', 'numGaussians', 'splatFormat', 'orbitFrames', 'frameWidth',
+  // Hi3D refine (see library.spec.mjs header)
+  'model3d', 'meshResolution', 'cpuOffload',
   // Idol 3D (docs/research/idol-9.md §5.5): Idol 3D's looser photo crop (the sampler key is MOSS-Image's)
   'photoCrop',
+  // idol-2 (docs/research/idol-9.md §5.6): ComfyUI-Idol's crop mode and its splat pruning
+  'cropMode', 'minOpacity', 'maxScale',
   // round 4 (engine seams, see library.spec.mjs header)
   'curveMode', 'filterSpeckle', 'colorPrecision',
   // remove-object package (round 4)
@@ -170,6 +181,8 @@ export const BINDING_KEYS = new Set([
   'preset',
   // Open-H3 Regenerate (n7-3): the pack's output size and draft size (its combo strings) and the refine's start noise
   'resolution', 'draftSize', 'startSigma',
+  // Regenerate in Cinema: the 768p draft's saved latent (the prefix it's saved under, the file the 2K finish loads)
+  'latentPrefix', 'latent',
   // Character swap in 2K: the mask composite's window starts, the two layers' places and the mask's soft edge
   'takeStart', 'maskStart', 'takeX', 'takeY', 'regionWidth', 'regionHeight', 'regenWidth', 'regenHeight', 'regenX', 'regenY', 'trimX', 'trimY', 'feather',
   // Clean up voice (ComfyUI-RE-USE): the RE-USE file, the rate it runs at, room tone, level and the music & effects bed's level
@@ -184,6 +197,12 @@ export const BINDING_KEYS = new Set([
   'device',
   // The VAE file Options → Decoder picks (Qwen-Image 2.1) and a speed tier's sigma schedule for the canvas size
   'vae', 'sigmas',
+  // Green screen: the key's despill strength
+  'despill',
+  // NVIDIA RTX Video: the nodes' quality (Super Resolution) or mode (Frame Generation)
+  'rtxQuality',
+  // Kandinsky VSR: the latent upscaler bank entry its factor needs
+  'upscalerScale',
   // Any Angle: the 3D view's file and each angle's camera
   'splatFile', 'cameraYaw', 'cameraPitch', 'cameraDistance', 'cameraFov', 'targetX', 'targetY', 'targetZ',
   // Head Swap: the paste-back edge's blur and the paste-back switch
@@ -221,10 +240,12 @@ async function hfSize(url, cache) {
     // A renamed repository answers with a redirect to its new name on huggingface.co (Comfy-Org/flux2-dev → Flux-2-Dev):
     // follow that one. The download's own redirect, to the CDN, carries the size and isn't followed.
     const moved = res.headers.get('location');
+    // A small file's redirect to its cached copy already says its size (x-linked-size), which the copy (chunked) may not.
+    const first = res.headers.get('x-linked-size');
     if ([301, 302, 307, 308].includes(res.status) && moved?.startsWith('/')) res = await fetch(new URL(moved, url), { method: 'HEAD', redirect: 'manual' });
     // A GitHub release asset (Zen Image Edit's adapter) redirects to its storage, which answers with the size.
     else if ([301, 302, 307, 308].includes(res.status) && /^https:\/\/github\.com\/[^/]+\/[^/]+\/releases\/download\//.test(url)) res = await fetch(url, { method: 'HEAD' });
-    const linked = res.headers.get('x-linked-size');
+    const linked = res.headers.get('x-linked-size') || first;
     const len = linked || (res.status === 200 ? res.headers.get('content-length') : null);
     if (res.status === 401 || res.status === 403) {
       const size = await hfTreeSize(url);
@@ -351,7 +372,7 @@ async function main() {
     }
 
     // Every media input must be bound, otherwise the workflow references a template example asset.
-    const FILE_INPUTS = { LoadImage: 'image', LoadImageMask: 'image', LoadVideo: 'file', VHS_LoadVideo: 'video', LoadAudio: 'audio', VHS_LoadAudioUpload: 'audio', AUSBOSS_NODES_ImageCropRotatePad: 'image' };
+    const FILE_INPUTS = { LoadImage: 'image', LoadImageMask: 'image', LoadVideo: 'file', VHS_LoadVideo: 'video', LoadAudio: 'audio', VHS_LoadAudioUpload: 'audio', AUSBOSS_NODES_ImageCropRotatePad: 'image', Hi3DLoadMesh: 'mesh_file' };
     const boundTargets = new Set(Object.values(bindings).flat().map((t) => `${t.node}.${t.input}`));
     for (const [nid, n] of Object.entries(graph)) {
       const inp = FILE_INPUTS[n.class_type];
@@ -409,8 +430,12 @@ async function main() {
     // Files a loader reads by a name with no extension (DBSLoader: models/dbs/<model>/config.json + model.safetensors), which the
     // loop above can't see: listed like any model, so install help and the presence check (GET /models/<folder>) know them.
     // Then files a model control can pick instead (FILM for RIFE): listed as optional, so missing-model help names them.
+    // A file the graph loads can be optional too: one its nodes load only when a control asks (Kandinsky 6.0's Prompt helper).
     for (const [file, optional] of [...(spec.requiredModels || []).map((f) => [f, false]), ...(spec.optionalModels || []).map((f) => [f, true])]) {
-      if (models.has(file)) continue;
+      if (models.has(file)) {
+        if (optional) models.get(file).optional = true;
+        continue;
+      }
       const known = KNOWN_MODELS[file];
       if (!known?.url) {
         errs.push(`${optional ? 'optional' : 'required'} model ${file}: no download URL known`);
@@ -424,11 +449,12 @@ async function main() {
 
     // ---- custom nodes
     const custom = new Set();
-    for (const n of Object.values(graph)) {
-      const mod = objectInfo[n.class_type]?.python_module || '';
+    // Nodes the app adds per run (spec.runtimeNodes, e.g. the clip loaders of H3's references) count as the graph's own.
+    for (const cls of [...Object.values(graph).map((n) => n.class_type), ...(spec.runtimeNodes || [])]) {
+      const mod = objectInfo[cls]?.python_module || '';
       if (!mod.startsWith('custom_nodes.')) continue;
       try {
-        custom.add(packOfClass(n.class_type, mod, prevSubset[n.class_type]?.python_module));
+        custom.add(packOfClass(cls, mod, prevSubset[cls]?.python_module));
       } catch (e) {
         errs.push(e.message);
       }
@@ -465,8 +491,11 @@ async function main() {
     if (spec.autoDownloads) entry.autoDownloads = spec.autoDownloads;
     // "isolated": the node pack has process-wide side effects; run it on a separate ComfyUI (see README).
     if (spec.worker) entry.worker = spec.worker;
+    // The card the graph's nodes need ("nvidia-rtx", "nvidia-rtx-40"): the GPU pre-flight checks it by the card's name.
+    if (spec.gpu) entry.gpu = spec.gpu;
     // The app rewrites the graph before submitting (e.g. "captions": one segment per caption cue).
     if (spec.expand) entry.expand = spec.expand;
+    if (spec.runtimeNodes) entry.runtimeNodes = spec.runtimeNodes;
     if (!validated && st && st.sha256 === hash && st.error) entry.validationError = st.error;
     if (errs.length) {
       errors.push(...errs.map((e) => `${spec.id}: ${e}`));

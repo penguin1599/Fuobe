@@ -158,6 +158,12 @@ export function applyMeasured(doc: LayerDoc, job: LayerJob, m: MeasuredJob, opts
     return { doc: addNodes(grown, [fill], 0), message: "Canvas expanded", select: fill.id };
   }
 
+  if (job.tool === "rerender") {
+    // One repaint of the whole arrangement: a new layer over the canvas as it is now, the layers kept underneath.
+    const n = newNode(newId(), "Re-render", [0, 0, doc.width, doc.height], out.url, natural, job.label, at, null, prompt);
+    return { doc: addNodes(doc, [n]), message: "Re-render added on top — hide it to see your layers", select: n.id };
+  }
+
   if (job.tool === "generate-layer") {
     const crop = out.alpha ?? null;
     const [cw, ch] = crop ? [crop[2], crop[3]] : natural;

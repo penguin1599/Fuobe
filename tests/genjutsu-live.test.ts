@@ -46,14 +46,16 @@ describe("Genjutsu's live gate", () => {
 
   it("the committed record opens only the features that passed, and the page passes the gate to the studio", () => {
     const record = JSON.parse(fs.readFileSync(path.join(ROOT, "workflows/comfyui/gpu-tested.json"), "utf8")) as { features: Record<string, { passed: boolean }> };
-    expect(Object.keys(record.features).sort()).toEqual(["finish-colours", "group-swap"]);
-    expect(Object.entries(genjutsuLive()).filter(([, on]) => on).map(([k]) => k).sort()).toEqual(["finish-colours", "group-swap"]);
+    expect(Object.keys(record.features).sort()).toEqual(["clean-voice-first", "finish-colours", "group-swap", "group-swap-one-by-one", "original-sound", "picture-h3-renderer"]);
+    expect(Object.entries(genjutsuLive()).filter(([, on]) => on).map(([k]) => k).sort()).toEqual(["finish-colours", "group-swap", "group-swap-one-by-one", "picture-h3-renderer"]);
     const page = fs.readFileSync(path.join(ROOT, "src/app/(studio)/genjutsu/page.tsx"), "utf8");
     expect(page).toContain("const live = genjutsuLive();");
     // The page's mode examples are only the ones open to everyone (the owner's come from an owner-only route).
     expect(page).toMatch(/<GenjutsuStudio examples=\{exampleRow\("tool:genjutsu"\)\} modeExamples=\{genjutsuExamples\(\(f\) => live\[f\]\)\} live=\{live\} \/>/);
-    // The studio shows a feature when it is live or the viewer is the owner.
+    // The studio shows a feature when it is live, the viewer is the owner, or it runs on a visitor's own GPU until then
+    // (src/lib/own-setup.ts); its mark ("Only you", or what it runs on) shows until it is live.
     const studio = fs.readFileSync(path.join(ROOT, "src/components/genjutsu/genjutsu-studio.tsx"), "utf8");
-    expect(studio).toContain("const open: FeatureCheck = useCallback((f) => owner || !!live?.[f], [owner, live]);");
+    expect(studio).toContain("const open: FeatureCheck = useCallback((f) => owner || !!live?.[f] || !!ownSetupItem(`genjutsu:${f}`), [owner, live]);");
+    expect(studio).toContain("const mark = (f: GenjutsuFeature): React.ReactNode => (live?.[f] ? undefined : owner ? <OnlyYou /> : <OwnSetupChip setup={ownSetupItem(`genjutsu:${f}`)} />);");
   });
 });

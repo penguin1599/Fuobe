@@ -79,7 +79,7 @@ export const INTENTS: readonly Intent[] = [
   { id: "film", triggers: ["film", "movie", "cinematic", "scene", "shot", "director", "trailer", "music video"], targets: ["cinema", "storyboard", "motions", "katana"] },
   { id: "dance", triggers: ["dance", "choreography", "pose", "moves", "tiktok dance"], targets: ["motion-control", "app-dance", "genjutsu"] },
   { id: "talk", triggers: ["talk", "talking", "speak", "lipsync", "lip sync", "avatar", "presenter", "spokesperson"], targets: ["lipsync", "app-talking-photo", "audio-speech"] },
-  { id: "sound", triggers: ["sound", "audio"], targets: ["audio", "audio-sfx", "audio-music"] },
+  { id: "sound", triggers: ["sound", "audio"], targets: ["audio", "audio-clean", "audio-sfx", "audio-music"] },
   { id: "voice", triggers: ["voice", "voiceover", "voice over", "narration", "narrator", "tts", "text to speech", "read aloud"], targets: ["audio-speech", "audio", "lipsync"] },
   { id: "music", triggers: ["music", "song", "soundtrack", "beat", "jingle", "score", "background music"], targets: ["audio-music", "audio", "audio-video"] },
   { id: "sfx", triggers: ["sfx", "foley", "whoosh", "sound effect"], targets: ["audio-sfx", "audio-video", "audio"] },
@@ -112,7 +112,7 @@ export const INTENTS: readonly Intent[] = [
   {
     id: "restore",
     triggers: ["restore", "restoration", "old photo", "old picture", "damaged", "scratched", "faded", "colorize", "colourise", "colorise", "colourize", "black and white"],
-    targets: ["app-restore-photo", "app-colorize", "upscale", "video-tools"],
+    targets: ["app-restore-photo", "app-colorize", "video-tools-restore", "upscale", "video-tools"],
   },
   { id: "logo", triggers: ["logo", "wordmark", "lettering", "typography", "font", "signage"], targets: ["image", "app-text-edit", "ads"] },
   {

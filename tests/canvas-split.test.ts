@@ -8,6 +8,7 @@ import {
   describeNode,
   edgeStem,
   modelChoices,
+  NODE_SPECS,
   OUT,
   outputHandles,
   outputLabel,
@@ -36,6 +37,7 @@ const { db } = await import("@/server/db");
 const list = await import("@/app/api/canvases/route");
 const one = await import("@/app/api/canvases/[id]/route");
 const run = await import("@/app/api/canvases/[id]/run/route");
+const { parseGraph } = await import("@/server/canvas");
 
 beforeAll(() => setSetting("demoMode", "auto"));
 
@@ -121,6 +123,14 @@ describe("edges carry their stem into the next node's chain", () => {
       ["b", "effects"],
       ["d", OUT],
     ]);
+  });
+});
+
+describe("saving a board", () => {
+  it("every node type can be saved", () => {
+    for (const type of Object.keys(NODE_SPECS) as CanvasNode["type"][]) {
+      expect(parseGraph({ nodes: [{ id: "n", type, position: at(0), data: {} }], edges: [] }), type).not.toBeNull();
+    }
   });
 });
 

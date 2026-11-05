@@ -59,6 +59,12 @@
     "error": null,
     "at": "2026-10-17T21:02:03.475Z"
   },
+  "character-describe-qwen3vl": {
+    "sha256": "6a86fddcfb1b757f828b99e681f93b5e5fe6b09db010552a3bbba6aab9dd1e70",
+    "validated": true,
+    "error": null,
+    "at": "2026-11-04T21:31:23.012Z"
+  },
   "draw-to-video-wan-move": {
     "sha256": "6c75d5e1b69774db6dea6e8879f61c3701ea60384e85e1e0291118cc77c1795e",
     "validated": true,
@@ -82,6 +88,24 @@
     "validated": true,
     "error": null,
     "at": "2026-10-16T20:57:21.016Z"
+  },
+  "fibo2-dev-edit": {
+    "sha256": "992017c59febfc88b98f5b3e2e038402ad0e6dfc27e48cf7dbc8196a0fc9bd5d",
+    "validated": true,
+    "error": null,
+    "at": "2026-11-04T19:55:00.096Z"
+  },
+  "fibo2-dev-t2i": {
+    "sha256": "527b61a8081295df35331aa3481708cc1c424bcb8afbc1029b9b5cebfdc431fb",
+    "validated": true,
+    "error": null,
+    "at": "2026-11-04T19:55:00.095Z"
+  },
+  "fibo2-edit-turbo-edit": {
+    "sha256": "6f81f2f97a4d5c63730486478b47f1c9c07ff168bc65b016987ffa3ac595f920",
+    "validated": true,
+    "error": null,
+    "at": "2026-11-04T19:55:00.097Z"
   },
   "flux1-dev-t2i": {
     "sha256": "62de41ccfa9c0fcce1599c8f5f712b983e767800af5b73a4e06cb71a1aa649ea",
@@ -161,6 +185,12 @@
     "error": null,
     "at": "2026-11-01T13:51:34.372Z"
   },
+  "fps-rtx-framegen": {
+    "sha256": "cabe1f235a447892a526dec506c0018fc9c094bb8de43ee164032cadc46ac18c",
+    "validated": false,
+    "error": "HTTP 400: missing_node_type: Node 'RTX Video Frame Generation: (N - 1) x m + 1 frames, cuts detected' not found. The custom node may not be installed. (Node ID '#7')",
+    "at": "2026-11-02T10:52:33.580Z"
+  },
   "frame-extract": {
     "sha256": "0f695a5ddf779a1d7b57f1c817e14c36e53534c81148449055f39c55cf9952ab",
     "validated": true,
@@ -197,11 +227,29 @@
     "error": null,
     "at": "2026-10-16T20:57:25.685Z"
   },
+  "ideogram4-t2i": {
+    "sha256": "b0847a7c624c75668f301dfc7a9a01673f95c50a6397d9381b722622e8972cd5",
+    "validated": true,
+    "error": null,
+    "at": "2026-11-04T19:55:00.094Z"
+  },
   "image-face-mosaic-sam3": {
     "sha256": "4493ff975bbb3d81188837a2f7de3e20d8c485fcc92a96b4b9fc3401cb6fa03b",
     "validated": true,
     "error": null,
     "at": "2026-10-29T10:46:02.938Z"
+  },
+  "image-matte-feynobg": {
+    "sha256": "1b466b50169056e40c59c629f9c74f041d57fc1da9f45d8bf7b2dacee8e6b296",
+    "validated": false,
+    "error": "HTTP 400: missing_node_type: Node 'FeyNoBg fine-hair matte (foreground refine on)' not found. The custom node may not be installed. (Node ID '#2')",
+    "at": "2026-11-02T11:07:46.548Z"
+  },
+  "image-person-mask-sam3": {
+    "sha256": "81f9b96a74bb2dfe09589e87c53ecb843f08d57b08a4e8b2418ae138f539a659",
+    "validated": true,
+    "error": null,
+    "at": "2026-11-02T21:03:03.876Z"
   },
   "image-to-3d-hunyuan3d-21": {
     "sha256": "275a30c4184a8728e919166e72d88913abcf61a85b051a897ecb7249db849a08",
@@ -232,6 +280,12 @@
     "validated": true,
     "error": null,
     "at": "2026-10-26T00:46:07.467Z"
+  },
+  "image-to-mesh-idol": {
+    "sha256": "5bf97b5d462812261fbd47230e1ec291582787914bc77f8622843e07dde14350",
+    "validated": true,
+    "error": null,
+    "at": "2026-11-03T01:59:09.652Z"
   },
   "image-to-splat-idol": {
     "sha256": "f5230e116764047049fd2b7f7dde07372c3c64b2967219e719ea5114599ba228",
@@ -305,11 +359,53 @@
     "error": null,
     "at": "2026-10-16T20:57:26.862Z"
   },
+  "kandinsky6-i2av": {
+    "sha256": "2ba5f947197fdb84a241373b7a8bb4985d022aaac54bd1d6e704d8703f88fc44",
+    "validated": false,
+    "error": "HTTP 400: missing_node_type: Node 'Audio VAE (MMAudio 44 kHz) + BigVGAN vocoder' not found. The custom node may not be installed. (Node ID '#4')",
+    "at": "2026-11-02T11:05:12.479Z"
+  },
+  "kandinsky6-t2av": {
+    "sha256": "db4b91fec291482b63dd051c95410cf0d213695ca8c68bb577e99a0137a43230",
+    "validated": false,
+    "error": "HTTP 400: missing_node_type: Node 'Audio VAE (MMAudio 44 kHz) + BigVGAN vocoder' not found. The custom node may not be installed. (Node ID '#4')",
+    "at": "2026-11-02T11:05:12.444Z"
+  },
   "kenburns-still": {
     "sha256": "34c5bdc4b0a425d82b5971ca31eae697da6b7363ea48b30dfe055d7a8573976d",
     "validated": true,
     "error": null,
     "at": "2026-10-23T00:12:21.225Z"
+  },
+  "krea2-edit-general": {
+    "sha256": "76bc87a9ad55717a2c94f63418e7c094fbf8988a8b5e248d0d594d14a4d39dcf",
+    "validated": true,
+    "error": null,
+    "at": "2026-11-04T19:55:00.096Z"
+  },
+  "krea2-edit-identity": {
+    "sha256": "3a5ed1a9b2010f3114a2f4750118d3a24213b977c0c03f37c18ecd7f98f18d26",
+    "validated": true,
+    "error": null,
+    "at": "2026-11-04T19:55:00.097Z"
+  },
+  "krea2-realism-t2i": {
+    "sha256": "93b01aeb5d584a78d26271c8a42ad9e7c82c3d38e26f02437dfe2c03d90afded",
+    "validated": true,
+    "error": null,
+    "at": "2026-11-04T19:55:00.094Z"
+  },
+  "krea2-turbo-i2i": {
+    "sha256": "fab03e77b8a82f83404e6c9e069a157221e08acc1e5aa8abe04c075ad53046eb",
+    "validated": true,
+    "error": null,
+    "at": "2026-11-04T19:55:00.096Z"
+  },
+  "krea2-turbo-t2i": {
+    "sha256": "3a39cd2708654be5a4ddeb85445d73fdca23ef8c5c96d7a1ab06a3eaaac40734",
+    "validated": true,
+    "error": null,
+    "at": "2026-11-04T19:55:00.094Z"
   },
   "layers-qwen-image-layered": {
     "sha256": "7e8aae04b028f3e0000ca59ab953c4af5be0a1a65f734481d8162179d6cc9e77",
@@ -377,6 +473,96 @@
     "error": null,
     "at": "2026-10-16T20:57:26.738Z"
   },
+  "mesh-refine-hi3d": {
+    "sha256": "e0c498e66fc81e427e624fa4ca1e7101819cf0a69a87b1680d225470e2ce75b9",
+    "validated": false,
+    "error": "HTTP 400: missing_node_type: Node 'Hi3D Model Loader' not found. The custom node may not be installed. (Node ID '#1')",
+    "at": "2026-11-02T15:11:18.633Z"
+  },
+  "minimax-h3-fast-flf2v": {
+    "sha256": "14443d1182167b2d69d5ed0d0952592dfcd7adc2d911e4c0d33b9f2225d4317b",
+    "validated": true,
+    "error": null,
+    "at": "2026-11-05T00:31:32.634Z"
+  },
+  "minimax-h3-fast-i2v": {
+    "sha256": "b5808ec208ba7d99a8ee25b103f1aade3aeec524c975ea831c30141ee29c6e48",
+    "validated": true,
+    "error": null,
+    "at": "2026-11-05T00:31:32.634Z"
+  },
+  "minimax-h3-fast-t2v": {
+    "sha256": "5236321955d3b5cb16c5daa2a8c1154b57b0032c22864a0d417b94560dd60c2e",
+    "validated": true,
+    "error": null,
+    "at": "2026-11-05T00:31:32.631Z"
+  },
+  "minimax-h3-flex-flf2v": {
+    "sha256": "a76ec6135a539210a9589118f1859746864ba13dded68f5f5fb1ab585a3995c3",
+    "validated": true,
+    "error": null,
+    "at": "2026-11-02T10:49:21.229Z"
+  },
+  "minimax-h3-flex-i2v": {
+    "sha256": "17a0af634b6e376bd7962b31425328d513fe5994cafd2fffd2bc7791a9cb2ab9",
+    "validated": true,
+    "error": null,
+    "at": "2026-11-02T10:49:20.882Z"
+  },
+  "minimax-h3-flex-ref2va": {
+    "sha256": "5e23b463861266c45b5d47c74d07a24498ef91e305488b94797eb761c1154766",
+    "validated": true,
+    "error": null,
+    "at": "2026-11-02T10:49:22.296Z"
+  },
+  "minimax-h3-flex-t2v": {
+    "sha256": "ac3aba6022c2642eb895cb2e8572a4507d242f3b1962be4603a90656a95cfe28",
+    "validated": true,
+    "error": null,
+    "at": "2026-11-02T10:49:20.705Z"
+  },
+  "minimax-h3-flf2v": {
+    "sha256": "4cbb1187267bea3bb18b5f14f720e809bde7b4adffec38676cf1f03a72990786",
+    "validated": true,
+    "error": null,
+    "at": "2026-11-04T22:09:31.257Z"
+  },
+  "minimax-h3-flf2v-hq": {
+    "sha256": "1ca09a5b3aeea81bfbf84548df3ae6165e4a9f33f895f956727683f7c4e1c8b2",
+    "validated": true,
+    "error": null,
+    "at": "2026-11-04T22:09:31.259Z"
+  },
+  "minimax-h3-i2v": {
+    "sha256": "ed486a7556225d0df5467ecf45e0f90319dbd9945803b0c383c3e70e34e6f466",
+    "validated": true,
+    "error": null,
+    "at": "2026-11-04T22:09:31.256Z"
+  },
+  "minimax-h3-i2v-hq": {
+    "sha256": "dac7df5c4790bf39c6524f75c6fcfe926beb6ca879d82fb246dbab94873f1248",
+    "validated": true,
+    "error": null,
+    "at": "2026-11-04T22:09:31.258Z"
+  },
+  "minimax-h3-orbit": {
+    "sha256": "108d0cbf2c0e8dc1c26faa21569af805f3059d90fa3d915ff482577db6fb06f2",
+    "validated": true,
+    "error": null,
+    "at": "2026-11-04T22:09:31.259Z"
+  },
+  "minimax-h3-t2v": {
+    "sha256": "b39d0a696b51e30e5e8ed0150f5cdba1725abc6044dccbf4537647dc28333ea7",
+    "validated": true,
+    "error": null,
+    "at": "2026-11-04T22:09:31.254Z"
+  },
+  "minimax-h3-t2v-hq": {
+    "sha256": "570f349ea8b33b1dbd0f07dda3f1bdc4591b8b0e1dfe6dfa7b0deeb4bfa2fc14",
+    "validated": true,
+    "error": null,
+    "at": "2026-11-04T22:09:31.257Z"
+  },
   "mixed-media-zimage-frames": {
     "sha256": "0e78a2602566f88e12a48711caa67d604a6d4455031e71b08f9b3cd030778387",
     "validated": true,
@@ -384,10 +570,10 @@
     "at": "2026-10-17T21:02:01.881Z"
   },
   "moss-image-t2i": {
-    "sha256": "e306a63bdc30998b0f1083662f906faae772de46d8f6a71c90e17ec299b2fae5",
+    "sha256": "b31217edfbc0d7f88fe89867afc5c7f34d32290bdfc8f5f202263cfd6af37fe6",
     "validated": true,
     "error": null,
-    "at": "2026-10-30T09:40:38.592Z"
+    "at": "2026-11-04T19:55:00.095Z"
   },
   "music-ace-step-15": {
     "sha256": "ddfe9b5459aab53ddd05a8a767fcd75d48c572574e4898198200067a3e53a5d8",
@@ -455,6 +641,78 @@
     "error": null,
     "at": "2026-10-21T16:25:18.796Z"
   },
+  "qwen-image-21-edit": {
+    "sha256": "552cb279fe235af2d9db1445e206b4fe4acfb399d0a51b16af18af811060776b",
+    "validated": true,
+    "error": null,
+    "at": "2026-11-04T19:55:00.090Z"
+  },
+  "qwen-image-21-edit-details": {
+    "sha256": "6f9bfd2edc58067b890191b3621d34eea9fae68041fa38a48c5fe426b899f046",
+    "validated": true,
+    "error": null,
+    "at": "2026-11-04T21:42:15.689Z"
+  },
+  "qwen-image-21-edit-draft": {
+    "sha256": "3e58c31b3464559f727b22ee46ea54b5594c86c3a7563d3c3c29ed1cd368d205",
+    "validated": true,
+    "error": null,
+    "at": "2026-11-04T19:55:00.091Z"
+  },
+  "qwen-image-21-edit-fast": {
+    "sha256": "22deb2c57a3a3402d33bad1e46cf95a251fc42d54017c455e232af6f3ed69819",
+    "validated": true,
+    "error": null,
+    "at": "2026-11-04T21:42:15.688Z"
+  },
+  "qwen-image-21-inpaint": {
+    "sha256": "b2b2464bf5fd9ec2d7652f7d2119031c89ba675eb34b03cd4a26ceb87cede2c2",
+    "validated": true,
+    "error": null,
+    "at": "2026-11-04T19:55:00.092Z"
+  },
+  "qwen-image-21-inpaint-draft": {
+    "sha256": "c47152b10dbab94d33f98de81309eb8400f5466bc817b54896893b961e76ddd4",
+    "validated": true,
+    "error": null,
+    "at": "2026-11-04T19:55:00.092Z"
+  },
+  "qwen-image-21-inpaint-fast": {
+    "sha256": "1c83c911a529f51d0545f1a204fdf1360941abff107ff4d7373a90da9c8e08ca",
+    "validated": true,
+    "error": null,
+    "at": "2026-11-04T21:42:15.689Z"
+  },
+  "qwen-image-21-live-edit": {
+    "sha256": "d98a43506ad484d5036f5a9052733d2330d2aebbfb8acc4be86e400386a5f056",
+    "validated": true,
+    "error": null,
+    "at": "2026-11-04T21:42:15.691Z"
+  },
+  "qwen-image-21-next-scene": {
+    "sha256": "4746af6e956861071b2e4341546390c150f987ecf758041391cd1d2327bcae7e",
+    "validated": true,
+    "error": null,
+    "at": "2026-11-04T21:42:15.690Z"
+  },
+  "qwen-image-21-outpaint": {
+    "sha256": "f2a6229690848015d00dc81c718d2ea79ed14e271363d7eb3aed25bde6357331",
+    "validated": true,
+    "error": null,
+    "at": "2026-11-04T19:55:00.093Z"
+  },
+  "qwen-image-21-outpaint-draft": {
+    "sha256": "e97298f69484412ce1e7c15d21b285ad47b6e1eba01592972cb7c4c93103ec6e",
+    "validated": true,
+    "error": null,
+    "at": "2026-11-04T19:55:00.093Z"
+  },
+  "qwen-image-21-outpaint-fast": {
+    "sha256": "91ebc8e23c5587f38a2a30ad8e5c2e048566289e308589887f6d972edc6abedd",
+    "validated": true,
+    "error": null,
+    "at": "2026-11-04T21:42:15.690Z"
+  },
   "qwen-image-21-qma": {
     "sha256": "dfafe7192f5f94796a4d9c3b6cfd9b2e42b4971dca91c0811fd5412fd6481e53",
     "validated": true,
@@ -472,6 +730,36 @@
     "validated": true,
     "error": null,
     "at": "2026-11-04T03:21:58.891Z"
+  },
+  "qwen-image-21-t2i": {
+    "sha256": "4cb5c638906665a1d1d50ae1b271eb6b4f8a13330c65ad05abc07609926633ce",
+    "validated": true,
+    "error": null,
+    "at": "2026-11-04T19:55:00.089Z"
+  },
+  "qwen-image-21-t2i-details": {
+    "sha256": "b94ffdeb8d884a55e98c823f0f60080bb2f3e13f3df6709c3c889c127325591e",
+    "validated": true,
+    "error": null,
+    "at": "2026-11-04T21:42:15.688Z"
+  },
+  "qwen-image-21-t2i-draft": {
+    "sha256": "70237732a98d072e569dd7fb9588a91a0e285b7088e9664276d01ec1fbb25079",
+    "validated": true,
+    "error": null,
+    "at": "2026-11-04T19:55:00.090Z"
+  },
+  "qwen-image-21-t2i-fast": {
+    "sha256": "4869518eaa2fbbd4add385feddfaf0c853d0acb6172fc0f6b528d7d1c3cad65b",
+    "validated": true,
+    "error": null,
+    "at": "2026-11-04T21:42:15.687Z"
+  },
+  "qwen-image-21-turbo-edit": {
+    "sha256": "2e5032ac5a831fa251a10bed9a9ed3c377ce211aa9dbb3809616555f925c1a44",
+    "validated": true,
+    "error": null,
+    "at": "2026-11-04T19:55:00.091Z"
   },
   "qwen-image-2512-t2i": {
     "sha256": "c18da4a3488120bdcee722e4ae7d187385544ec4805753e7dae6946ddb6f6ba5",
@@ -545,6 +833,12 @@
     "error": null,
     "at": "2026-10-23T00:12:21.301Z"
   },
+  "sdr-to-hdr-rtx": {
+    "sha256": "f7ba6d2b932efd5f4479fafb4e7e17a02657dcb994f680ebf8bf88a7fb64d4c5",
+    "validated": false,
+    "error": "HTTP 400: missing_node_type: Node 'RTX Video HDR (peak nits; HDR = BT.2020 HLG, HDR PQ = BT.2020 PQ)' not found. The custom node may not be installed. (Node ID '#3')",
+    "at": "2026-11-02T10:52:33.596Z"
+  },
   "sdxl-t2i": {
     "sha256": "ae16cc9b74193179da08136571719871c3e31e2abacf5297985657c2fe5e9fbf",
     "validated": true,
@@ -605,11 +899,23 @@
     "error": null,
     "at": "2026-11-02T01:03:50.001Z"
   },
+  "speech-edit-auk": {
+    "sha256": "e38704387a1473e0e72ca81b4b2e586849e69425ec57a53820574323d595baf1",
+    "validated": false,
+    "error": "HTTP 400: missing_node_type: Node 'AuK Model Loader (AuK-Flash; paths under the AuK checkout)' not found. The custom node may not be installed. (Node ID '#4')",
+    "at": "2026-11-02T15:31:23.430Z"
+  },
   "speech-translate-gemma4": {
     "sha256": "baf609432b57514c43d2f91630b9ae3cb916e9fe8dab47ac02c6c9b64ded643a",
     "validated": true,
     "error": null,
     "at": "2026-10-22T23:27:26.367Z"
+  },
+  "speech-tts-auk": {
+    "sha256": "7dc1ef8affcbcfaf5670ebc9cf2a16755dd7ae5c7acf696e8b1c84a7ea226ab4",
+    "validated": false,
+    "error": "HTTP 400: missing_node_type: Node 'AuK Model Loader (AuK-Flash)' not found. The custom node may not be installed. (Node ID '#2')",
+    "at": "2026-11-02T15:31:23.452Z"
   },
   "steam-it-qwen-image-21": {
     "sha256": "e2b94b6cf0105022ee0b93d25e9072eaef8892cf0581d6b296ff14d2aa8ec3e2",
@@ -731,6 +1037,12 @@
     "error": null,
     "at": "2026-10-23T22:48:22.275Z"
   },
+  "upscale-video-rtx": {
+    "sha256": "c850e3910096031d865de8d4b8206e39b8a7f7fa960e17ecb7d6d282755a66ac",
+    "validated": false,
+    "error": "HTTP 400: missing_node_type: Node 'RTX Video Super Resolution (quality: rtxQuality)' not found. The custom node may not be installed. (Node ID '#6')",
+    "at": "2026-11-02T10:52:33.559Z"
+  },
   "upscale-video-seedvr2": {
     "sha256": "42f7ef1d6ab68d53f96a704037fc443fd207b790562da473c747f9f6e14c34fc",
     "validated": true,
@@ -781,9 +1093,9 @@
   },
   "video-character-swap-h3": {
     "sha256": "37496982555a84ada4ccb22a155639d6ed8817b0cf0a868aa1497bd05c1c9de2",
-    "validated": false,
-    "error": "HTTP 400: missing_node_type: Node 'Prepare · 24 fps / pixel budget' not found. The custom node may not be installed. (Node ID '#31')",
-    "at": "2026-10-27T04:10:39.868Z"
+    "validated": true,
+    "error": null,
+    "at": "2026-11-05T00:31:32.635Z"
   },
   "video-character-swap-h3-relay": {
     "sha256": "7ff9fd0074152ee5bd15e187b04faec8d876164ea77b0df07224f2c41e677ee6",
@@ -935,11 +1247,35 @@
     "error": null,
     "at": "2026-11-03T18:55:13.488Z"
   },
+  "video-from-picture-h3": {
+    "sha256": "a07fc6d3c3ea995ebb79839a29269270a3224563031ff6b70e67a0f5dda88aeb",
+    "validated": true,
+    "error": null,
+    "at": "2026-11-04T22:58:35.061Z"
+  },
+  "video-from-picture-solar": {
+    "sha256": "dcb8ca8b4918c4a4e9a488eb02eff30e4f77767a553f3f22d5a4e4511e606271",
+    "validated": true,
+    "error": null,
+    "at": "2026-11-04T22:58:35.056Z"
+  },
   "video-group-swap-h3": {
     "sha256": "a946ec11f2e0ed403b49e2f43a10801918829e407bd7fe3ab10a6065fc3ec25a",
     "validated": true,
     "error": null,
     "at": "2026-11-03T19:15:30.473Z"
+  },
+  "video-group-swap-h3-one-by-one": {
+    "sha256": "9d0da7b722affa7801f563599740f334e39308f506f41ca71ee31ed6fd5fd989",
+    "validated": true,
+    "error": null,
+    "at": "2026-11-05T00:47:07.475Z"
+  },
+  "video-h3-t2v-2k": {
+    "sha256": "2193606d5114870328d785cd55f4138da105c563ca8e2dc9db37a21457d1253d",
+    "validated": false,
+    "error": "HTTP 400: missing_node_type: Node 'Save the 768p latent (Finish in 2K decodes from it)' not found. The custom node may not be installed. (Node ID '#20')",
+    "at": "2026-11-02T15:34:50.056Z"
   },
   "video-inpaint-wan-vace": {
     "sha256": "71aaa43c8ac4bb0a764a9a835d96d1c47b33244f741611c7036ebea8ffcef3a7",
@@ -959,11 +1295,23 @@
     "error": null,
     "at": "2026-10-23T00:12:21.209Z"
   },
+  "video-key-corridorkey": {
+    "sha256": "05971ce7115c793259dc1e6d88bee9a5815c50f7f6d2ba98132433a9dad5a20d",
+    "validated": false,
+    "error": "HTTP 400: missing_node_type: Node 'CorridorKey 2.0 (weights downloaded on first run): matte, despilled foreground over black, straight RGBA' not found. The custom node may not be installed. (Node ID '#6')",
+    "at": "2026-11-02T21:14:06.467Z"
+  },
   "video-mask-h3-relay": {
     "sha256": "d5a3fc7046010b54ea070f45acc325602ed5ab5dbe403040e4d6591949084c84",
     "validated": false,
     "error": "HTTP 400: missing_node_type: Node 'H3RelayPrepareSource' not found. The custom node may not be installed. (Node ID '#prepare')",
     "at": "2026-10-27T11:01:36.148Z"
+  },
+  "video-matte-vrmbg3": {
+    "sha256": "bc8e7b99a0f2e29af5355f6fc2823966f18a0012acf2dac1f6c65fdf90b6591a",
+    "validated": false,
+    "error": "HTTP 400: missing_node_type: Node 'VRMBG 3.0: each frame conditioned on the one before' not found. The custom node may not be installed. (Node ID '#3')",
+    "at": "2026-11-02T11:08:13.090Z"
   },
   "video-mux-audio": {
     "sha256": "68af795bae0c0e89749819173916044e4024a6ce3035f830b48c80e0b6899181",
@@ -1001,6 +1349,12 @@
     "error": "HTTP 400: missing_node_type: Node 'Open-H3 Regenerate LoRA (curve branches off)' not found. The custom node may not be installed. (Node ID '#3')",
     "at": "2026-11-01T16:34:43.069Z"
   },
+  "video-regenerate-h3-latent": {
+    "sha256": "c5b3c29ab22871a33819819585c2a28505606526fe7e424d6c77d7f549dcc470",
+    "validated": false,
+    "error": "HTTP 400: missing_node_type: Node 'The draft's saved 768p latent' not found. The custom node may not be installed. (Node ID '#1')",
+    "at": "2026-11-02T15:34:50.077Z"
+  },
   "video-relight-bernini-r": {
     "sha256": "218ca68fa4c552a6e5f986973f33f122ad43f27b6808ef493a2d9f9733b8a72d",
     "validated": true,
@@ -1018,6 +1372,12 @@
     "validated": true,
     "error": null,
     "at": "2026-10-22T23:27:26.214Z"
+  },
+  "video-scene-describe": {
+    "sha256": "25c751c292a93f349ef09c4022b2bff8d515c74bfc32686a08ec57c5f33b7113",
+    "validated": true,
+    "error": null,
+    "at": "2026-11-04T21:42:15.692Z"
   },
   "video-scene-edit-h3": {
     "sha256": "8fa9cbb6333cd03f6f06c7dc767857c87c86428d4f6fc1f233374caf828d98eb",
@@ -1055,11 +1415,29 @@
     "error": null,
     "at": "2026-10-23T00:12:16.143Z"
   },
+  "video-upscale-kandinsky6-vsr": {
+    "sha256": "2ed6d22b03034fb762043da81e7ed6489973d9e56e45fa921a268c4b780dafe3",
+    "validated": false,
+    "error": "HTTP 400: missing_node_type: Node 'Kandinsky VSR VAE' not found. The custom node may not be installed. (Node ID '#4')",
+    "at": "2026-11-02T11:05:12.503Z"
+  },
   "voice-change-chatterbox": {
     "sha256": "ad8b9d59f8cb4632f2859db6a0ee2e8b6114263a9507f144554cd827ceea3f0c",
     "validated": true,
     "error": null,
     "at": "2026-10-16T23:33:13.548Z"
+  },
+  "voice-clean-bed-reuse": {
+    "sha256": "8ddc340d4e521cd1a8783cd42a263a22ccfbec43fddb85732c28a62466501500",
+    "validated": true,
+    "error": null,
+    "at": "2026-11-05T00:57:32.807Z"
+  },
+  "voice-clean-reuse": {
+    "sha256": "22458293e2c786bca91d1b7ef85b82422b6652594c18c7bb2e7577b6b4eafcbd",
+    "validated": true,
+    "error": null,
+    "at": "2026-11-04T21:14:36.472Z"
   },
   "wan-animate2": {
     "sha256": "efee2e4874102ff8a7f075993e406e05b355a843762220ad38278209de05c63a",

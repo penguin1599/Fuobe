@@ -4,6 +4,13 @@
  * with no screen). What the "Connect your GPU" screens say about it. Pure.
  */
 
+/**
+ * Fuobe Connect's repository is published: the "Connect your GPU" screens offer it (install it, pair with a code), and
+ * "Set it up with my AI" offers it first. Until then they offer Fuobe's setting with Fuobe's guard, and a web address.
+ * Nothing else decides whether Fuobe Connect is offered.
+ */
+export const FUOBE_CONNECT_PUBLISHED: boolean = false;
+
 export const FUOBE_CONNECT = {
   name: "Fuobe Connect",
   /** What to type in ComfyUI-Manager's Custom Nodes Manager. */

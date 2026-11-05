@@ -11,6 +11,7 @@ import { useGenerationActions, useIsAccount } from "@/lib/api";
 import type { Generation, OutputFile } from "@/lib/catalog/types";
 import { cn } from "@/lib/utils";
 import { toastError } from "@/lib/refusals";
+import { downloadZip } from "@/lib/zip-download";
 import { useRetryPhoto } from "./hooks";
 
 export interface Tile {
@@ -195,7 +196,11 @@ export function DownloadAll({ items, label = "Download" }: { items: Generation[]
       href={href}
       download
       aria-disabled={!href}
-      onClick={(e) => !href && e.preventDefault()}
+      onClick={(e) => {
+        // Asks first (src/lib/zip-download.ts): a refusal (a zip still going, too big) is a toast, not a failed download.
+        e.preventDefault();
+        if (href) void downloadZip(href);
+      }}
       className={cn(
         "inline-flex h-8 items-center gap-1.5 rounded-full bg-primary px-3 text-[13px] font-medium text-primary-foreground transition-colors hover:bg-primary/90",
         !href && "pointer-events-none opacity-50",

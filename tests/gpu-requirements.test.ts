@@ -45,7 +45,8 @@ describe("requirements.json", () => {
       const iw = index.workflows[w.id];
       const placed = [...iw.core, ...Object.values(iw.packs).flat()];
       expect(new Set(placed).size, w.id).toBe(placed.length);
-      expect(placed.sort(), w.id).toEqual([...new Set(Object.values(graph).map((n) => n.class_type))].sort());
+      // Classes the app adds per run (runtimeNodes: the References clip loaders) count as the graph's.
+      expect(placed.sort(), w.id).toEqual([...new Set([...Object.values(graph).map((n) => n.class_type), ...(w.runtimeNodes ?? [])])].sort());
       expect(Object.keys(iw.packs).sort(), w.id).toEqual(w.customNodes.map((n) => n.name).sort());
       for (const [p, classes] of Object.entries(iw.packs)) for (const c of classes) expect(index.packs[p].classes, `${w.id}: ${c}`).toContain(c);
     }
@@ -81,9 +82,9 @@ describe("requirements.json", () => {
     expect(files.filter(([, f]) => new URL(f.url).host === "github.com").map(([k]) => k)).toEqual(["text_encoders/adapter_v12.safetensors"]);
   });
 
-  it("marks exactly the LTX-2.5 files (the model's repo, and Lightricks' Restore and Detail Refine IC-LoRAs) and FLUX 3 Image Klein's as gated", () => {
+  it("marks exactly the LTX-2.5 files (the model's repo, and Lightricks' Restore and Detail Refine IC-LoRAs), FLUX 3 Image Klein's and Bria VRMBG 3.0's as gated", () => {
     const gated = files.filter(([, f]) => f.gated).map(([k]) => k);
-    const gatedUrl = (u: string) => /\/Lightricks\/LTX-2\.5(\/|-22b-IC-LoRA-(Restore|Refine-Details)\/)/.test(u) || u.includes("/black-forest-labs/flux-3-image-klein-comfy/");
+    const gatedUrl = (u: string) => /\/Lightricks\/LTX-2\.5(\/|-22b-IC-LoRA-(Restore|Refine-Details)\/)/.test(u) || u.includes("/black-forest-labs/flux-3-image-klein-comfy/") || u.includes("/briaai/VRMBG-3.0/");
     expect(gated.sort()).toEqual(files.filter(([, f]) => gatedUrl(f.url)).map(([k]) => k).sort());
     expect(gated.length).toBeGreaterThan(0);
   });
@@ -129,7 +130,8 @@ describe("requirements.json", () => {
   // Open-H3 Regenerate (its graph, two packs and three files) and Blockout to film's depth graph took it to 214 KB /
   // 27.1 KB gzipped, so the budget moved to 256 KB / 32 KB. Keyframe animation, Idol 3D, full songs, Remove a person, Clean up
   // dialogue and MiniMax H3 on smaller cards (eleven graphs and their files) took it to 264 KB / 33.1 KB gzipped, so the budget
-  // moves to 320 KB / 40 KB.
+  // moves to 320 KB / 40 KB. Green screen, RTX Video, Edit speech, Pika H3 Flex, Kandinsky 6.0, World mode, MiniMax H3's 2K
+  // draft and finish, Hi3D and Idol 3D's clean splats, quick mesh and four views beside them took it to 310 KB / 38.7 KB gzipped.
   it("stays within its size budget (320 KB, 40 KB gzipped)", () => {
     expect(Buffer.byteLength(text)).toBeLessThanOrEqual(320 * 1024);
     expect(zlib.gzipSync(text).length).toBeLessThanOrEqual(40 * 1024);

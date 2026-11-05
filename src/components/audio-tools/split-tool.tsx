@@ -15,8 +15,7 @@ import { ACCEPT, fileToSlot, kindOfFile, LibraryGrid, type SlotValue } from "@/c
 import { Segmented } from "@/components/faceless/controls";
 import { Panel, ToolHero, ToolShell } from "@/components/av/tool-shell";
 import { useGeneration } from "@/components/av/use-generation";
-import { SelfHostNote } from "@/components/self-host-note";
-import { useAskBeforeUpload, useEngine, useGenerations, useLikelyVisitor } from "@/lib/api";
+import { useAskBeforeUpload, useEngine, useGenerations, useIsAccount } from "@/lib/api";
 import {
   backgroundLowered,
   clock,
@@ -35,6 +34,7 @@ import {
   mixName,
   mixPart,
   mixPeak,
+  MIX_FEATURE,
   mixPlan,
   ORIGINAL_MIX,
   partFrames,
@@ -146,7 +146,7 @@ export function uploadSource(f: File, kind: "audio" | "video", put: (s: Source) 
   );
 }
 
-/** disabled: a visitor (the split doesn't run here for them), so nothing is uploaded or picked only to be refused. */
+/** disabled: nothing is uploaded or picked. A guest is asked to sign up first, and an account with nothing to run on to connect its GPU. */
 function AddMedia({ onPick, onUpdate, disabled }: { onPick: (s: Source) => void; onUpdate: (next: (cur: Source | null) => Source | null) => void; disabled?: boolean }) {
   const input = useRef<HTMLInputElement>(null);
   const [over, setOver] = useState(false);
@@ -494,8 +494,9 @@ function StemTile({
 
 /**
  * The mix as it plays (gains, solo, mute; mono stems up-mixed as WebAudio does), kept under full scale, written as a
- * 16-bit WAV and sent to the Library in parts (/api/audio-tools/export): only one part is in memory beside the stems,
- * and no upload cap applies to the whole. The peak is found first, a slice at a time, so the page stays responsive.
+ * 16-bit WAV and sent to the Library in parts (/api/audio-tools/export; an account's mix is kept as one of its runs):
+ * only one part is in memory beside the stems, and no upload cap applies to the whole. The peak is found first, a slice
+ * at a time, so the page stays responsive.
  */
 async function exportWav(stems: Stem[], buffers: Partial<Record<StemId, AudioBuffer>>, mix: Mix, name: string): Promise<{ url: string; lowered: boolean }> {
   const g = stemGains(mix);
@@ -520,11 +521,13 @@ async function exportWav(stems: Stem[], buffers: Partial<Record<StemId, AudioBuf
     const last = f + per >= plan.frames;
     const q = new URLSearchParams({ offset: String(offset), ...(id && { id }), ...(last && { last: "1", name }) });
     const res = await fetch(`/api/audio-tools/export?${q}`, { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: new Blob([mixPart(plan, f, f + per, k) as BlobPart]) });
-    const body = (await res.json().catch(() => ({}))) as { id?: string; received?: number; url?: string; error?: string };
+    const body = (await res.json().catch(() => ({}))) as { id?: string; received?: number; url?: string; outputs?: OutputFile[]; error?: string };
     if (!res.ok) throw responseError(res, body.error ?? "The export didn't finish. Please try again.");
     if (last) {
-      if (!body.url) throw new Error("Export failed");
-      return { url: body.url, lowered: k < 1 };
+      // The owner's mix is a Library file; an account's, the run it was kept as.
+      const url = body.url ?? body.outputs?.[0]?.url;
+      if (!url) throw new Error("Export failed");
+      return { url, lowered: k < 1 };
     }
     id = body.id ?? "";
     offset = body.received ?? 0;
@@ -539,6 +542,7 @@ function Mixer({ stems, source, engine, initial = ORIGINAL_MIX }: { stems: Stem[
   const exported = useRef<{ key: string; url: string } | null>(null);
   const remux = useAudioToolRun();
   const router = useRouter();
+  const account = useIsAccount();
   const { apply } = player;
   useEffect(() => apply(mix), [apply, mix]);
   const preset = presetOf(mix);
@@ -559,7 +563,7 @@ function Mixer({ stems, source, engine, initial = ORIGINAL_MIX }: { stems: Stem[
     setBusy("export");
     try {
       await exportMix();
-      toast.success("Mix saved to your Library", { action: { label: "Open Library", onClick: () => router.push("/library") } });
+      toast.success(account ? "Mix saved to your runs" : "Mix saved to your Library", { action: { label: account ? "Open your runs" : "Open Library", onClick: () => router.push("/library") } });
     } catch (e) {
       toastError(e, "Couldn't export the mix");
     } finally {
@@ -600,7 +604,7 @@ function Mixer({ stems, source, engine, initial = ORIGINAL_MIX }: { stems: Stem[
         </h3>
         <span className="rounded-full bg-success/15 px-2 py-0.5 text-[12px] font-medium text-success">Free · plays in your browser</span>
       </div>
-      <p className="text-[13px] text-muted-foreground">Every stem is already in your Library. Mixing here is free: nothing runs until you export.</p>
+      <p className="text-[13px] text-muted-foreground">Every stem is already in your {account ? "runs" : "Library"}. Mixing here is free: nothing runs until you export.</p>
       {player.failed && (
         <p className="text-[13px] text-destructive" role="alert">
           {player.failed}
@@ -668,11 +672,6 @@ function Mixer({ stems, source, engine, initial = ORIGINAL_MIX }: { stems: Stem[
 // ---------------------------------------------------------------------------
 // The tool
 
-/**
- * Why a guest or an account can't split: POST /api/audio-tools answers them own-gpu-tool (docs/public-signup.md), so the
- * page says so up front and its upload and run are off, instead of a run the server refuses.
- */
-const SELF_HOSTED = "Split soundtrack isn't available here";
 /** Where the time estimate is for: the host's device when it said; else a CPU's, the figures the estimate then uses. */
 const onDevice = (device?: string) => (device === "cuda" ? "on your GPU" : device ? "on your CPU" : "on a CPU");
 
@@ -691,7 +690,6 @@ function stemsOf(outputs: OutputFile[]): Stem[] {
 
 export function SplitSoundtrackTool() {
   const [engine, setEngine, mode] = useEngine();
-  const visitor = useLikelyVisitor();
   const run = useAudioToolRun();
   const [source, setSource] = useState<Source | null>(null);
   const [quality, setQuality] = useState<SplitQuality | null>(null);
@@ -753,7 +751,7 @@ export function SplitSoundtrackTool() {
   const channels = p?.channels ?? source?.channels;
   const picked: SplitQuality = quality ?? p?.hostPick ?? "fast";
   const cloudProblem = mode === "cloud" ? CLOUD_ONLY_PROBLEM : CLOUD_SPLIT_PROBLEM;
-  const blocker = visitor ? SELF_HOSTED : !source ? "Add a soundtrack to split" : source.uploading ? "Uploading…" : engine === "cloud" ? cloudProblem : null;
+  const blocker = !source ? "Add a soundtrack to split" : source.uploading ? "Uploading…" : engine === "cloud" ? cloudProblem : null;
   const error = preview.error ? (preview.error as Error).message : null;
   const go = () => {
     if (blocker) return void toast(blocker);
@@ -771,14 +769,12 @@ export function SplitSoundtrackTool() {
   const stems = useMemo(() => (g?.status === "succeeded" ? stemsOf(g.outputs) : []), [g]);
 
   return (
-    <ToolShell title="Audio" selfHostedOnly>
+    <ToolShell title="Audio">
       {!source && (
         <ToolHero
           title={goal === "clean" ? "Clean up dialogue" : "Split any soundtrack"}
           subtitle={goal === "clean" ? "Clear speech from a noisy or musical recording or video: the music and effects out from under it, or kept quietly." : "Dialogue, music and effects from a song, podcast, film clip or video, with a free live mixer."}
-        >
-          {visitor && <SelfHostNote className="mt-3 max-w-xl">{SELF_HOSTED}.</SelfHostNote>}
-        </ToolHero>
+        />
       )}
       <div className={cn("mx-auto max-w-[860px] space-y-3", source ? "pt-4" : "mt-8")}>
         <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -793,7 +789,7 @@ export function SplitSoundtrackTool() {
           />
         </div>
         {!source ? (
-          <AddMedia onPick={take} onUpdate={setSource} disabled={visitor} />
+          <AddMedia onPick={take} onUpdate={setSource} />
         ) : (
           <SourcePanel
             source={source}
@@ -808,8 +804,7 @@ export function SplitSoundtrackTool() {
           <CleanDialoguePanel
             source={ready ? { ref: ready.ref, kind: ready.kind, name: baseName(ready), duration: ready.duration, channels: ready.channels } : null}
             engine={engine}
-            visitor={visitor}
-            blocker={visitor ? SELF_HOSTED : !source ? "Add a soundtrack to clean" : source.uploading ? "Uploading…" : null}
+            blocker={!source ? "Add a soundtrack to clean" : source.uploading ? "Uploading…" : null}
             onMixer={() => {
               setGoal("split");
               setMixPreset(mixPresetFor("split", true));
@@ -872,11 +867,7 @@ export function SplitSoundtrackTool() {
             )}
             <div className="flex flex-wrap items-center gap-3">
               <p className={cn("min-w-0 flex-1 text-[13px]", error && !blocker ? "text-destructive" : "text-muted-foreground")} aria-live="polite">
-                {visitor && engine !== "cloud" ? (
-                  <>
-                    <span className="font-mono text-foreground">{openToolPrice(p, true)}</span>
-                  </>
-                ) : blocker && engine !== "cloud" ? (
+                {blocker && engine !== "cloud" ? (
                   blocker
                 ) : engine === "cloud" ? (
                   mode === "cloud" ? (
@@ -895,7 +886,7 @@ export function SplitSoundtrackTool() {
                   "Checking…"
                 )}
               </p>
-              <Button size="lg" className={cn("rounded-full", (blocker || error) && "bg-muted text-subtle-foreground hover:bg-muted")} onClick={go} disabled={visitor || run.isPending || g?.status === "queued" || g?.status === "running"}>
+              <Button size="lg" className={cn("rounded-full", (blocker || error) && "bg-muted text-subtle-foreground hover:bg-muted")} onClick={go} disabled={run.isPending || g?.status === "queued" || g?.status === "running"}>
                 {run.isPending || g?.status === "queued" || g?.status === "running" ? <Loader2 className="size-4 animate-spin" /> : <SlidersVertical className="size-4" />} Split it
               </Button>
             </div>
@@ -932,8 +923,9 @@ export function SplitSoundtrackTool() {
 /** Earlier splits, and a way back into the mixer for the finished ones (their stems are kept in the Library). */
 function Results({ onOpen, open }: { onOpen: (g: Generation) => void; open: string | null }) {
   const splits = useGenerations({ features: [SPLIT_FEATURE], limit: 12 });
-  const remuxes = useGenerations({ features: [REMUX_FEATURE], limit: 12 });
-  const items = [...(remuxes.data ?? []), ...(splits.data ?? [])].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  // Mixes put back on a video, and an account's exported mixes (kept as its runs).
+  const made = useGenerations({ features: [REMUX_FEATURE, MIX_FEATURE], limit: 12 });
+  const items = [...(made.data ?? []), ...(splits.data ?? [])].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
   const reopen = (splits.data ?? []).filter((g) => g.status === "succeeded" && g.id !== open && stemsOf(g.outputs).length > 0).slice(0, 4);
   if (!items.length) return null;
   return (

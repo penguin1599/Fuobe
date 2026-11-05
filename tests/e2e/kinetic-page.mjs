@@ -6,7 +6,7 @@
 //
 // KINETIC_PORT moves the app (and the stand-in to the next port).
 //
-// Guest (390 and 1440, light and dark): the opening screen shows the four examples and the ten scenes; an example opens
+// Guest (390 and 1440, light and dark): the opening screen shows the four examples and every scene; an example opens
 // the editor and its preview plays; Easy and Pro work; a Motion preset reads "Custom" after a slider move, and Undo and
 // Redo bring it back and forth; Save, Save frame and Save version each open the sign-up card before any upload.
 // Owner: Big Number with the Film look, a Slow push and a retimed group, saved at 60 fps (its MP4 has duration × 60
@@ -175,7 +175,7 @@ try {
     await gp.goto("/kinetic", { waitUntil: "load", timeout: 240_000 });
     await gp.locator("[data-kinetic-picker]:visible").first().waitFor({ timeout: 120_000 });
     check((await gp.locator("[data-kinetic-examples] [data-kinetic-tile]").count()) === 4, `guest ${name}: four examples`);
-    check((await gp.locator("[data-kinetic-scenes] [data-kinetic-tile]").count()) === 10, `guest ${name}: all ten scenes`);
+    check((await gp.locator("[data-kinetic-scenes] [data-kinetic-tile]").count()) === 18, `guest ${name}: all eighteen scenes`);
     check((await gp.locator("[data-kinetic-made-strip]").count()) === 0, `guest ${name}: no Made in Kinetic strip`);
     await layout(gp, `guest ${name}`, "picker", false);
     await gp.screenshot({ path: path.join(out, `guest-picker-${name}.png`), fullPage: true });

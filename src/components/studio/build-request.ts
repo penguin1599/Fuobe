@@ -31,21 +31,23 @@ function withoutAnimation(params: GenParams, animating: boolean): GenParams {
 
 export function buildRequest(
   feature: string,
-  draft: Pick<Draft, "slots" | "refs" | "presetId" | "modelId" | "prompt" | "negativePrompt" | "params" | "presetOptions" | "presetStrength" | "mix" | "frames" | "layout">,
+  draft: Pick<Draft, "slots" | "refs" | "presetId" | "modelId" | "prompt" | "negativePrompt" | "params" | "presetOptions" | "presetStrength" | "mix" | "frames" | "layout" | "refClips" | "refAudios">,
   op: Operation | undefined,
   promptSuffix?: string,
   refKind: MediaKind = "image",
   frames?: FramesContext,
   /**
    * The model's needs: a Fuobe Original (runs on both engines) names the engine switched to; a model that takes
-   * looks (Fuobe Soul) takes the look's strength with its default look too (no presetId).
+   * looks (Fuobe Soul) takes the look's strength with its default look too (no presetId); a model with a References mode on
+   * your GPU (MiniMax H3: Pika H3 Flex) takes the reference clips and voice or music clips.
    */
-  target: { engine?: Engine; looks?: boolean } = {},
+  target: { engine?: Engine; looks?: boolean; refs?: boolean } = {},
 ): GenerationRequest {
   const s = draft.slots;
   const refs = draft.refs.filter((x) => !!x?.ref).map((x) => x.ref);
   let images = [s.image, s.image2, s.image3].filter((x): x is SlotValue => !!x?.ref).map((x) => x.ref).concat(refKind === "image" ? refs : []);
-  const videos = refKind === "video" ? refs : [];
+  const videos = refKind === "video" ? refs : target.refs && !draft.frames ? (draft.refClips ?? []).filter((x) => !!x?.ref).map((x) => x.ref) : [];
+  const audios = target.refs && !draft.frames ? (draft.refAudios ?? []).filter((x) => !!x?.ref).map((x) => x.ref) : [];
   let endImage = s.endImage?.ref || undefined;
   let params = withoutAnimation(draft.params, !!(draft.frames && frames?.animation));
   let pinned = op;
@@ -76,6 +78,7 @@ export function buildRequest(
       video: s.video?.ref || undefined,
       audio: s.audio?.ref || undefined,
       videos: videos.length && !draft.frames ? videos : undefined,
+      audios: audios.length ? audios : undefined,
     },
     params,
     presetOptions: draft.presetOptions,

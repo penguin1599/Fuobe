@@ -22,6 +22,7 @@ import {
   priceLine,
   reviewCues,
   spokenText,
+  stepsNeedGpu,
   takeLines,
   VOICE_SPLITS,
   voiceOnly,
@@ -31,7 +32,7 @@ import {
 } from "@/lib/av/dub";
 import { timelineFor, timelineTracks } from "@/lib/av/timeline";
 import { DUB_LANGUAGES, supportsTarget } from "@/lib/av/languages";
-import { getModel } from "@/lib/catalog";
+import { getModel, MODELS } from "@/lib/catalog";
 import { buildPayload } from "@/lib/catalog/payload";
 import { tempDir } from "./helpers/temp-dir";
 
@@ -120,6 +121,23 @@ describe("dub pipeline DAGs", () => {
       { label: "Original sound", index: 3, of: 5 },
       { label: "Music and effects", index: 4, of: 5 },
     ]);
+  });
+
+  it("an account's cloud review: only the translations need its GPU, so an account with a key and no GPU is offered One shot", () => {
+    const steps = prepareSteps({ engine: "cloud", video, targets: ["fr", "de"], translator: "gpu", seconds: 30 });
+    const providers = (id: string) => new Set(getModel(id)?.routes.map((r) => r.provider));
+    const onGpu = steps.filter((s) => providers(s.request.modelId).has("comfyui")).map((s) => s.key);
+    expect(onGpu).toEqual(["translate:fr", "translate:de"]);
+    expect(steps.filter((s) => !onGpu.includes(s.key)).every((s) => providers(s.request.modelId).has("fal"))).toBe(true);
+    // No fal.ai or Replicate model translates text, so the review can't move to the key.
+    expect(MODELS.some((m) => m.routes.some((r) => r.op === "translate" && (r.provider === "fal" || r.provider === "replicate")))).toBe(false);
+    // Who waits for a GPU: an account with a key and no GPU; never the owner, a guest, an account with its GPU, or one with neither.
+    expect(stepsNeedGpu({ kind: "account", gpu: { connected: false }, keys: ["fal"] })).toBe(true);
+    expect(stepsNeedGpu({ kind: "account", gpu: { connected: false }, keys: ["replicate"] })).toBe(true);
+    expect(stepsNeedGpu({ kind: "account", gpu: { connected: true }, keys: ["fal"] })).toBe(false);
+    expect(stepsNeedGpu({ kind: "account", gpu: { connected: false }, keys: [] })).toBe(false);
+    expect(stepsNeedGpu({ kind: "guest", gpu: { connected: false } })).toBe(false);
+    expect(stepsNeedGpu(undefined)).toBe(false);
   });
 
   it("open: the Voice split picks the first step's model (MelBand RoFormer by default, or DBS); nothing after it changes", () => {

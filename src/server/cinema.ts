@@ -2,15 +2,26 @@ import "server-only";
 import { nanoid } from "nanoid";
 import { getModel } from "@/lib/catalog";
 import type { CinemaFolder, CinemaItem, CinemaProject, CinemaTakeInfo, CinemaTile, DirectorMessage, DirectorSettings } from "@/lib/catalog/cinema";
+import { finishIn2k, REGEN_COPY, REGEN_OFFERED } from "@/lib/catalog/regenerate";
+import { ownSetupGate } from "./own-setup-run";
+import { tenant, tenantAccount } from "./tenant";
 import type { Generation, GenerationRequest } from "@/lib/catalog/types";
+import { createAccountProject, deleteAccountProject, getAccountProject, listAccountProjects, updateAccountProject, type AccountProject } from "./account-projects";
 import { db } from "./db";
 import { ConnectComfyError, createGenerations, getGeneration, listGenerations, previewChained, previewGeneration, toGeneration } from "./generations";
-import { trashGenerations } from "./library";
+import { deleteForever, trashGenerations } from "./library";
+import { engineMode } from "./settings";
 
 /**
  * Cinema Studio projects: Director settings, brief and AI Director chat per project, nested folders
  * (scenes) and which generations live where. Generations stay ordinary rows in `generations`; a
  * project only records their ids (cinema_items), written when a take is made from the workspace.
+ *
+ * Whose projects: the owner's are rows of `cinema_projects`. A signed-in account's (public sign-up) are its own
+ * projects in account-projects.ts (kind "cinema"), read and changed only inside its own work (tenant.ts asAccount):
+ * every function here reads the projects of whoever the work is for, so an account never reaches the owner's projects
+ * or another account's (they read as "not found"), and the owner's lists never hold an account's. A project's folders
+ * and takes are rows of `cinema_folders` and `cinema_items` under its id either way, reached only through its project.
  */
 
 export class CinemaError extends Error {
@@ -127,8 +138,64 @@ function liveGeneration(id: string): Generation | null {
 // ---------------------------------------------------------------------------
 // Projects
 
+/** An account's project kind in account-projects.ts. */
+const ACCOUNT_KIND = "cinema";
+
+/** What an account's project keeps beside its name (account-projects.ts data): the columns of `cinema_projects`. */
+interface AccountCinema {
+  description: string | null;
+  cover: string | null;
+  costCapUsd: number | null;
+  director: DirectorSettings;
+  palettes: CinemaProject["palettes"];
+  brief: { title: string; body: string };
+  chat: DirectorMessage[];
+  pinned: boolean;
+}
+
+/** An account's AI Director chat keeps its last messages (a project's data stays well under its size limit). */
+const ACCOUNT_CHAT = 50;
+
+const accountRow = (p: AccountProject<AccountCinema>): ProjectRow => ({
+  id: p.id,
+  name: p.name,
+  description: p.data.description ?? null,
+  cover_url: p.data.cover ?? null,
+  cost_cap_usd: p.data.costCapUsd ?? null,
+  director_json: JSON.stringify(p.data.director ?? {}),
+  palettes_json: JSON.stringify(p.data.palettes ?? []),
+  brief_title: p.data.brief?.title ?? "",
+  brief_body: p.data.brief?.body ?? "",
+  chat_json: JSON.stringify(p.data.chat ?? []),
+  pinned: p.data.pinned ? 1 : 0,
+  created_at: p.createdAt,
+  updated_at: p.updatedAt,
+});
+
+const accountData = (r: ProjectRow): AccountCinema => ({
+  description: r.description,
+  cover: r.cover_url,
+  costCapUsd: r.cost_cap_usd,
+  director: parse<DirectorSettings>(r.director_json, {}),
+  palettes: parse(r.palettes_json, []),
+  brief: { title: r.brief_title, body: r.brief_body },
+  chat: parse<DirectorMessage[]>(r.chat_json, []).slice(-ACCOUNT_CHAT),
+  pinned: !!r.pinned,
+});
+
+/** One project of whoever the work is for: the owner's row, or the account's own project (another's reads as none). */
 function projectRow(id: string): ProjectRow | undefined {
+  const account = tenantAccount();
+  if (account) {
+    const p = getAccountProject<AccountCinema>(account, ACCOUNT_KIND, id);
+    return p ? accountRow(p) : undefined;
+  }
   return db().prepare("SELECT * FROM cinema_projects WHERE id = ?").get(id) as ProjectRow | undefined;
+}
+
+/** Write an account's project back (its name and data): the account's own only. */
+function saveAccountRow(account: string, r: ProjectRow): void {
+  if (!updateAccountProject(account, ACCOUNT_KIND, r.id, { name: r.name, data: accountData(r) })) throw new CinemaError("Project not found", 404);
 }
 
 export function getProject(id: string): CinemaProject | null {
@@ -181,28 +248,58 @@ function autoCover(projectId: string): string | null {
   return video;
 }
 
+/** The projects of whoever the work is for: the owner's rows, or an account's own projects (pinned first, then newest). */
+function projectRows(): ProjectRow[] {
+  const account = tenantAccount();
+  if (!account) return db().prepare("SELECT * FROM cinema_projects ORDER BY pinned DESC, updated_at DESC").all() as ProjectRow[];
+  const rows = listAccountProjects(account, ACCOUNT_KIND).flatMap((x) => {
+    const p = getAccountProject<AccountCinema>(account, ACCOUNT_KIND, x.id);
+    return p ? [accountRow(p)] : [];
+  });
+  return rows.sort((a, b) => b.pinned - a.pinned || b.updated_at - a.updated_at);
+}
+
 export function listProjects(): CinemaProject[] {
-  const rows = db().prepare("SELECT * FROM cinema_projects ORDER BY pinned DESC, updated_at DESC").all() as ProjectRow[];
-  // Counts and spend for every project in two grouped queries (not one per project).
+  const rows = projectRows();
+  if (!rows.length) return [];
+  // Counts and spend for these projects in two grouped queries (not one per project).
+  const ids = rows.map((r) => r.id);
   const counts = new Map(
     (
       db()
         .prepare(
           `SELECT i.project_id AS p, COUNT(*) AS n FROM cinema_items i JOIN generations g ON g.id = i.generation_id
-           LEFT JOIN generation_trash t ON t.generation_id = g.id WHERE t.deleted_at IS NULL AND ${LISTED} GROUP BY i.project_id`,
+           LEFT JOIN generation_trash t ON t.generation_id = g.id WHERE i.project_id IN (${marks(ids.length)}) AND t.deleted_at IS NULL AND ${LISTED} GROUP BY i.project_id`,
         )
-        .all() as { p: string; n: number }[]
+        .all(...ids) as { p: string; n: number }[]
     ).map((r) => [r.p, r.n]),
   );
   const spent = new Map(
-    (db().prepare(`SELECT i.project_id AS p, ${SPENT} AS s FROM cinema_items i LEFT JOIN generations g ON g.id = i.generation_id GROUP BY i.project_id`).all() as { p: string; s: number }[]).map(
-      (r) => [r.p, round3(r.s)],
-    ),
+    (
+      db()
+        .prepare(`SELECT i.project_id AS p, ${SPENT} AS s FROM cinema_items i LEFT JOIN generations g ON g.id = i.generation_id WHERE i.project_id IN (${marks(ids.length)}) GROUP BY i.project_id`)
+        .all(...ids) as { p: string; s: number }[]
+    ).map((r) => [r.p, round3(r.s)]),
   );
   return rows.map((r) => ({ ...toProject(r), stats: { items: counts.get(r.id) ?? 0, spentUsd: spent.get(r.id) ?? 0, cover: r.cover_url ?? autoCover(r.id) } }));
 }
 
 export function createProject(input: { name: string; description?: string | null; cover?: string | null; costCapUsd?: number | null }): CinemaProject {
+  const account = tenantAccount();
+  if (account) {
+    // An account's own project (account-projects.ts keeps its limit): never a row of the owner's table.
+    const data: AccountCinema = {
+      description: input.description?.trim().slice(0, 140) || null,
+      cover: input.cover ?? null,
+      costCapUsd: input.costCapUsd ?? null,
+      director: {},
+      palettes: [],
+      brief: { title: "", body: "" },
+      chat: [],
+      pinned: false,
+    };
+    return toProject(accountRow(createAccountProject(account, ACCOUNT_KIND, { name: input.name.trim().slice(0, 80) || "Untitled project", data })));
+  }
   const now = Date.now();
   const row: ProjectRow = {
     id: nanoid(10),
@@ -251,6 +348,11 @@ export function updateProject(id: string, patch: ProjectPatch): CinemaProject {
     pinned: patch.pinned === undefined ? Number(cur.pinned) : Number(patch.pinned),
     updated_at: Date.now(),
   };
+  const account = tenantAccount();
+  if (account) {
+    saveAccountRow(account, { ...projectRow(id)!, ...next });
+    return getProject(id)!;
+  }
   db()
     .prepare(
       `UPDATE cinema_projects SET name = @name, description = @description, cover_url = @cover_url, cost_cap_usd = @cost_cap_usd,
@@ -263,6 +365,16 @@ export function updateProject(id: string, patch: ProjectPatch): CinemaProject {
 
 /** Deletes the project and its folders; its generations stay in the library. */
 export function deleteProject(id: string): void {
+  const account = tenantAccount();
+  if (account) {
+    // Only the account's own project, then its folders and memberships (its runs stay its own).
+    if (!deleteAccountProject(account, ACCOUNT_KIND, id)) return;
+    db().transaction(() => {
+      db().prepare("DELETE FROM cinema_items WHERE project_id = ?").run(id);
+      db().prepare("DELETE FROM cinema_folders WHERE project_id = ?").run(id);
+    })();
+    return;
+  }
   db().transaction(() => {
     db().prepare("DELETE FROM cinema_items WHERE project_id = ?").run(id);
     db().prepare("DELETE FROM cinema_folders WHERE project_id = ?").run(id);
@@ -271,7 +383,22 @@ export function deleteProject(id: string): void {
 }
 
 function touch(projectId: string): void {
-  db().prepare("UPDATE cinema_projects SET updated_at = ? WHERE id = ?").run(Date.now(), projectId);
+  const account = tenantAccount();
+  if (account) updateAccountProject(account, ACCOUNT_KIND, projectId, {});
+  else db().prepare("UPDATE cinema_projects SET updated_at = ? WHERE id = ?").run(Date.now(), projectId);
+}
+
+/**
+ * When an account is deleted (account-sweep.ts purgeAccount, before its projects go): the folders and memberships of
+ * its Cinema projects. Its runs are deleted with the account.
+ */
+export function deleteAccountCinema(accountId: string): void {
+  const ids = listAccountProjects(accountId, ACCOUNT_KIND).map((p) => p.id);
+  if (!ids.length) return;
+  db().transaction(() => {
+    db().prepare(`DELETE FROM cinema_items WHERE project_id IN (${marks(ids.length)})`).run(...ids);
+    db().prepare(`DELETE FROM cinema_folders WHERE project_id IN (${marks(ids.length)})`).run(...ids);
+  })();
 }
 
 // ---------------------------------------------------------------------------
@@ -284,19 +411,28 @@ export function getChat(projectId: string): DirectorMessage[] {
 }
 
 export function appendChat(projectId: string, ...messages: DirectorMessage[]): DirectorMessage[] {
-  const next = [...getChat(projectId), ...messages].slice(-100);
-  db().prepare("UPDATE cinema_projects SET chat_json = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(next), Date.now(), projectId);
+  const account = tenantAccount();
+  const next = [...getChat(projectId), ...messages].slice(account ? -ACCOUNT_CHAT : -100);
+  if (account) saveAccountRow(account, { ...projectRow(projectId)!, chat_json: JSON.stringify(next) });
+  else db().prepare("UPDATE cinema_projects SET chat_json = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(next), Date.now(), projectId);
   return next;
 }
 
 export function clearChat(projectId: string): void {
-  db().prepare("UPDATE cinema_projects SET chat_json = '[]' WHERE id = ?").run(projectId);
+  const account = tenantAccount();
+  if (account) {
+    const r = projectRow(projectId);
+    if (!r) throw new CinemaError("Project not found", 404);
+    saveAccountRow(account, { ...r, chat_json: "[]" });
+  } else db().prepare("UPDATE cinema_projects SET chat_json = '[]' WHERE id = ?").run(projectId);
 }
 
 // ---------------------------------------------------------------------------
 // Folders (scenes)
 
 export function listFolders(projectId: string): CinemaFolder[] {
+  // Inside an account's work, only its own project's folders.
+  if (tenantAccount() && !projectRow(projectId)) return [];
   return (db().prepare("SELECT * FROM cinema_folders WHERE project_id = ? ORDER BY pinned DESC, position ASC, created_at ASC").all(projectId) as FolderRow[]).map(toFolder);
 }
 
@@ -357,6 +493,7 @@ export function createFolder(projectId: string, input: { name: string; parentId?
 }
 
 export function updateFolder(projectId: string, id: string, patch: { name?: string; color?: string | null; pinned?: boolean; parentId?: string | null; position?: number }): CinemaFolder {
+  requireProject(projectId);
   const cur = folderRow(id);
   if (!cur || cur.project_id !== projectId) throw new CinemaError("Folder not found", 404);
   if (patch.parentId !== undefined) checkParent(projectId, patch.parentId, id);
@@ -377,6 +514,7 @@ export function updateFolder(projectId: string, id: string, patch: { name?: stri
 
 /** Deleting a folder moves its takes and subfolders up to its parent (as Higgsfield does). */
 export function deleteFolder(projectId: string, id: string): void {
+  requireProject(projectId);
   const cur = folderRow(id);
   if (!cur || cur.project_id !== projectId) throw new CinemaError("Folder not found", 404);
   db().transaction(() => {
@@ -446,7 +584,9 @@ export function listItems(projectId: string, q: ItemQuery = {}): CinemaGeneratio
 
 /** Every Cinema Studio generation, whichever project it's in ("My Generations"), with its project. */
 export function listStudioGenerations(): CinemaGeneration[] {
-  const list = listGenerations({ features: ["cinema*"], limit: 200 }).filter((g) => !(g as Generation & { deletedAt?: number | null }).deletedAt);
+  // An account's own runs only (the owner's list never holds an account's).
+  const account = tenantAccount();
+  const list = listGenerations({ features: ["cinema*"], limit: 200, ...(account && { account }) }).filter((g) => !(g as Generation & { deletedAt?: number | null }).deletedAt);
   if (!list.length) return [];
   const rows = db()
     .prepare(`SELECT i.generation_id, i.project_id, i.folder_id, i.meta_json FROM cinema_items i WHERE i.generation_id IN (${marks(list.length)}) AND ${LISTED}`)
@@ -538,20 +678,37 @@ export function moveItems(projectId: string, generationIds: string[], folderId: 
  * the cap. Only this project's takes are touched.
  */
 export function removeItems(projectId: string, generationIds: string[], opts: { deleteGenerations?: boolean } = {}): number {
+  const ids = takeOut(projectId, generationIds, !!opts.deleteGenerations);
+  if (ids.length && opts.deleteGenerations) trashGenerations(ids);
+  return ids.length;
+}
+
+/**
+ * Snapshot what each take cost (nothing if it failed) before it goes: taking it out hides it, and
+ * the Trash cancels a running take, which would otherwise read as free. Answers the project's takes among `generationIds`.
+ */
+function takeOut(projectId: string, generationIds: string[], deleting: boolean): string[] {
   requireProject(projectId);
   const ids = memberIds(projectId, generationIds);
-  if (!ids.length) return 0;
-  // Snapshot what each take cost (nothing if it failed) before it goes: taking it out hides it, and
-  // the Trash cancels a running take, which would otherwise read as free.
+  if (!ids.length) return [];
   const cost = `COALESCE((SELECT CASE WHEN g.status IN ('failed', 'canceled') THEN 0 ELSE COALESCE(g.cost_usd, 0) END FROM generations g WHERE g.id = cinema_items.generation_id), json_extract(meta_json, '$.cost'), 0)`;
   const snapshot = db().prepare(
-    opts.deleteGenerations
+    deleting
       ? `UPDATE cinema_items SET meta_json = json_set(COALESCE(meta_json, '{}'), '$.costLocked', json('true'), '$.cost', ${cost}) WHERE project_id = ? AND generation_id = ?`
       : `UPDATE cinema_items SET meta_json = json_set(COALESCE(meta_json, '{}'), '$.removed', json('true'), '$.cost', ${cost}) WHERE project_id = ? AND generation_id = ?`,
   );
   db().transaction(() => ids.forEach((id) => snapshot.run(projectId, id)))();
-  if (opts.deleteGenerations) trashGenerations(ids);
   touch(projectId);
+  return ids;
+}
+
+/**
+ * An account's Delete (it has no Trash): the project's takes among `generationIds` are deleted for good, their files
+ * with them, so its space comes back at once. What they cost still counts toward the project's limit.
+ */
+export async function deleteTakes(projectId: string, generationIds: string[]): Promise<number> {
+  const ids = takeOut(projectId, generationIds, true);
+  if (ids.length) await deleteForever(ids);
   return ids.length;
 }
 
@@ -615,6 +772,22 @@ function redoRequest(s: RedoStep, launched: boolean): { req: GenerationRequest; 
  * starts; the replaced failures move to the Trash so the new run takes their place in the feed.
  */
 export function retryItem(projectId: string, generationId: string): Generation[] {
+  return startRetry(planRetry(projectId, generationId));
+}
+
+/** A retry, checked: the steps to make again (dependencies first), each with its request and what it waits for. */
+export interface RetryPlan {
+  projectId: string;
+  order: RedoStep[];
+  plans: { s: RedoStep; req: GenerationRequest; deps: string[] }[];
+}
+
+/** A retry's steps as an account's run checks them (account-tool-run.ts): each request and how many steps it waits for. */
+export const retrySteps = (plan: RetryPlan): { request: GenerationRequest; deps: number }[] => plan.plans.map((p) => ({ request: p.req, deps: p.deps.length }));
+
+/** Plan a retry (see retryItem) and check every step; nothing is made yet. */
+export function planRetry(projectId: string, generationId: string): RetryPlan {
+  requireProject(projectId);
   const start = itemRow(projectId, generationId);
   const first = start ? liveGeneration(generationId) : null;
   if (!start || !first) throw new CinemaError("That take isn't in this project", 404);
@@ -676,7 +849,11 @@ export function retryItem(projectId: string, generationId: string): Generation[]
       throw new CinemaError((e as Error).message, 422);
     }
   }
+  return { projectId, order, plans };
+}
 
+/** Make a planned retry: the steps in order, wired to the new ids, then the replaced failures go to the Trash. */
+export function startRetry({ projectId, order, plans }: RetryPlan): Generation[] {
   const fresh = new Map<string, string>();
   const created: Generation[] = [];
   try {
@@ -703,7 +880,81 @@ export function retryItem(projectId: string, generationId: string): Generation[]
   return created;
 }
 
+/**
+ * "Finish in 2K" on a MiniMax H3 take, in the same folder: a fal take renders again at 2K on the same hosted model (priced
+ * per second, within the project's limit); a take from your GPU is redrawn at 2K by Open-H3 Regenerate, from its saved
+ * 768p latent when its draft kept one (finishIn2k). The 2K take lands beside the first one.
+ */
+export function finishTake(projectId: string, generationId: string): Generation[] {
+  return startFinish(planFinish(projectId, generationId));
+}
+
+/** A 2K finish, checked: the take, its membership row and the request that finishes it. */
+export interface FinishPlan {
+  projectId: string;
+  row: ItemRow;
+  g: Generation;
+  request: GenerationRequest;
+}
+
+/** Plan a 2K finish (see finishTake) and check it, the project's limit included; nothing is made yet. */
+export function planFinish(projectId: string, generationId: string): FinishPlan {
+  requireProject(projectId);
+  const row = itemRow(projectId, generationId);
+  const g = row ? liveGeneration(generationId) : null;
+  if (!row || !g) throw new CinemaError("That take isn't in this project", 404);
+  // A take from your GPU is finished by Open-H3 Regenerate (perSecond null): a 48 GB card. An account runs it on its own
+  // GPU when that GPU fits it (own-setup-run.ts), never on this studio's; the owner's only while it is offered (REGEN_OFFERED).
+  const finish = finishIn2k(g, engineMode());
+  if (!finish) throw new CinemaError("Finish in 2K is for finished MiniMax H3 takes made below 2K", 422);
+  if (finish.perSecond === null) {
+    if (tenant()) ownSetupGate("regenerate:cinema-finish");
+    else if (!REGEN_OFFERED) throw new CinemaError(REGEN_COPY.heldFinish, 422);
+  }
+  // Once per take: a 2K finish under way or made (this action's, or the 2K run's own finish of its draft) isn't repeated.
+  if (finishedIn2k(generationId)) throw new CinemaError("This take already has a 2K finish", 409);
+  const project = getProject(projectId);
+  let cost = 0;
+  try {
+    cost = previewGeneration(finish.request).costUsd ?? 0;
+  } catch (e) {
+    if (e instanceof ConnectComfyError) throw e;
+    throw new CinemaError((e as Error).message, 422);
+  }
+  if (project?.costCapUsd != null && cost > 0) {
+    const spent = spentUsd(projectId);
+    if (spent + cost > project.costCapUsd + 1e-9) {
+      throw new CinemaError(`Finishing in 2K (≈ $${cost.toFixed(2)}) would take the project past its $${project.costCapUsd.toFixed(2)} limit — $${spent.toFixed(2)} is already spent. Raise the limit in project settings.`, 422);
+    }
+  }
+  return { projectId, row, g, request: finish.request };
+}
+
+/** Make a planned 2K finish beside its take. */
+export function startFinish({ projectId, row, g, request }: FinishPlan): Generation[] {
+  let made: Generation[];
+  try {
+    made = createGenerations(request, g.batchId ? { batchId: g.batchId } : {});
+  } catch (e) {
+    if (e instanceof ConnectComfyError) throw e;
+    throw new CinemaError((e as Error).message, 422);
+  }
+  recordTakes(projectId, made, row.folder_id, parse<ItemMeta>(row.meta_json, {}).take);
+  return made;
+}
+
+/** Whether a take has a 2K finish that hasn't failed (request.finishOf; one in the Trash doesn't count). */
+function finishedIn2k(generationId: string): boolean {
+  return !!db()
+    .prepare(
+      `SELECT 1 FROM generations g LEFT JOIN generation_trash t ON t.generation_id = g.id
+       WHERE json_extract(g.request_json, '$.finishOf') = ? AND g.status NOT IN ('failed', 'canceled') AND t.deleted_at IS NULL LIMIT 1`,
+    )
+    .get(generationId);
+}
+
 export function setTiles(projectId: string, generationId: string, tiles: CinemaTile[]): CinemaItem {
+  requireProject(projectId);
   const r = itemRow(projectId, generationId);
   if (!r) throw new CinemaError("That take isn't in this project", 404);
   const meta = { ...parse<ItemMeta>(r.meta_json, {}), tiles: tiles.slice(0, 16) };

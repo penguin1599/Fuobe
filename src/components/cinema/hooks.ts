@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import type { CinemaFolder, CinemaGenerateInput, CinemaProject, CinemaTile, DirectorMessage, DirectorSettings } from "@/lib/catalog/cinema";
 import type { Generation } from "@/lib/catalog/types";
-import { useGenerationEvents } from "@/lib/api";
+import { COMPUTER_KICK_EVENT, useGenerationEvents, useIsOwner } from "@/lib/api";
 import { responseError } from "@/lib/refusals";
 import { Autosaver } from "./autosave";
 import { applyToTakes, type CinemaGeneration } from "./live";
@@ -17,7 +17,8 @@ export interface ProjectView {
   project: CinemaProject;
   folders: CinemaFolder[];
   spentUsd: number;
-  context: { cloudAllowed: boolean; civitai?: boolean };
+  /** worldReady: World mode's graph has passed its check on this studio's GPU (its own-setup mark leaves). */
+  context: { cloudAllowed: boolean; civitai?: boolean; worldcast?: boolean; worldReady?: boolean };
 }
 
 async function json<T>(res: Response): Promise<T> {
@@ -32,6 +33,12 @@ const send = async <T,>(url: string, method: string, body?: unknown, keepalive =
   json<T>(await fetch(url, { method, keepalive, headers: { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) }));
 
 const active = (g: Generation) => g.status === "queued" || g.status === "running";
+
+/**
+ * A take started: the tab that runs this person's jobs on the ComfyUI on this computer (an account's "Your GPU") asks
+ * for them at once, as after a studio run.
+ */
+const kick = () => window.dispatchEvent(new Event(COMPUTER_KICK_EVENT));
 
 // ---------------------------------------------------------------------------
 // Live updates: the app's one shared generation stream (useGenerationEvents in lib/api.ts, one
@@ -196,10 +203,12 @@ export const foreign = (g: CinemaGeneration, projectId: string) => !!g.projectId
 /**
  * Actions on takes. Likes and deletes go through the library (/api/generations/bulk) so they work
  * on any project's take; Delete moves to the Trash and comes with Undo. Moves are this project's
- * only; retries go to the project that owns the take.
+ * only; retries go to the project that owns the take. A signed-in account has no Trash: its Delete
+ * deletes its own takes for good (DELETE /api/generations/<id>).
  */
 export function useItemActions(projectId: string) {
   const qc = useQueryClient();
+  const owner = useIsOwner();
   const keys = [["cinema", projectId, "items"], ["cinema", "studio"]];
   const patchLocal = (ids: string[], fn: (g: CinemaGeneration) => CinemaGeneration | null) => {
     for (const key of keys) qc.setQueryData<CinemaGeneration[]>(key, (old) => old?.map((g) => (ids.includes(g.id) ? fn(g) : g)).filter((g): g is CinemaGeneration => !!g));
@@ -224,7 +233,8 @@ export function useItemActions(projectId: string) {
     /** Move to the Trash (restore with `restore`): the takes stay filed in their project. */
     remove: async (ids: string[]) => {
       patchLocal(ids, () => null);
-      await bulk("trash", ids).finally(settle);
+      if (owner) return void (await bulk("trash", ids).finally(settle));
+      await Promise.all(ids.map(async (id) => json<void>(await fetch(`/api/generations/${encodeURIComponent(id)}`, { method: "DELETE" })))).finally(settle);
     },
     restore: async (ids: string[]) => {
       await bulk("restore", ids).finally(settle);
@@ -235,6 +245,13 @@ export function useItemActions(projectId: string) {
     },
     retry: async (g: CinemaGeneration) => {
       await send(`/api/cinema/projects/${g.projectId ?? projectId}/items/${g.id}/retry`, "POST").finally(settle);
+      kick();
+    },
+    /** Finish in 2K: a MiniMax H3 take made again at 2K (fal) or redrawn at 2K on your GPU, in the same folder. */
+    finish2k: async (g: CinemaGeneration, requestId?: string) => {
+      await send(`/api/cinema/projects/${g.projectId ?? projectId}/items/${g.id}/finish`, "POST", requestId ? { requestId } : undefined).finally(settle);
+      kick();
+      return true;
     },
     saveTiles: async (generationId: string, tiles: CinemaTile[]) => {
       await send(`/api/cinema/projects/${projectId}/items/${generationId}/tiles`, "PUT", { tiles });
@@ -251,6 +268,7 @@ export function useCinemaGenerate(projectId: string) {
   return useMutation({
     mutationFn: (body: GenerateBody) => send<GenerateResult>(`/api/cinema/projects/${projectId}/generate`, "POST", body),
     onSuccess: (res, body) => {
+      kick();
       // New takes appear at once (where the server filed them); the stream and polling take over.
       const folderId = res.folderId === undefined ? body.folderId : res.folderId;
       qc.setQueryData<CinemaGeneration[]>(["cinema", projectId, "items"], (old) =>

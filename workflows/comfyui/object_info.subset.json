@@ -1,4 +1,112 @@
 {
+  "AILab_FeyNoBg": {
+    "input": {
+      "required": {
+        "image": [
+          "IMAGE",
+          {
+            "tooltip": "Input image batch to remove background from."
+          }
+        ]
+      },
+      "optional": {
+        "mask_blur": [
+          "INT",
+          {
+            "default": 0,
+            "min": 0,
+            "max": 64,
+            "step": 1,
+            "tooltip": "Gaussian blur radius for softening mask edges."
+          }
+        ],
+        "mask_offset": [
+          "INT",
+          {
+            "default": 0,
+            "min": -64,
+            "max": 64,
+            "step": 1,
+            "tooltip": "Expand (positive) or shrink (negative) the mask boundary in pixels."
+          }
+        ],
+        "invert_output": [
+          "BOOLEAN",
+          {
+            "default": false,
+            "tooltip": "Invert the output mask."
+          }
+        ],
+        "refine_foreground": [
+          "BOOLEAN",
+          {
+            "default": true,
+            "tooltip": "Sub-pixel foreground boundary refinement for fine hairs and semi-transparent edges."
+          }
+        ],
+        "unload_model": [
+          "BOOLEAN",
+          {
+            "default": false,
+            "tooltip": "Unload model weights from VRAM immediately after execution."
+          }
+        ],
+        "background": [
+          [
+            "Alpha",
+            "Color"
+          ],
+          {
+            "default": "Alpha",
+            "tooltip": "Output format: Alpha for transparent cutout, or Color to composite against solid background."
+          }
+        ],
+        "background_color": [
+          "COLORCODE",
+          {
+            "default": "#222222",
+            "tooltip": "Hex background color used when background mode is set to Color."
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "image"
+      ],
+      "optional": [
+        "mask_blur",
+        "mask_offset",
+        "invert_output",
+        "refine_foreground",
+        "unload_model",
+        "background",
+        "background_color"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "IMAGE",
+      "MASK",
+      "IMAGE"
+    ],
+    "output_is_list": [
+      false,
+      false,
+      false
+    ],
+    "output_name": [
+      "IMAGE",
+      "MASK",
+      "MASK_IMAGE"
+    ],
+    "name": "AILab_FeyNoBg",
+    "display_name": "FeyNoBg (Background Removal)",
+    "description": "",
+    "python_module": "custom_nodes.ComfyUI-RMBG",
+    "category": "🧪AILab/🧽RMBG",
+    "output_node": false
+  },
   "AILab_Qwen3ASRSubtitle": {
     "input": {
       "required": {
@@ -646,6 +754,114 @@
     "description": "",
     "python_module": "custom_nodes.ComfyUI-QwenTTS",
     "category": "🧪AILab/🎙️QwenTTS",
+    "output_node": false
+  },
+  "AILab_VRMBG": {
+    "input": {
+      "required": {
+        "images": [
+          "IMAGE",
+          {
+            "tooltip": "Batch of consecutive video frames [B, H, W, C] for temporal background removal."
+          }
+        ]
+      },
+      "optional": {
+        "reset_state": [
+          "BOOLEAN",
+          {
+            "default": true,
+            "tooltip": "Reset temporal prior state at the beginning of this batch. Keep True for standalone clips, or False when feeding consecutive chunks."
+          }
+        ],
+        "mask_blur": [
+          "INT",
+          {
+            "default": 0,
+            "min": 0,
+            "max": 64,
+            "step": 1,
+            "tooltip": "Gaussian blur radius for softening mask edges."
+          }
+        ],
+        "mask_offset": [
+          "INT",
+          {
+            "default": 0,
+            "min": -64,
+            "max": 64,
+            "step": 1,
+            "tooltip": "Expand (positive) or shrink (negative) the mask boundary in pixels."
+          }
+        ],
+        "invert_output": [
+          "BOOLEAN",
+          {
+            "default": false,
+            "tooltip": "Invert the output mask."
+          }
+        ],
+        "unload_model": [
+          "BOOLEAN",
+          {
+            "default": false,
+            "tooltip": "Unload model weights from VRAM immediately after execution."
+          }
+        ],
+        "background": [
+          [
+            "Alpha",
+            "Color"
+          ],
+          {
+            "default": "Alpha",
+            "tooltip": "Output format: Alpha for transparent cutout, or Color to composite against solid background."
+          }
+        ],
+        "background_color": [
+          "COLORCODE",
+          {
+            "default": "#222222",
+            "tooltip": "Hex background color used when background mode is set to Color."
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "images"
+      ],
+      "optional": [
+        "reset_state",
+        "mask_blur",
+        "mask_offset",
+        "invert_output",
+        "unload_model",
+        "background",
+        "background_color"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "IMAGE",
+      "MASK",
+      "IMAGE"
+    ],
+    "output_is_list": [
+      false,
+      false,
+      false
+    ],
+    "output_name": [
+      "IMAGE",
+      "MASK",
+      "MASK_IMAGE"
+    ],
+    "name": "AILab_VRMBG",
+    "display_name": "VRMBG (Video Background Removal)",
+    "description": "",
+    "python_module": "custom_nodes.ComfyUI-RMBG",
+    "category": "🧪AILab/🧽RMBG",
     "output_node": false
   },
   "AUSBOSS_NODES_CropForInpaint": {
@@ -1831,6 +2047,198 @@
     "search_aliases": null,
     "essentials_category": null,
     "has_intermediate_output": false
+  },
+  "AuKGenerateEdit": {
+    "input": {
+      "required": {
+        "engine": [
+          "AUK_ENGINE"
+        ],
+        "instruction": [
+          "STRING",
+          {
+            "multiline": true,
+            "default": "Generate speech based on the following description: \"a calm, warm female voice\". The content to speak is: \"Hello, welcome to AuK.\"."
+          }
+        ],
+        "generation_seconds": [
+          "FLOAT",
+          {
+            "default": 0.0,
+            "min": 0.0,
+            "max": 30.0,
+            "step": 0.1
+          }
+        ],
+        "use_prompt_enhancer": [
+          "BOOLEAN",
+          {
+            "default": true
+          }
+        ],
+        "seed": [
+          "INT",
+          {
+            "default": 42,
+            "min": 0,
+            "max": 9223372036854775807
+          }
+        ],
+        "nfe_steps": [
+          "INT",
+          {
+            "default": 32,
+            "min": 4,
+            "max": 64,
+            "step": 1
+          }
+        ],
+        "cfg_strength": [
+          "FLOAT",
+          {
+            "default": 2.0,
+            "min": 0.0,
+            "max": 5.0,
+            "step": 0.1
+          }
+        ],
+        "sway_sampling_coef": [
+          "FLOAT",
+          {
+            "default": -1.0,
+            "min": -1.0,
+            "max": 1.0,
+            "step": 0.1
+          }
+        ]
+      },
+      "optional": {
+        "input_audio": [
+          "AUDIO"
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "engine",
+        "instruction",
+        "generation_seconds",
+        "use_prompt_enhancer",
+        "seed",
+        "nfe_steps",
+        "cfg_strength",
+        "sway_sampling_coef"
+      ],
+      "optional": [
+        "input_audio"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "AUDIO",
+      "STRING",
+      "STRING"
+    ],
+    "output_is_list": [
+      false,
+      false,
+      false
+    ],
+    "output_name": [
+      "generated_audio",
+      "enhanced_instruction",
+      "prompt_enhancer_info"
+    ],
+    "name": "AuKGenerateEdit",
+    "display_name": "AuK Generate / Edit",
+    "description": "Run instruction TTS, zero-shot TTS, or speech editing. The source/reference and generated target share one 30-second sequence budget.",
+    "python_module": "custom_nodes.ComfyUI-AuK",
+    "category": "AuK",
+    "output_node": false,
+    "_fuobe_note": "Written from comfyui/ComfyUI-AuK/nodes.py at Tencent-Hunyuan/AuK 0d40366b (the pack is not on the validation server)."
+  },
+  "AuKModelLoader": {
+    "input": {
+      "required": {
+        "checkpoint_path": [
+          "STRING",
+          {
+            "default": "ckpts/AuK/auk_base.safetensors",
+            "multiline": false
+          }
+        ],
+        "config_path": [
+          "STRING",
+          {
+            "default": "",
+            "multiline": false
+          }
+        ],
+        "qwen_path": [
+          "STRING",
+          {
+            "default": "ckpts/Qwen2.5-Omni-3B",
+            "multiline": false
+          }
+        ],
+        "device": [
+          [
+            "cuda:0",
+            "cpu"
+          ],
+          {
+            "default": "cuda:0"
+          }
+        ],
+        "dtype": [
+          [
+            "bf16",
+            "fp16",
+            "fp32"
+          ],
+          {
+            "default": "bf16"
+          }
+        ]
+      },
+      "optional": {
+        "cpu_offload": [
+          "BOOLEAN",
+          {
+            "default": false
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "checkpoint_path",
+        "config_path",
+        "qwen_path",
+        "device",
+        "dtype"
+      ],
+      "optional": [
+        "cpu_offload"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "AUK_ENGINE"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "engine"
+    ],
+    "name": "AuKModelLoader",
+    "display_name": "AuK Model Loader",
+    "description": "Load AuK or AuK-Flash and reuse the same engine for identical settings. Engines remain cached until ComfyUI exits; changing settings can load another copy.",
+    "python_module": "custom_nodes.ComfyUI-AuK",
+    "category": "AuK",
+    "output_node": false,
+    "_fuobe_note": "Written from comfyui/ComfyUI-AuK/nodes.py at Tencent-Hunyuan/AuK 0d40366b (the pack is not on the validation server); device lists the server's CUDA devices, then cpu."
   },
   "AudioAdjustVolume": {
     "input": {
@@ -4227,6 +4635,141 @@
       "null conditioning",
       "clear conditioning"
     ]
+  },
+  "CorridorKey2": {
+    "input": {
+      "required": {
+        "image": [
+          "IMAGE",
+          {}
+        ],
+        "gamma_space": [
+          [
+            "sRGB",
+            "Linear"
+          ],
+          {}
+        ],
+        "hint_quality": [
+          "FLOAT",
+          {
+            "default": 0.95,
+            "min": 0.0,
+            "max": 1.0,
+            "step": 0.01
+          }
+        ],
+        "carry_hint": [
+          "BOOLEAN",
+          {
+            "default": true
+          }
+        ],
+        "carry_hint_quality": [
+          "FLOAT",
+          {
+            "default": 0.95,
+            "min": 0.0,
+            "max": 1.0,
+            "step": 0.01
+          }
+        ],
+        "despill_strength": [
+          "FLOAT",
+          {
+            "default": 0.5,
+            "min": 0.0,
+            "max": 1.0,
+            "step": 0.01
+          }
+        ],
+        "window": [
+          [
+            "auto",
+            "80/40",
+            "48/24",
+            "24/12",
+            "8/4",
+            "4/2",
+            "2/1",
+            "1/1"
+          ],
+          {
+            "default": "auto"
+          }
+        ],
+        "low_vram": [
+          "BOOLEAN",
+          {
+            "default": false
+          }
+        ],
+        "unload_other_models": [
+          "BOOLEAN",
+          {
+            "default": true
+          }
+        ]
+      },
+      "optional": {
+        "mask": [
+          "MASK",
+          {}
+        ]
+      },
+      "hidden": {
+        "unique_id": "UNIQUE_ID",
+        "prompt": "PROMPT"
+      }
+    },
+    "input_order": {
+      "required": [
+        "image",
+        "gamma_space",
+        "hint_quality",
+        "carry_hint",
+        "carry_hint_quality",
+        "despill_strength",
+        "window",
+        "low_vram",
+        "unload_other_models"
+      ],
+      "optional": [
+        "mask"
+      ],
+      "hidden": [
+        "unique_id",
+        "prompt"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "IMAGE",
+      "MASK",
+      "IMAGE",
+      "IMAGE",
+      "IMAGE"
+    ],
+    "output_is_list": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ],
+    "output_name": [
+      "fg",
+      "matte",
+      "processed",
+      "QC",
+      "cutout"
+    ],
+    "name": "CorridorKey2",
+    "display_name": "CorridorKey 2.0",
+    "description": "CorridorKey 2.0 neural green/blue screen keyer. Works with no hint, a single first-frame hint mask, or one hint mask per frame. Runs at native resolution with temporal Hann windows across the whole batch.",
+    "python_module": "custom_nodes.ComfyUI-CorridorKey2",
+    "category": "CorridorKey",
+    "output_node": false
   },
   "CreateCameraInfo": {
     "input": {
@@ -12582,6 +13125,881 @@
     "essentials_category": null,
     "has_intermediate_output": false
   },
+  "Kandinsky6AudioVAEDecode": {
+    "input": {
+      "required": {
+        "audio_vae": [
+          "VAE"
+        ],
+        "joint_latent": [
+          "LATENT"
+        ]
+      },
+      "optional": {}
+    },
+    "input_order": {
+      "required": [
+        "audio_vae",
+        "joint_latent"
+      ],
+      "optional": []
+    },
+    "is_input_list": false,
+    "output": [
+      "AUDIO"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "AUDIO"
+    ],
+    "name": "Kandinsky6AudioVAEDecode",
+    "display_name": "Kandinsky 6 Audio VAE Decode",
+    "description": "",
+    "python_module": "custom_nodes.kandinsky6",
+    "category": "Kandinsky 6",
+    "output_node": false
+  },
+  "Kandinsky6AudioVAELoader": {
+    "input": {
+      "required": {
+        "tod_vae": [
+          [
+            "v1-44.pth"
+          ]
+        ],
+        "bigvgan_dir": [
+          [
+            "bigvgan_vocoder"
+          ]
+        ],
+        "mode": [
+          [
+            "44k"
+          ],
+          {
+            "default": "44k"
+          }
+        ],
+        "scaling_factor": [
+          "FLOAT",
+          {
+            "default": 0.417,
+            "min": 0.0001,
+            "max": 10.0,
+            "step": 0.0001
+          }
+        ]
+      },
+      "optional": {}
+    },
+    "input_order": {
+      "required": [
+        "tod_vae",
+        "bigvgan_dir",
+        "mode",
+        "scaling_factor"
+      ],
+      "optional": []
+    },
+    "is_input_list": false,
+    "output": [
+      "VAE"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "VAE"
+    ],
+    "name": "Kandinsky6AudioVAELoader",
+    "display_name": "Kandinsky 6 Audio VAE Loader",
+    "description": "",
+    "python_module": "custom_nodes.kandinsky6",
+    "category": "Kandinsky 6",
+    "output_node": false
+  },
+  "Kandinsky6BeautifyPrompt": {
+    "input": {
+      "required": {
+        "clip": [
+          "CLIP",
+          {
+            "lazy": true
+          }
+        ],
+        "video_caption": [
+          "STRING",
+          {
+            "multiline": true,
+            "default": ""
+          }
+        ],
+        "audio_caption": [
+          "STRING",
+          {
+            "multiline": true,
+            "default": ""
+          }
+        ],
+        "enabled": [
+          "BOOLEAN",
+          {
+            "default": true
+          }
+        ],
+        "seed": [
+          "INT",
+          {
+            "default": 42,
+            "min": 0,
+            "max": 18446744073709551615,
+            "control_after_generate": true
+          }
+        ],
+        "max_tokens": [
+          "INT",
+          {
+            "default": 1500,
+            "min": 1,
+            "max": 32768
+          }
+        ],
+        "temperature": [
+          "FLOAT",
+          {
+            "default": 0.3,
+            "min": 0.01,
+            "max": 2.0,
+            "step": 0.01
+          }
+        ],
+        "repetition_penalty": [
+          "FLOAT",
+          {
+            "default": 1.1,
+            "min": 1.0,
+            "max": 5.0,
+            "step": 0.01
+          }
+        ]
+      },
+      "optional": {
+        "image": [
+          "IMAGE"
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "clip",
+        "video_caption",
+        "audio_caption",
+        "enabled",
+        "seed",
+        "max_tokens",
+        "temperature",
+        "repetition_penalty"
+      ],
+      "optional": [
+        "image"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "STRING",
+      "STRING",
+      "STRING"
+    ],
+    "output_is_list": [
+      false,
+      false,
+      false
+    ],
+    "output_name": [
+      "video_caption",
+      "audio_caption",
+      "full_prompt"
+    ],
+    "name": "Kandinsky6BeautifyPrompt",
+    "display_name": "Kandinsky 6 Beautify Prompt (Qwen3.5-9B)",
+    "description": "",
+    "python_module": "custom_nodes.kandinsky6",
+    "category": "Kandinsky 6",
+    "output_node": false
+  },
+  "Kandinsky6EmptyLatent": {
+    "input": {
+      "required": {
+        "width": [
+          "INT",
+          {
+            "default": 864,
+            "min": 256,
+            "max": 2048,
+            "step": 16
+          }
+        ],
+        "height": [
+          "INT",
+          {
+            "default": 480,
+            "min": 256,
+            "max": 2048,
+            "step": 16
+          }
+        ],
+        "length": [
+          "INT",
+          {
+            "default": 121,
+            "min": 1,
+            "max": 1001,
+            "step": 4
+          }
+        ],
+        "fps": [
+          "FLOAT",
+          {
+            "default": 24.0,
+            "min": 1.0,
+            "max": 120.0
+          }
+        ],
+        "batch_size": [
+          "INT",
+          {
+            "default": 1,
+            "min": 1,
+            "max": 1
+          }
+        ]
+      },
+      "optional": {}
+    },
+    "input_order": {
+      "required": [
+        "width",
+        "height",
+        "length",
+        "fps",
+        "batch_size"
+      ],
+      "optional": []
+    },
+    "is_input_list": false,
+    "output": [
+      "LATENT",
+      "FLOAT"
+    ],
+    "output_is_list": [
+      false,
+      false
+    ],
+    "output_name": [
+      "joint_latent",
+      "fps"
+    ],
+    "name": "Kandinsky6EmptyLatent",
+    "display_name": "Kandinsky 6 Empty Latent (video+audio)",
+    "description": "",
+    "python_module": "custom_nodes.kandinsky6",
+    "category": "Kandinsky 6",
+    "output_node": false
+  },
+  "Kandinsky6ImageToVideoAudio": {
+    "input": {
+      "required": {
+        "positive": [
+          "CONDITIONING"
+        ],
+        "negative": [
+          "CONDITIONING"
+        ],
+        "empty_latent": [
+          "LATENT"
+        ],
+        "reference_latent": [
+          "LATENT"
+        ]
+      },
+      "optional": {}
+    },
+    "input_order": {
+      "required": [
+        "positive",
+        "negative",
+        "empty_latent",
+        "reference_latent"
+      ],
+      "optional": []
+    },
+    "is_input_list": false,
+    "output": [
+      "CONDITIONING",
+      "CONDITIONING",
+      "LATENT"
+    ],
+    "output_is_list": [
+      false,
+      false,
+      false
+    ],
+    "output_name": [
+      "positive",
+      "negative",
+      "joint_latent"
+    ],
+    "name": "Kandinsky6ImageToVideoAudio",
+    "display_name": "Kandinsky 6 Image to Video+Audio",
+    "description": "",
+    "python_module": "custom_nodes.kandinsky6",
+    "category": "Kandinsky 6",
+    "output_node": false
+  },
+  "Kandinsky6LatentUpscalerLoader": {
+    "input": {
+      "required": {
+        "latent_upscaler_checkpoint": [
+          [
+            "Kandinsky-6.0-VSR-distilled2steps-5s-Diffusers/latent_upscaler/diffusion_pytorch_model.safetensors"
+          ]
+        ],
+        "target_scale": [
+          [
+            "2x",
+            "4x"
+          ],
+          {
+            "default": "2x"
+          }
+        ]
+      },
+      "optional": {}
+    },
+    "input_order": {
+      "required": [
+        "latent_upscaler_checkpoint",
+        "target_scale"
+      ],
+      "optional": []
+    },
+    "is_input_list": false,
+    "output": [
+      "K6_LATENT_UPSCALER"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "latent_upscaler"
+    ],
+    "name": "Kandinsky6LatentUpscalerLoader",
+    "display_name": "Kandinsky6 SR Latent Upscaler Loader",
+    "description": "",
+    "python_module": "custom_nodes.kandinsky6-sr",
+    "category": "Kandinsky 6/SR",
+    "output_node": false
+  },
+  "Kandinsky6MagCache": {
+    "input": {
+      "required": {
+        "model": [
+          "MODEL"
+        ],
+        "steps": [
+          "INT",
+          {
+            "default": 50,
+            "min": 1,
+            "max": 1000
+          }
+        ],
+        "threshold": [
+          "FLOAT",
+          {
+            "default": 0.02,
+            "min": 0.0001,
+            "max": 1.0,
+            "step": 0.0001
+          }
+        ],
+        "max_skip_steps": [
+          "INT",
+          {
+            "default": 4,
+            "min": 1,
+            "max": 32
+          }
+        ],
+        "retention_ratio": [
+          "FLOAT",
+          {
+            "default": 0.1,
+            "min": 0.0,
+            "max": 0.95,
+            "step": 0.01
+          }
+        ]
+      },
+      "optional": {}
+    },
+    "input_order": {
+      "required": [
+        "model",
+        "steps",
+        "threshold",
+        "max_skip_steps",
+        "retention_ratio"
+      ],
+      "optional": []
+    },
+    "is_input_list": false,
+    "output": [
+      "MODEL"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "MODEL"
+    ],
+    "name": "Kandinsky6MagCache",
+    "display_name": "Kandinsky 6 MagCache (Pro)",
+    "description": "",
+    "python_module": "custom_nodes.kandinsky6",
+    "category": "Kandinsky 6",
+    "output_node": false
+  },
+  "Kandinsky6RemoveReferenceLatent": {
+    "input": {
+      "required": {
+        "joint_latent": [
+          "LATENT"
+        ]
+      },
+      "optional": {}
+    },
+    "input_order": {
+      "required": [
+        "joint_latent"
+      ],
+      "optional": []
+    },
+    "is_input_list": false,
+    "output": [
+      "LATENT"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "joint_latent"
+    ],
+    "name": "Kandinsky6RemoveReferenceLatent",
+    "display_name": "Kandinsky 6 Remove I2VA Reference",
+    "description": "",
+    "python_module": "custom_nodes.kandinsky6",
+    "category": "Kandinsky 6",
+    "output_node": false
+  },
+  "Kandinsky6SRVAELoader": {
+    "input": {
+      "required": {
+        "kvae_checkpoint": [
+          [
+            "Kandinsky-6.0-VSR-distilled2steps-5s-Diffusers/vae/diffusion_pytorch_model.safetensors"
+          ]
+        ]
+      },
+      "optional": {}
+    },
+    "input_order": {
+      "required": [
+        "kvae_checkpoint"
+      ],
+      "optional": []
+    },
+    "is_input_list": false,
+    "output": [
+      "K6_SR_VAE"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "sr_vae"
+    ],
+    "name": "Kandinsky6SRVAELoader",
+    "display_name": "Kandinsky6 SR VAE Loader",
+    "description": "",
+    "python_module": "custom_nodes.kandinsky6-sr",
+    "category": "Kandinsky 6/SR",
+    "output_node": false
+  },
+  "Kandinsky6Sampler": {
+    "input": {
+      "required": {
+        "model": [
+          "MODEL",
+          {
+            "tooltip": "The model used for denoising the input latent."
+          }
+        ],
+        "seed": [
+          "INT",
+          {
+            "default": 0,
+            "min": 0,
+            "max": 18446744073709551615,
+            "control_after_generate": true,
+            "tooltip": "The random seed used for creating the noise."
+          }
+        ],
+        "steps": [
+          "INT",
+          {
+            "default": 10,
+            "min": 1,
+            "max": 10000,
+            "tooltip": "The number of steps used in the denoising process."
+          }
+        ],
+        "cfg": [
+          "FLOAT",
+          {
+            "default": 1.0,
+            "min": 0.0,
+            "max": 100.0,
+            "step": 0.1,
+            "round": 0.01,
+            "tooltip": "The Classifier-Free Guidance scale balances creativity and adherence to the prompt. Higher values result in images more closely matching the prompt however too high values will negatively impact quality."
+          }
+        ],
+        "sampler_name": [
+          [
+            "euler",
+            "euler_cfg_pp",
+            "euler_ancestral",
+            "euler_ancestral_cfg_pp",
+            "heun",
+            "heunpp2",
+            "exp_heun_2_x0",
+            "exp_heun_2_x0_sde",
+            "dpm_2",
+            "dpm_2_ancestral",
+            "lms",
+            "dpm_fast",
+            "dpm_adaptive",
+            "dpmpp_2s_ancestral",
+            "dpmpp_2s_ancestral_cfg_pp",
+            "dpmpp_sde",
+            "dpmpp_sde_gpu",
+            "dpmpp_2m",
+            "dpmpp_2m_cfg_pp",
+            "dpmpp_2m_sde",
+            "dpmpp_2m_sde_gpu",
+            "dpmpp_2m_sde_heun",
+            "dpmpp_2m_sde_heun_gpu",
+            "dpmpp_3m_sde",
+            "dpmpp_3m_sde_gpu",
+            "ddpm",
+            "lcm",
+            "ipndm",
+            "ipndm_v",
+            "deis",
+            "cfgpp_ud10_ab",
+            "res_multistep",
+            "res_multistep_cfg_pp",
+            "res_multistep_ancestral",
+            "res_multistep_ancestral_cfg_pp",
+            "gradient_estimation",
+            "gradient_estimation_cfg_pp",
+            "er_sde",
+            "seeds_2",
+            "seeds_3",
+            "sa_solver",
+            "sa_solver_pece",
+            "ddim",
+            "uni_pc",
+            "uni_pc_bh2"
+          ],
+          {
+            "tooltip": "The algorithm used when sampling, this can affect the quality, speed, and style of the generated output."
+          }
+        ],
+        "scheduler": [
+          [
+            "simple",
+            "sgm_uniform",
+            "karras",
+            "exponential",
+            "ddim_uniform",
+            "beta",
+            "normal",
+            "linear_quadratic",
+            "kl_optimal"
+          ],
+          {
+            "tooltip": "The scheduler controls how noise is gradually removed to form the image."
+          }
+        ],
+        "positive": [
+          "CONDITIONING",
+          {
+            "tooltip": "The conditioning describing the attributes you want to include in the image."
+          }
+        ],
+        "negative": [
+          "CONDITIONING",
+          {
+            "tooltip": "The conditioning describing the attributes you want to exclude from the image."
+          }
+        ],
+        "latent_image": [
+          "LATENT",
+          {
+            "tooltip": "The latent image to denoise."
+          }
+        ],
+        "denoise": [
+          "FLOAT",
+          {
+            "default": 1.0,
+            "min": 0.0,
+            "max": 1.0,
+            "step": 0.01,
+            "tooltip": "The amount of denoising applied, lower values will maintain the structure of the initial image allowing for image to image sampling."
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "model",
+        "seed",
+        "steps",
+        "cfg",
+        "sampler_name",
+        "scheduler",
+        "positive",
+        "negative",
+        "latent_image",
+        "denoise"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "LATENT"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "LATENT"
+    ],
+    "name": "Kandinsky6Sampler",
+    "display_name": "Kandinsky 6 Sampler",
+    "description": "Automatically runs the DX PiFlow policy for distilled Pro/Lite (CFG=1). For non-distilled models, uses the normal ComfyUI sampler and scheduler.",
+    "python_module": "custom_nodes.kandinsky6",
+    "category": "Kandinsky 6",
+    "output_node": false,
+    "has_intermediate_output": false,
+    "output_tooltips": [
+      "The denoised latent."
+    ],
+    "search_aliases": [
+      "sampler",
+      "sample",
+      "generate",
+      "denoise",
+      "diffuse",
+      "txt2img",
+      "img2img"
+    ]
+  },
+  "Kandinsky6TextEncode": {
+    "input": {
+      "required": {
+        "clip": [
+          "CLIP"
+        ],
+        "video_caption": [
+          "STRING",
+          {
+            "multiline": true,
+            "default": ""
+          }
+        ],
+        "audio_caption": [
+          "STRING",
+          {
+            "multiline": true,
+            "default": ""
+          }
+        ]
+      },
+      "optional": {}
+    },
+    "input_order": {
+      "required": [
+        "clip",
+        "video_caption",
+        "audio_caption"
+      ],
+      "optional": []
+    },
+    "is_input_list": false,
+    "output": [
+      "CONDITIONING"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "CONDITIONING"
+    ],
+    "name": "Kandinsky6TextEncode",
+    "display_name": "Kandinsky 6 Text Encode (video+audio)",
+    "description": "",
+    "python_module": "custom_nodes.kandinsky6",
+    "category": "Kandinsky 6",
+    "output_node": false
+  },
+  "Kandinsky6VSRUpscale": {
+    "input": {
+      "required": {
+        "sr_model": [
+          "MODEL"
+        ],
+        "sr_vae": [
+          "K6_SR_VAE"
+        ],
+        "images": [
+          "IMAGE"
+        ],
+        "seed": [
+          "INT",
+          {
+            "default": 42,
+            "min": 0,
+            "max": 18446744073709551615,
+            "control_after_generate": true
+          }
+        ],
+        "steps": [
+          "INT",
+          {
+            "default": 5,
+            "min": 2,
+            "max": 100
+          }
+        ],
+        "tiles_batch_size": [
+          "INT",
+          {
+            "default": 1,
+            "min": 1,
+            "max": 16
+          }
+        ],
+        "scale": [
+          [
+            "2.25x",
+            "2x",
+            "4x"
+          ],
+          {
+            "default": "2.25x"
+          }
+        ],
+        "overlap": [
+          "FLOAT",
+          {
+            "default": 0.2,
+            "min": 0.0,
+            "max": 0.95,
+            "step": 0.01
+          }
+        ],
+        "frame_rate": [
+          "FLOAT",
+          {
+            "default": 24.0,
+            "min": 1.0,
+            "max": 240.0
+          }
+        ],
+        "target_resolution": [
+          [
+            "none",
+            "2k",
+            "fullhd",
+            "hd"
+          ],
+          {
+            "default": "none"
+          }
+        ]
+      },
+      "optional": {
+        "latent_upscaler": [
+          "K6_LATENT_UPSCALER"
+        ],
+        "audio": [
+          "AUDIO"
+        ],
+        "use_nabla": [
+          "BOOLEAN",
+          {
+            "default": false
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "sr_model",
+        "sr_vae",
+        "images",
+        "seed",
+        "steps",
+        "tiles_batch_size",
+        "scale",
+        "overlap",
+        "frame_rate",
+        "target_resolution"
+      ],
+      "optional": [
+        "latent_upscaler",
+        "audio",
+        "use_nabla"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "IMAGE",
+      "FLOAT",
+      "AUDIO"
+    ],
+    "output_is_list": [
+      false,
+      false,
+      false
+    ],
+    "output_name": [
+      "images",
+      "frame_rate",
+      "audio"
+    ],
+    "name": "Kandinsky6VSRUpscale",
+    "display_name": "Kandinsky6 SR Upscale",
+    "description": "",
+    "python_module": "custom_nodes.kandinsky6-sr",
+    "category": "Kandinsky 6/SR",
+    "output_node": false
+  },
   "Krea2EditGroundedEncode": {
     "input": {
       "required": {
@@ -16914,6 +18332,528 @@
     "has_intermediate_output": false,
     "search_aliases": []
   },
+  "NomasCameraPath": {
+    "input": {
+      "required": {
+        "script": [
+          "STRING",
+          {
+            "tooltip": "One '<keys> <seconds>' per line, keys joined with + (w a s d up down left right, or wait). 'look <dx> <dy> <seconds>' is a mouse drag in pixels.",
+            "multiline": true,
+            "default": "w 2\nw+left 1.5\nw 1.5"
+          }
+        ]
+      },
+      "optional": {}
+    },
+    "input_order": {
+      "required": [
+        "script"
+      ],
+      "optional": []
+    },
+    "is_input_list": false,
+    "output": [
+      "NOMAS_CAMERA"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "camera"
+    ],
+    "name": "NomasCameraPath",
+    "display_name": "Nomas Camera Path",
+    "description": "A camera move for one turn, as keys held for a time (the demo's controls at 24 fps). W/S move along the view, A/D strafe, the arrows turn 20 deg/s. Only the direction and the relative speed of moves reach the model; turning speed matters.",
+    "python_module": "custom_nodes.ComfyUI-HyNomas",
+    "category": "video/nomas",
+    "output_node": false
+  },
+  "NomasExplore": {
+    "input": {
+      "required": {
+        "model": [
+          "MODEL",
+          {}
+        ],
+        "clip": [
+          "CLIP",
+          {}
+        ],
+        "vae": [
+          "VAE",
+          {}
+        ],
+        "turn": [
+          "NOMAS_TURN",
+          {}
+        ],
+        "seed": [
+          "INT",
+          {
+            "default": 42,
+            "min": 0,
+            "max": 18446744073709551615
+          }
+        ],
+        "width": [
+          "INT",
+          {
+            "default": 1280,
+            "min": 256,
+            "max": 2048,
+            "step": 32
+          }
+        ],
+        "height": [
+          "INT",
+          {
+            "default": 704,
+            "min": 256,
+            "max": 2048,
+            "step": 32
+          }
+        ],
+        "change": [
+          "STRING",
+          {
+            "multiline": false,
+            "default": ""
+          }
+        ],
+        "action": [
+          "STRING",
+          {
+            "multiline": false,
+            "default": ""
+          }
+        ],
+        "seconds": [
+          "FLOAT",
+          {
+            "default": 3.0,
+            "min": 0.5,
+            "max": 15.0,
+            "step": 0.5
+          }
+        ],
+        "steps": [
+          "INT",
+          {
+            "advanced": true,
+            "default": 8,
+            "min": 1,
+            "max": 16
+          }
+        ],
+        "history": [
+          "COMBO",
+          {
+            "advanced": true,
+            "default": "window",
+            "multiselect": false,
+            "options": [
+              "window",
+              "full"
+            ]
+          }
+        ],
+        "controls": [
+          "STRING",
+          {
+            "advanced": true,
+            "multiline": false,
+            "default": ""
+          }
+        ]
+      },
+      "optional": {}
+    },
+    "input_order": {
+      "required": [
+        "model",
+        "clip",
+        "vae",
+        "turn",
+        "seed",
+        "width",
+        "height",
+        "change",
+        "action",
+        "seconds",
+        "steps",
+        "history",
+        "controls"
+      ],
+      "optional": []
+    },
+    "is_input_list": false,
+    "output": [
+      "IMAGE",
+      "LATENT",
+      "NOMAS_WORLD"
+    ],
+    "output_is_list": [
+      false,
+      false,
+      false
+    ],
+    "output_name": [
+      "turn_frames",
+      "LATENT",
+      "world"
+    ],
+    "name": "NomasExplore",
+    "display_name": "Nomas Explore",
+    "description": "Explore a Hy-Nomas world interactively: hold W/A/S/D and the arrow keys (or drag with the mouse) to record a camera move, and each move becomes the next turn of the world. Holds the world in memory between runs.",
+    "python_module": "custom_nodes.ComfyUI-HyNomas",
+    "category": "video/nomas",
+    "output_node": true
+  },
+  "NomasPromptJSON": {
+    "input": {
+      "required": {
+        "json": [
+          "STRING",
+          {
+            "multiline": true,
+            "default": ""
+          }
+        ]
+      },
+      "optional": {}
+    },
+    "input_order": {
+      "required": [
+        "json"
+      ],
+      "optional": []
+    },
+    "is_input_list": false,
+    "output": [
+      "NOMAS_TURN"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "turn"
+    ],
+    "name": "NomasPromptJSON",
+    "display_name": "Nomas Prompt (JSON)",
+    "description": "A whole Hy-Nomas prompt as JSON (perspective_view, Style, subject_list, segments with start_time / end_time), as in the release's examples/prompts.json. Each segment becomes one turn.",
+    "python_module": "custom_nodes.ComfyUI-HyNomas",
+    "category": "video/nomas",
+    "output_node": false
+  },
+  "NomasWorldContinue": {
+    "input": {
+      "required": {
+        "model": [
+          "MODEL",
+          {}
+        ],
+        "clip": [
+          "CLIP",
+          {}
+        ],
+        "world": [
+          "NOMAS_WORLD",
+          {}
+        ],
+        "change": [
+          "STRING",
+          {
+            "multiline": true,
+            "default": ""
+          }
+        ],
+        "action": [
+          "STRING",
+          {
+            "multiline": true,
+            "default": ""
+          }
+        ],
+        "seconds": [
+          "FLOAT",
+          {
+            "tooltip": "Unless the camera path sets it.",
+            "default": 5.0,
+            "min": 0.5,
+            "max": 30.0,
+            "step": 0.5
+          }
+        ],
+        "steps": [
+          "INT",
+          {
+            "advanced": true,
+            "default": 8,
+            "min": 1,
+            "max": 16
+          }
+        ]
+      },
+      "optional": {
+        "camera": [
+          "NOMAS_CAMERA",
+          {}
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "model",
+        "clip",
+        "world",
+        "change",
+        "action",
+        "seconds",
+        "steps"
+      ],
+      "optional": [
+        "camera"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "LATENT",
+      "NOMAS_WORLD"
+    ],
+    "output_is_list": [
+      false,
+      false
+    ],
+    "output_name": [
+      "LATENT",
+      "world"
+    ],
+    "name": "NomasWorldContinue",
+    "display_name": "Nomas World Continue",
+    "description": "Adds one turn to a world: a change in words, a camera move, or both. The latent holds the whole world.",
+    "python_module": "custom_nodes.ComfyUI-HyNomas",
+    "category": "video/nomas",
+    "output_node": false
+  },
+  "NomasWorldGenerate": {
+    "input": {
+      "required": {
+        "model": [
+          "MODEL",
+          {
+            "tooltip": "The Nomas DiT (Load Diffusion Model)."
+          }
+        ],
+        "clip": [
+          "CLIP",
+          {
+            "tooltip": "qwen_2.5_vl_7b from Load CLIP, type qwen_image."
+          }
+        ],
+        "turn": [
+          "NOMAS_TURN",
+          {}
+        ],
+        "seed": [
+          "INT",
+          {
+            "default": 42,
+            "min": 0,
+            "max": 18446744073709551615,
+            "control_after_generate": true
+          }
+        ],
+        "width": [
+          "INT",
+          {
+            "tooltip": "Trained at 1280x704 (the release's '720p' is 704 rows).",
+            "default": 1280,
+            "min": 256,
+            "max": 2048,
+            "step": 32
+          }
+        ],
+        "height": [
+          "INT",
+          {
+            "default": 704,
+            "min": 256,
+            "max": 2048,
+            "step": 32
+          }
+        ],
+        "steps": [
+          "INT",
+          {
+            "tooltip": "Euler steps on the shift-5 schedule. The distilled DiT was made for 4, 6 or 8.",
+            "advanced": true,
+            "default": 8,
+            "min": 1,
+            "max": 16
+          }
+        ],
+        "history": [
+          "COMBO",
+          {
+            "advanced": true,
+            "default": "window",
+            "multiselect": false,
+            "options": [
+              "window",
+              "full"
+            ]
+          }
+        ]
+      },
+      "optional": {
+        "camera": [
+          "NOMAS_CAMERA",
+          {
+            "tooltip": "A camera path for the first turn."
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "model",
+        "clip",
+        "turn",
+        "seed",
+        "width",
+        "height",
+        "steps",
+        "history"
+      ],
+      "optional": [
+        "camera"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "LATENT",
+      "NOMAS_WORLD"
+    ],
+    "output_is_list": [
+      false,
+      false
+    ],
+    "output_name": [
+      "LATENT",
+      "world"
+    ],
+    "name": "NomasWorldGenerate",
+    "display_name": "Nomas World",
+    "description": "Generates a Hy-Nomas world segment by segment. Each segment attends to a cache of the earlier ones. Decode the latent with VAE Decode and the PixelUMM VAE; continue it with Nomas World Continue.",
+    "python_module": "custom_nodes.ComfyUI-HyNomas",
+    "category": "video/nomas",
+    "output_node": false
+  },
+  "NomasWorldPrompt": {
+    "input": {
+      "required": {
+        "perspective": [
+          "COMBO",
+          {
+            "default": "third-person follow",
+            "multiselect": false,
+            "options": [
+              "first-person",
+              "second-person",
+              "third-person follow",
+              "third-person observer"
+            ]
+          }
+        ],
+        "style": [
+          "COMBO",
+          {
+            "default": "real-world footage",
+            "multiselect": false,
+            "options": [
+              "real-world footage",
+              "animation/anime",
+              "CG",
+              "video game",
+              "software/web/app/computer screen recording",
+              "slideshow"
+            ]
+          }
+        ],
+        "subject": [
+          "STRING",
+          {
+            "tooltip": "Who the camera follows. Written as <|Subject1|> in the scene and action text.",
+            "multiline": false,
+            "default": "a small orange fox"
+          }
+        ],
+        "subject_details": [
+          "STRING",
+          {
+            "multiline": true,
+            "default": "Orange fur, a white chest and a fluffy tail."
+          }
+        ],
+        "scene": [
+          "STRING",
+          {
+            "tooltip": "The opening shot. Use <|Subject1|> for the subject.",
+            "multiline": true,
+            "default": "<|Subject1|> stands on a stone path in a luminous forest at dusk. Blue fireflies drift between tall mossy trees, and soft mist hangs over the ground."
+          }
+        ],
+        "action": [
+          "STRING",
+          {
+            "tooltip": "What happens during the turn (optional). Leave empty for a camera-driven turn.",
+            "multiline": true,
+            "default": "<|Subject1|> walks slowly along the path."
+          }
+        ],
+        "seconds": [
+          "FLOAT",
+          {
+            "tooltip": "Length of the turn, unless a camera path sets it.",
+            "default": 5.0,
+            "min": 0.5,
+            "max": 30.0,
+            "step": 0.5
+          }
+        ]
+      },
+      "optional": {}
+    },
+    "input_order": {
+      "required": [
+        "perspective",
+        "style",
+        "subject",
+        "subject_details",
+        "scene",
+        "action",
+        "seconds"
+      ],
+      "optional": []
+    },
+    "is_input_list": false,
+    "output": [
+      "NOMAS_TURN"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "turn"
+    ],
+    "name": "NomasWorldPrompt",
+    "display_name": "Nomas World Prompt",
+    "description": "The first turn of a Hy-Nomas world, in the format its prompt enhancer writes: perspective, style, one subject and a scene description, with an optional action.",
+    "python_module": "custom_nodes.ComfyUI-HyNomas",
+    "category": "video/nomas",
+    "output_node": false
+  },
   "OpenH3RegenFastVAEDecode": null,
   "OpenH3RegenFinish": null,
   "OpenH3RegenLora": null,
@@ -18698,6 +20638,9 @@
     "has_intermediate_output": false,
     "search_aliases": []
   },
+  "RTXTrueHDR": null,
+  "RTXVideoFrameGeneration": null,
+  "RTXVideoSuperResolution": null,
   "RandomNoise": {
     "input": {
       "required": {

@@ -87,7 +87,7 @@ export interface LiveRenderLog extends Omit<LiveRender, "data"> {
 /** The parts of a requirement index (src/lib/gpu/types.ts) the stand-in reads. */
 export interface IndexLike {
   folders: string[];
-  files: Record<string, { folder: string; file: string; sizeBytes?: number; presence?: string; loaders?: [string, string][] }>;
+  files: Record<string, { folder: string; file: string; listFolder?: string; sizeBytes?: number; presence?: string; loaders?: [string, string][] }>;
   workflows: Record<string, { core: string[]; packs: Record<string, string[]> }>;
 }
 
@@ -103,8 +103,10 @@ function install(idx: IndexLike) {
   }
   const folders = new Map<string, { name: string; size: number }[]>(idx.folders.map((f) => [f, []]));
   for (const f of Object.values(idx.files)) {
-    if (!folders.has(f.folder)) folders.set(f.folder, []);
-    folders.get(f.folder)!.push({ name: f.file, size: f.sizeBytes ?? 1 });
+    // A pack's folder is listed under the name the pack registers it as (kandinsky6: audio_vae as kandinsky6_audio_vae).
+    const listed = f.listFolder ?? f.folder;
+    if (!folders.has(listed)) folders.set(listed, []);
+    folders.get(listed)!.push({ name: f.file, size: f.sizeBytes ?? 1 });
     if (f.presence === "loader") for (const [cls, input] of f.loaders ?? []) ((node(cls).input.required[input] ??= [[]])[0] as string[]).push(f.file);
   }
   return { info, folders };

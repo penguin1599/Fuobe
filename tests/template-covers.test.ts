@@ -18,6 +18,8 @@ import { PRESET_PREVIEWS } from "@/lib/preset-previews.generated";
 import { STARTERS } from "@/lib/starters/catalog";
 import { TEMPLATE_GROUPS, templateCover, type TemplateGroup } from "@/lib/template-covers";
 import { TEMPLATE_COVERS } from "@/lib/template-covers.generated";
+import { templateHdFiles } from "@/lib/template-hd";
+import { TEMPLATE_HD } from "@/lib/template-hd.generated";
 import { tempDir } from "./helpers/temp-dir";
 
 /*
@@ -100,6 +102,8 @@ describe("the template covers manifest", () => {
       for (const f of c.frames) for (const u of [f.src, f.thumb]) named.add(u.split("?")[0]);
       if (c.video) named.add(c.video.split("?")[0]);
     }
+    // The posters' larger copies (scripts/gen-template-hd.mjs, tests/template-hd.test.ts).
+    for (const key of Object.keys(TEMPLATE_HD)) for (const u of templateHdFiles(key)) named.add(u);
     const dir = path.join(root, "public", "previews", "templates");
     const files = fs.existsSync(dir) ? fs.readdirSync(dir, { recursive: true, encoding: "utf8" }).filter((f) => /.(jpg|mp4)$/.test(f)) : [];
     const orphans = files.map((f) => `/previews/templates/${f.replaceAll("\\", "/")}`).filter((u) => !named.has(u));
@@ -265,8 +269,9 @@ describe.skipIf(!hasFfmpeg)("pnpm eval:covers --templates", () => {
 });
 
 describe("a template cover that rests on its peak", () => {
-  it("plays only the finished scene around it: a hover and every loop start just before the peak, never at the clip's start", async () => {
-    const { PEAK_WINDOW, templatePreview } = await import("@/lib/template-covers");
+  it("rests on the finished scene and plays the effect's whole published clip, the same one its gallery card plays, looping", async () => {
+    const { templatePreview } = await import("@/lib/template-covers");
+    const { PRESET_PREVIEWS } = await import("@/lib/preset-previews.generated");
     const cover = (k: string) => templateCover(k.split("/")[0] as TemplateGroup, k.split("/")[1]);
     const rests = Object.keys(TEMPLATE_COVERS).filter((k) => cover(k)?.at !== undefined);
     const withPeak = rests.filter((k) => cover(k)!.poster.startsWith("/previews/presets/peak/"));
@@ -278,11 +283,13 @@ describe("a template cover that rests on its peak", () => {
     for (const key of withPeak) {
       const [group, id] = key.split("/") as [TemplateGroup, string];
       const c = templateCover(group, id)!;
-      const rest = templatePreview(c).rest!;
-      expect(rest.at, key).toBe(c.at);
-      expect(rest.from, key).toBeCloseTo(Math.max(0, c.at! - PEAK_WINDOW.before), 3);
-      expect(rest.from, key).toBeGreaterThan(0);
-      expect(rest.until, key).toBeCloseTo(c.at! + PEAK_WINDOW.after, 3);
+      const p = templatePreview(c);
+      // At rest: the finished scene. Playing: the clip from its first frame to its end, looped (no window, no seek).
+      expect(p.poster, key).toBe(c.poster);
+      expect(p.rest, key).toBeUndefined();
+      // The clip is the effect's own published cover clip, the very file (and version) its gallery card plays.
+      const effect = /\/previews\/presets\/peak\/([a-z0-9-]+)\.jpg/.exec(c.poster)![1];
+      expect(p.video, key).toBe((PRESET_PREVIEWS as Record<string, { video?: string }>)[effect]?.video);
       // Each canvas clip is 4 s long and its peak is within it.
       if (group === "canvas") expect(c.at!, key).toBeLessThan(4);
     }

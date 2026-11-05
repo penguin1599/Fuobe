@@ -1,0 +1,49 @@
+{
+  "id": "fuobe-timelapse",
+  "name": "Fuobe timelapse",
+  "kind": "motion",
+  "base": "wan2.2-i2v-a14b",
+  "media": "video",
+  "presets": [
+    "Timelapse",
+    "Timelapse Human",
+    "Timelapse Landscape",
+    "Timelapse Glam",
+    "Hyperlapse"
+  ],
+  "trigger": "fbtimelapse",
+  "dataset": {
+    "min": 30,
+    "max": 60,
+    "what": "Own time-lapse and hyperlapse clips: skies, streets, people holding still while the world moves.",
+    "captions": [
+      "Every caption starts with \"fbtimelapse, \" then says \"time-lapse\" (or \"hyperlapse\" when the camera travels) in the same words each time, then what is in the first frame.",
+      "One sentence for what moves and one for what stays still; no text, logos or names."
+    ],
+    "clipSeconds": [
+      2,
+      5
+    ],
+    "fps": 16
+  },
+  "train": {
+    "steps": 800,
+    "rank": 32,
+    "learningRate": 0.0002
+  },
+  "routes": {
+    "fal": {
+      "trainer": "fal-ai/wan-22-trainer/i2v-a14b"
+    },
+    "aiToolkit": {
+      "arch": "wan22_14b_i2v"
+    }
+  },
+  "target": {
+    "file": "fuobe-timelapse.safetensors",
+    "strength": 1.0,
+    "loraTarget": "both",
+    "hfRepo": "fuobe/fuobe-timelapse"
+  },
+  "notes": "Replaces the Wan 2.2 Time-lapse LoRA, which forbids selling outputs."
+}

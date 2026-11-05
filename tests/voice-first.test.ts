@@ -117,8 +117,8 @@ describe("runs (demo mode)", () => {
 });
 
 describe("public sign-up: the studio owner's until it has passed a real run", () => {
-  it("starts closed in this repository, and opens only with a validated graph and a passed run", () => {
-    expect(soundLive()).toEqual({ "clean-voice-first": false, "original-sound": false });
+  it("is open in this repository once its run passed, and opens only with a validated graph and a passed run", () => {
+    expect(soundLive()).toEqual({ "clean-voice-first": true, "original-sound": true });
     const d = tempDir("fuobe-sound-live-");
     const files = (validated: boolean, passed: boolean) => {
       fs.writeFileSync(path.join(d, "m.json"), JSON.stringify({ workflows: [{ id: "separate-soundtrack-dbs", validated }] }));
@@ -139,13 +139,12 @@ describe("public sign-up: the studio owner's until it has passed a real run", ()
         body: JSON.stringify(body),
       }),
     );
-  it("refuses it to an account in words", async () => {
+  it("lets an account ask for it once it has passed", async () => {
     auth.setPassword("install password");
     process.env.FUOBE_PUBLIC_SIGNUP = "1";
     const cookie = auth.createSession(auth.createAccount("voicefirst@example.com", "long enough").id).value;
     const asked = transcribeRequest({ engine: "open", video: "/api/files/uploads/none.mp4", cleanVoiceFirst: true });
     const r = await call(asked, cookie);
-    expect(r.status).toBe(403);
-    expect(await r.json()).toMatchObject({ code: "own-gpu-tool" });
+    expect(r.status).not.toBe(403);
   });
 });

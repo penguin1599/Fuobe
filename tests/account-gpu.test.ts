@@ -45,7 +45,7 @@ describe("Your GPU: the address", () => {
       await expect(checkGpuAddress(url, { resolve: publicDns }), url).rejects.toThrow(/can't use this address/);
     }
     await expect(checkGpuAddress("ftp://x.example", { resolve: publicDns })).rejects.toBeInstanceOf(GpuError);
-    await expect(checkGpuAddress("https://user:pw@x.example", { resolve: publicDns })).rejects.toThrow(/token field/);
+    await expect(checkGpuAddress("https://user:pw@x.example", { resolve: publicDns })).rejects.toThrow(/Access token box/);
   });
 
   it("connects to public addresses only, checked on the address actually used", async () => {
@@ -162,7 +162,13 @@ describe("the status strip", () => {
     auth.setAccountGpu(a.id, { url: "http://127.0.0.1:8188" });
     const acct = await visitorStatus(auth.accountById(a.id)!);
     // (keys: the providers it added its own key for, none here; paidAllowed: the studio isn't open-source only.)
-    expect(acct.viewer).toEqual({ kind: "account", gpu: { connected: true, mode: "link", online: false }, keys: [], paidAllowed: true });
+    expect(acct.viewer).toEqual({
+      kind: "account",
+      // Why it is offline, in plain words with what helps (an address on this machine is never called).
+      gpu: { connected: true, mode: "link", online: false, host: "web", trouble: expect.objectContaining({ cause: "address-local", words: expect.stringMatching(/only works on your own network/) }) },
+      keys: [],
+      paidAllowed: true,
+    });
     expect(acct.providers.comfyui.configured).toBe(false);
     expect(JSON.stringify(acct)).not.toContain("owner-comfy.test");
   });

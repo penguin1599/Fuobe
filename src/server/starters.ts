@@ -9,6 +9,7 @@ import { adoptSample } from "./canvas-samples";
 import { appendChat, createProject, getChat, listItems, listProjects, updateProject } from "./cinema";
 import { createElement, listElements } from "./elements";
 import { createChannel, listChannels, updateChannel } from "./faceless";
+import { tenantAccount } from "./tenant";
 
 /**
  * The owner's "Use template" on a starter that is made here (POST /api/starters/<id>): a Cinema Studio project with its
@@ -17,7 +18,9 @@ import { createChannel, listChannels, updateChannel } from "./faceless";
  * fills a composer (Assist, Storyboard, Content Factory, Explainer) or links to one (the Library's) is opened, not made.
  *
  * Guests get 401 and accounts 403 "library" before this runs (LIBRARY_CHANGES in src/lib/guest-access.ts): a starter
- * is saved to the owner's library.
+ * is saved to the owner's library. The exceptions are a Cinema Studio film and a Faceless channel for a signed-in
+ * account: made inside its own work (asAccount), each is that account's own project (src/server/cinema.ts and
+ * faceless.ts read and make the asker's own).
  */
 
 export class StarterError extends Error {
@@ -121,8 +124,9 @@ export async function createFromStarter(id: string, engine: Engine): Promise<{ h
     return { href: "/elements", id: el.id, note };
   }
   if (seed.kind === "faceless") {
-    // On the open engine the narrator clones a voice: the starter's own sample, while it is published.
-    const voice = engine === "open" ? narrator(s) : undefined;
+    // On the open engine the narrator clones a voice: the starter's own sample, while it is published. That copy is the
+    // studio's file: an account's channel (made inside its own work) picks its own narrator in its first episode.
+    const voice = engine === "open" && !tenantAccount() ? narrator(s) : undefined;
     // The channel made before from this starter (same name and idea) opens again, rather than a second one.
     const known = listChannels().find((c) => c.name === seed.channel.name && c.idea === seed.channel.idea);
     const channel = known

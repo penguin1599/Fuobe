@@ -168,7 +168,8 @@ describe("best for this studio", () => {
 
 describe("studio hubs", () => {
   it("give every mode its own path; the hub's path is its first mode", () => {
-    expect(modeHref("audio", "speech")).toBe("/audio");
+    expect(modeHref("audio", "clean")).toBe("/audio");
+    expect(modeHref("audio", "speech")).toBe("/audio/speech");
     expect(modeHref("audio", "music")).toBe("/audio/music");
     expect(modeHref("upscale", "video", { video: "/v.mp4" })).toBe("/upscale/video?video=%2Fv.mp4");
     for (const modes of Object.values(HUB_MODES)) expect(new Set(modes.map((m) => m.id)).size).toBe(modes.length);

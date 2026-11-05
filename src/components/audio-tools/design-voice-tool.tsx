@@ -99,7 +99,7 @@ function Take({ g, index, description, line, canSave }: { g: Generation; index: 
             </Button>
           )}
           <Button asChild size="sm" variant="ghost" className="rounded-full">
-            <Link href={`/audio?voice=${encodeURIComponent(url)}`}>
+            <Link href={`/audio/speech?voice=${encodeURIComponent(url)}`}>
               <Mic className="size-3.5" /> Use in Speech
             </Link>
           </Button>

@@ -6,6 +6,7 @@ import { rememberedComfy } from "@/components/gpu/computer-runtime";
 import { GPU_SETUP_EVENT } from "@/lib/api";
 import { checkThisComputer, sendCheck } from "@/lib/gpu/browser-check";
 import { BADGE_STATE } from "@/lib/gpu/readiness";
+import { GPU_NEED_TEXT } from "@/lib/gpu/rtx";
 import type { Badge, BadgeMap, CheckLine, FixPlan, GpuProblem, ReadinessReport, Readiness } from "@/lib/gpu/types";
 import { responseError } from "@/lib/refusals";
 
@@ -80,6 +81,9 @@ export function badgeText(b: Badge, gpu?: string): { short: string; long: string
   const gb = tenths ? `${tenths / 10} GB` : "";
   if (s === "r") return flags & 4 ? { short: "Ready", long: "Runs on any computer" } : { short: "Ready", long: `Ready on your ${gpu ?? "GPU"}${flags & 1 ? " (slow: it borrows memory)" : ""}` };
   if (s === "g") return { short: "Bigger GPU", long: `Needs more graphics memory than your ${gpu ?? "GPU"} has` };
+  // Flags 8 / 16: the card isn't the NVIDIA RTX one it needs (readiness badgeOf).
+  if (s === "u" && flags & 16) return { short: "RTX 40+", long: GPU_NEED_TEXT["nvidia-rtx-40"] };
+  if (s === "u" && flags & 8) return { short: "RTX only", long: GPU_NEED_TEXT["nvidia-rtx"] };
   if (s === "u") return { short: "Not here", long: "Needs its own ComfyUI, so it can't run next to your other add-ons" };
   const downloadOnly = gb && steps === 1;
   return {

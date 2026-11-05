@@ -125,7 +125,9 @@ export function ReadinessBoard({ view, owner, onCheck, checking }: { view: Readi
   const ready = count("ready");
   const almost = count("almost");
   const setup = count("setup");
-  const gpu = count("gpu") + count("unsupported");
+  // A tool that needs an NVIDIA RTX card the GPU isn't is counted on its own: a bigger card wouldn't help.
+  const card = rows.filter((r) => r.tool.state === "unsupported" && r.tool.gpuNeed).length;
+  const gpu = count("gpu") + count("unsupported") - card;
   const s = report.summary;
   const gpuName = s.gpu ? `${s.gpu.replace(/^NVIDIA\s+(GeForce\s+)?/i, "")}${s.vramGb ? ` (${s.vramGb} GB)` : ""}` : "ComfyUI";
   const headline = ready ? `Your ${gpuName} is ready for ${ready} of ${rows.length} studios` : `Your ${gpuName} is connected`;
@@ -133,6 +135,7 @@ export function ReadinessBoard({ view, owner, onCheck, checking }: { view: Readi
     almost && `${almost} more ${almost === 1 ? "needs" : "need"} one step.`,
     setup && `${setup} ${setup === 1 ? "needs" : "need"} a few things set up.`,
     gpu && `${gpu} ${gpu === 1 ? "needs" : "need"} a bigger graphics card${owner ? ", and can run in the cloud" : ""}.`,
+    card && `${card} ${card === 1 ? "needs" : "need"} an NVIDIA RTX card.`,
   ]
     .filter(Boolean)
     .join(" ");

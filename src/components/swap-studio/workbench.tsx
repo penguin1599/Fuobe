@@ -10,7 +10,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Panel, ToolShell } from "@/components/av/tool-shell";
 import { tabKeys } from "@/components/shorts/ui";
 import { EngineSwitch } from "@/components/studio/engine-switch";
-import { uploadFile } from "@/lib/api";
+import { uploadFile, useAskBeforeUpload } from "@/lib/api";
+import { limitMb, useClipLimit } from "@/lib/clip-limit";
+import { postFileWithProgress } from "@/lib/upload";
 import { clipExtension, clipNeedsPreview, clipProblem, jobState, MODE_LABELS, pageClip, secondsLabel, SWAP_STUDIO, type GenSummary, type StudioEstimate, type SwapClip, type SwapProject, type SwapShot } from "@/lib/catalog/swap-studio";
 import { cn } from "@/lib/utils";
 import { onAttr, TAB_PILL, TabRow } from "@/components/ui/tab-row";
@@ -49,24 +51,8 @@ const STAGES = [
 ] as const;
 type Stage = (typeof STAGES)[number]["id"];
 
-/** Upload a clip with progress (the server reads its header when it's added). */
-function uploadClip(file: File, onProgress: (p: number) => void): Promise<{ url: string; name?: string }> {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open("POST", "/api/uploads");
-    xhr.responseType = "json";
-    xhr.upload.onprogress = (e) => e.lengthComputable && onProgress(e.loaded / e.total);
-    xhr.onload = () => {
-      const body = xhr.response as { url?: string; name?: string; error?: string } | null;
-      if (xhr.status >= 200 && xhr.status < 300 && body?.url) resolve({ url: body.url, name: body.name });
-      else reject(new Error(body?.error ?? "That upload didn't go through. Please try again."));
-    };
-    xhr.onerror = () => reject(new Error("Upload failed — check your connection"));
-    const form = new FormData();
-    form.append("file", file);
-    xhr.send(form);
-  });
-}
+/** Upload a clip with progress, as the file itself (the server reads its header when it's added). */
+const uploadClip = (file: File, onProgress: (p: number) => void) => postFileWithProgress(file, onProgress);
 
 /** What the browser reads of a clip before the server does (a format it can't play just has none of it). */
 function browserFacts(file: File): Promise<{ duration?: number; width?: number; height?: number }> {
@@ -95,6 +81,8 @@ export function SwapWorkbench({ id }: { id: string }) {
   const [stage, setStage] = useState<Stage>("shots");
   const [shotId, setShotId] = useState<string | null>(null);
   const tabsId = useId();
+  // The clip size this viewer may upload: an account's is smaller than the studio's own (src/lib/clip-limit.ts).
+  const clipMax = useClipLimit(SWAP_STUDIO.maxBytes);
 
   const clip = project?.clips.find((c) => c.id === clipId) ?? project?.clips[0] ?? null;
   const shot = clip?.shots.find((s) => s.id === shotId) ?? clip?.shots.find((s) => s.mode === "generate") ?? clip?.shots[0] ?? null;
@@ -134,6 +122,7 @@ export function SwapWorkbench({ id }: { id: string }) {
 
   const src = clip ? pageClip(project.engine, clip) : "";
   const props: StageProps | null = clip ? { id, project, clip, gens: v.gens, estimate, shot, setShot: setShotId, edit, src } : null;
+  const clipMb = limitMb(clipMax);
 
   return (
     <ToolShell
@@ -158,7 +147,7 @@ export function SwapWorkbench({ id }: { id: string }) {
         <div className="min-w-0 space-y-4">
           <ProjectPanel project={project} estimate={estimate} edit={edit} />
           <CharacterPanel project={project} edit={edit} />
-          <ClipsPanel id={id} project={project} gens={v.gens} selected={clip?.id ?? null} onSelect={(c) => {
+          <ClipsPanel id={id} project={project} gens={v.gens} maxBytes={clipMax} selected={clip?.id ?? null} onSelect={(c) => {
               setClipId(c);
               setShotId(null);
             }} edit={edit} />
@@ -170,7 +159,7 @@ export function SwapWorkbench({ id }: { id: string }) {
               <div className="flex flex-col items-center gap-2 py-12 text-center">
                 <Film className="size-8 text-muted-foreground" aria-hidden />
                 <p className="text-[14px] font-medium">Add a clip to start</p>
-                <p className="max-w-sm text-[12px] text-muted-foreground">MP4, MOV, MKV, WebM or AVI, up to 149.66 s and 200 MB. {project.engine === "open" ? "Your GPU works on a 24 fps copy, made as soon as it's added." : "The cloud reads it as filmed."}</p>
+                <p className="max-w-sm text-[12px] text-muted-foreground">MP4, MOV, MKV, WebM or AVI, up to 149.66 s and {clipMb} MB. {project.engine === "open" ? "Your GPU works on a 24 fps copy, made as soon as it's added." : "The cloud reads it as filmed."}</p>
               </div>
             </Panel>
           ) : (
@@ -306,6 +295,7 @@ function ClipsPanel({
   id,
   project,
   gens,
+  maxBytes,
   selected,
   onSelect,
   edit,
@@ -313,6 +303,8 @@ function ClipsPanel({
   id: string;
   project: SwapProject;
   gens: Record<string, GenSummary>;
+  /** The clip size this viewer may upload. */
+  maxBytes: number;
   selected: string | null;
   onSelect: (id: string) => void;
   edit: StageProps["edit"];
@@ -321,9 +313,12 @@ function ClipsPanel({
   const input = useRef<HTMLInputElement>(null);
   const [upload, setUpload] = useState<{ name: string; progress: number } | null>(null);
   const [remove, setRemove] = useState<SwapClip | null>(null);
+  // Whoever the upload would refuse is asked first (a guest signs up, an account without a GPU or key connects one).
+  const askFirst = useAskBeforeUpload();
 
   const pick = async (file: File) => {
-    const problem = !clipExtension(file.name) ? "Add an MP4, MOV, MKV, WebM or AVI clip" : clipProblem({ bytes: file.size });
+    const tooBig = file.size > maxBytes ? `Keep clips under ${limitMb(maxBytes)} MB` : null;
+    const problem = !clipExtension(file.name) ? "Add an MP4, MOV, MKV, WebM or AVI clip" : (tooBig ?? clipProblem({ bytes: file.size }));
     if (problem) return toast.error(problem);
     const facts = await browserFacts(file);
     const long = clipProblem({ duration: facts.duration });
@@ -346,7 +341,9 @@ function ClipsPanel({
     <Panel
       title={`Clips · ${project.clips.length}`}
       aside={
-        <Button size="sm" variant="outline" className="h-7 rounded-full px-2.5 text-[12px]" onClick={() => input.current?.click()} disabled={!!upload || project.clips.length >= SWAP_STUDIO.maxClips}>
+        <Button size="sm" variant="outline" className="h-7 rounded-full px-2.5 text-[12px]" onClick={() => {
+            if (!askFirst()) input.current?.click();
+          }} disabled={!!upload || project.clips.length >= SWAP_STUDIO.maxClips}>
           <Plus className="size-3.5" /> Add clip
         </Button>
       }

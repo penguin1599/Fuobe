@@ -71,12 +71,14 @@ describe("M-3: the proxy holds at most a few MB of any request body", () => {
   it("each of those routes refuses a guest, an account and another website as the proxy would", async () => {
     for (const r of BIG) {
       // Assist and the tools an account's own GPU doesn't run give a guest the account's answer (403): signing up
-      // wouldn't let it in. A run's finish and a save to the library offer to sign up (401).
-      expect((await r.call(form(r.path))).status, `${r.name}: guest`).toBe(["finish", "mix export"].includes(r.name) ? 401 : 403);
+      // wouldn't let it in. A run's finish, a save to the library and an explainer's document offer to sign up (401).
+      expect((await r.call(form(r.path))).status, `${r.name}: guest`).toBe(["finish", "mix export", "explainer document"].includes(r.name) ? 401 : 403);
       expect((await r.call(form(r.path, { cookie: owner, headers: { origin: "http://evil.example" } }))).status, `${r.name}: cross-site`).toBe(403);
     }
-    // An account: only its own run's finish passes the proxy's rules, and "g1" isn't its own.
-    for (const r of BIG) expect((await r.call(form(r.path, { cookie: account }))).status, `${r.name}: account`).toBe(403);
+    // An account: its own Export mix and an explainer's document pass the proxy's rules (the route then reads the WAV or the
+    // document: a PNG isn't one), and its own
+    // run's finish does too, but "g1" isn't its own.
+    for (const r of BIG) expect((await r.call(form(r.path, { cookie: account }))).status, `${r.name}: account`).toBe(["mix export", "explainer document"].includes(r.name) ? 415 : 403);
   });
 
   it("each lets the owner through to the route's own checks", async () => {

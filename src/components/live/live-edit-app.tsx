@@ -4,7 +4,7 @@ import { Cpu, LogIn, Sparkles, Zap } from "lucide-react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
-import { openConnect, useComputerSupport } from "@/components/gpu/open-connect";
+import { OTHER_BROWSERS, openConnect, useComputerSupport } from "@/components/gpu/open-connect";
 import { rememberedComfy } from "@/components/gpu/computer-runtime";
 import { PhoneNavButton } from "@/components/nav/phone-nav-button";
 import { Button } from "@/components/ui/button";
@@ -86,18 +86,14 @@ export function LiveEditPanel({ image, text, onUse, onClose }: { image?: string;
           <div>
             <p className="font-heading text-[24px] leading-tight">Change it as you type</p>
             <p className="mt-1.5 text-[13.5px] text-muted-foreground">
-              {live.s === "guest"
-                ? "Sign up free to run Live edit on your own GPU."
-                : live.s === "connect"
-                  ? "Live edit runs on your own GPU. Connect it to start."
-                  : "Live edit on your computer needs Chrome or Edge on a desktop."}
+              {live.s === "guest" ? "Sign up free to run Live edit on your own GPU." : live.s === "connect" ? "Live edit runs on your own GPU. Connect it to start." : <CantReach />}
             </p>
             <div className="mt-3 flex gap-2">
               {live.s === "guest" ? (
                 <Button asChild>
                   <Link href={signInHref("signup", "/edit")}>Sign up free</Link>
                 </Button>
-              ) : live.s === "connect" ? (
+              ) : live.s === "connect" || live.s === "unsupported" ? (
                 <Button onClick={() => openConnect()}>
                   <Cpu className="size-4" />
                   Connect your GPU
@@ -121,6 +117,28 @@ export function LiveSkeleton() {
       <div className="min-h-0 flex-1 animate-pulse rounded-2xl bg-muted" />
       <div className="h-11 animate-pulse rounded-2xl bg-muted" />
     </div>
+  );
+}
+
+/**
+ * Live edit with "this computer" in a browser that can't reach it (Safari, a phone or tablet, a page marked not secure):
+ * why, in the person's terms, then the way that works from here (a web address; "Connect your GPU" beside these words
+ * opens it). Never "open Fuobe in…": Fuobe is open.
+ */
+const CANT_REACH: Record<"safari" | "phone" | "http", string> = {
+  safari: "Safari doesn't let a website talk to programs on your Mac. Give your ComfyUI a web address, and Live edit works from Safari.",
+  phone: "A phone or tablet can't talk to programs on your computer from a website. Give your ComfyUI a web address, and Live edit works from here.",
+  http: "Your browser marks this page as not secure, so it doesn't let the page talk to programs on this computer. Give your ComfyUI a web address, and Live edit works from here.",
+};
+
+function CantReach() {
+  const support = useComputerSupport();
+  const why = support === "ok" ? "http" : support;
+  return (
+    <>
+      {CANT_REACH[why]}
+      {why === "safari" && <span className="mt-1 block text-[12px]">{OTHER_BROWSERS}</span>}
+    </>
   );
 }
 
@@ -180,8 +198,14 @@ function LiveShowcase({ kind }: { kind: "guest" | "connect" | "unsupported" }) {
               </>
             ) : (
               <>
-                <p className="font-medium">Live edit on your computer needs Chrome or Edge on a desktop</p>
-                <p className="mt-1 text-[13px] text-muted-foreground">This browser can&apos;t reach the ComfyUI on your computer. Open Fuobe in Chrome or Edge there.</p>
+                <p className="font-medium">Live edit can&apos;t reach your ComfyUI from here</p>
+                <p className="mt-1 text-[13px] text-muted-foreground">
+                  <CantReach />
+                </p>
+                <Button className="mt-3" onClick={() => openConnect()}>
+                  <Cpu className="size-4" />
+                  Connect your GPU
+                </Button>
               </>
             )}
           </div>

@@ -3,7 +3,7 @@
 import { AtSign, AudioLines, Check, Copy, GraduationCap, Loader2, Plus, Trash2, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useMemo, useState } from "react";
+import { Suspense, useCallback, useMemo, useState } from "react";
 import { nanoid } from "nanoid";
 import { toast } from "sonner";
 import { PageHeader, PageShell } from "@/components/page-shell";
@@ -28,6 +28,9 @@ import { fileToSlot, MediaSlot, type SlotValue } from "@/components/studio/media
 import { ELEMENT_ICONS } from "@/components/studio/prompt-input";
 import { VoiceRecorder } from "@/components/studio/voice-recorder";
 import { useMaybeClean } from "@/components/audio-tools/clean-voice-switch";
+import { OtherSides, useOtherSidesOffered } from "@/components/model3d/other-sides";
+import { elementViews, IDOL_VIEWS_NOTE, OTHER_SIDES } from "@/lib/av/idol-views";
+import type { ViewSide } from "@/lib/av/model3d";
 import { SelfHostNote } from "@/components/self-host-note";
 import { useEdgeFade } from "@/components/studio/use-edge-fade";
 import { StarterSection, useStarters } from "@/components/starters/starter-section";
@@ -141,6 +144,20 @@ function ElementForm({ onOpenChange, element, defaultKind = "character", onSaved
 
   const uploading = photos.some((p) => p.uploading);
   const refs = photos.filter((p) => p.ref).map((p) => p.ref);
+  // Characters and products (idol-8): side and back views made from the first photo with Idol 3D on your GPU, once per
+  // dialog, while there's room for them.
+  const sidesOffered = useOtherSidesOffered();
+  const [sidesAdded, setSidesAdded] = useState<string[] | null>(null);
+  const first = photos[0];
+  const offerSides = sidesOffered && !sidesAdded && (kind === "character" || kind === "prop") && !!first?.ref && !first.uploading && photos.length + OTHER_SIDES.length <= MAX_PHOTOS;
+  const addSides = useCallback(
+    (made: Partial<Record<ViewSide, string>>) => {
+      const urls = elementViews(made);
+      setPhotos((ps) => [...ps, ...urls.filter((u) => !ps.some((p) => p.ref === u)).map((url) => ({ id: nanoid(6), ref: url, preview: url, kind: "image" as const, source: "generation" as const }))]);
+      setSidesAdded(urls);
+    },
+    [],
+  );
   const canSave = !!name.trim() && (refs.length > 0 || !!description.trim()) && !uploading && !save.isPending;
 
   const submit = () =>
@@ -220,7 +237,11 @@ function ElementForm({ onOpenChange, element, defaultKind = "character", onSaved
             )}
           </>
         ) : (
-          <PhotoGrid photos={photos} setPhotos={setPhotos} />
+          <>
+            <PhotoGrid photos={photos} setPhotos={setPhotos} />
+            {offerSides && first && <OtherSides photo={first.ref} asPhoto={first.source !== "generation"} label="Add side and back views" onMade={addSides} />}
+            {sidesAdded?.some((u) => refs.includes(u)) && <p className="text-[12px] text-muted-foreground">Side and back views by Idol 3D: {IDOL_VIEWS_NOTE.charAt(0).toLowerCase() + IDOL_VIEWS_NOTE.slice(1)}</p>}
+          </>
         )}
       </div>
       <DialogFooter>
@@ -406,7 +427,7 @@ function ElementsBody({ starters: given }: { starters: StarterCardData[] }) {
         description="Characters, locations, props and styles you can reuse. Save one once, then type @ in any image or video prompt, and it looks the same every time."
       >
         {visitor ? (
-          <SelfHostNote className="max-w-xs">Saving elements isn&apos;t available here.</SelfHostNote>
+          <SelfHostNote className="max-w-xs">Saving elements runs on your own Fuobe install.</SelfHostNote>
         ) : (
           <Button onClick={() => setOpen(true)}>
             <Plus /> New element

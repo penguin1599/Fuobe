@@ -9,7 +9,9 @@ process.env.FUOBE_DATA_DIR = path.join(dir, "data");
 process.env.FUOBE_TEST_SECRET = "do-not-pass-this-on";
 const { ACCOUNT_TURNTABLE, finishModel, pendingTurntable, scriptEnv } = await import("@/server/model3d-finish");
 const { saveFile } = await import("@/server/storage");
-const { createGenerations } = await import("@/server/generations");
+const { asAccount, createGenerations } = await import("@/server/generations");
+const { db } = await import("@/server/db");
+const { withRunStamp } = await import("@/server/run-stamp");
 const { OWN_GPU_TOOL_MESSAGE } = await import("@/lib/guest-access");
 afterAll(() => {
   delete process.env.FUOBE_TEST_SECRET;
@@ -125,8 +127,31 @@ describe("the 3D finish reads only the model it was given", () => {
   }, 60_000);
 });
 
-describe("accounts don't run 3D models yet", () => {
-  it("refuses an account's Image to 3D run before anything is queued", () => {
-    expect(() => createGenerations({ feature: "image-to-3d", modelId: "oss-pixal3d", op: "image-to-3d", prompt: "", inputs: { images: ["data:image/png;base64,AA=="] }, account: "acct-1", engine: "open" })).toThrow(OWN_GPU_TOOL_MESSAGE);
+describe("an account's 3D model runs on its own GPU or key, never on this install's GPUs", () => {
+  const photo = () => saveFile({ data: Buffer.from("89504e470d0a1a0a", "hex"), contentType: "image/png", source: "upload", accountId: "acct-1" }).url;
+  const request = (extra: Record<string, unknown> = {}) =>
+    ({ feature: "image-to-3d", modelId: "oss-pixal3d", op: "image-to-3d", prompt: "", inputs: { images: [photo()] }, engine: "open", ...extra }) as Parameters<typeof createGenerations>[0];
+
+  it("makes an account's Image to 3D run on its own placement", () => {
+    const made = asAccount("acct-1", () => createGenerations(request()));
+    expect(made).toHaveLength(1);
+    expect(made[0].kind).toBe("model3d");
+    expect(made[0].request.account).toBe("acct-1");
+    expect(made[0].request.place).toBeUndefined();
+  });
+
+  it("refuses the same run on this install's GPUs (the pool's stamp) before anything is queued", () => {
+    const rows = () => (db().prepare("SELECT COUNT(*) AS n FROM generations").get() as { n: number }).n;
+    const before = rows();
+    expect(() => asAccount("acct-1", () => withRunStamp({ place: "pool" }, () => createGenerations(request())))).toThrow(OWN_GPU_TOOL_MESSAGE);
+    expect(rows()).toBe(before);
+  });
+
+  it("a place sent in the request changes nothing: it is stripped, and only the stamp counts", () => {
+    for (const place of ["pool", "own"]) {
+      const made = asAccount("acct-1", () => createGenerations(request({ place })));
+      expect(made[0].request.place, place).toBeUndefined();
+    }
+    expect(() => asAccount("acct-1", () => withRunStamp({ place: "pool" }, () => createGenerations(request({ place: "own" }))))).toThrow(OWN_GPU_TOOL_MESSAGE);
   });
 });

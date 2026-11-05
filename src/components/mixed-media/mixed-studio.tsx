@@ -7,7 +7,6 @@ import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { PhoneNavButton } from "@/components/nav/phone-nav-button";
-import { SelfHostNote } from "@/components/self-host-note";
 import { EngineSwitch } from "@/components/studio/engine-switch";
 import { MediaThumb } from "@/components/studio/result-media";
 import { VideoTrimmer, type VideoTrimmerHandle } from "@/components/studio/video-trimmer";
@@ -15,7 +14,7 @@ import { LookCard } from "@/components/shorts/preset-card";
 import { useSubmitGuard } from "@/components/shorts/hooks";
 import { ClipBar, ClipDrop, costText, Field, Segmented, tabKeys } from "@/components/shorts/ui";
 import { clipDuration, clipSize, useSourceClip } from "@/components/shorts/use-source-clip";
-import { uploadFile, useEngine, useLikelyVisitor, useModelAccess, useStatus } from "@/lib/api";
+import { uploadFile, useEngine, useModelAccess, useStatus } from "@/lib/api";
 import { paidSuffix, placeholdersOn } from "@/lib/demo-mode";
 import { keepOffered, offered } from "@/lib/model-access";
 import {
@@ -92,9 +91,6 @@ export function MixedStudio({
   const [tab, setTab] = useState<Tab>("presets");
   const body = useSwapFade<HTMLDivElement>(tab);
   const [engine, setEngine, engineMode] = useEngine();
-  // A render doesn't run on an account's own GPU or key yet (only the studios' generations do): said up front, and the
-  // upload, the preview and Generate are off, instead of a run the server refuses.
-  const visitor = useLikelyVisitor();
   useEffect(() => {
     const t = new URLSearchParams(window.location.search).get("tab");
     // eslint-disable-next-line react-hooks/set-state-in-effect -- read once after hydration
@@ -129,7 +125,7 @@ export function MixedStudio({
         </TabRow>
         <div className="ml-auto shrink-0">
           {/* A phone's header has room for the tabs, not "Add key" too. */}
-          <EngineSwitch value={engine} onChange={setEngine} wordless selfHostedOnly />
+          <EngineSwitch value={engine} onChange={setEngine} wordless />
         </div>
         <PhoneNavButton />
       </header>
@@ -144,12 +140,11 @@ export function MixedStudio({
               <p className="text-[12px] font-semibold tracking-[0.14em] text-brand-text uppercase">No prompts, just vibe</p>
               <h2 className="mt-2 font-heading text-display text-balance">Turn any video into mixed-media art</h2>
               <p className="mx-auto mt-2 max-w-[560px] text-body text-pretty text-muted-foreground">
-                33 looks, each with its own colours and materials. Preview one frame, then make the whole clip
-                {visitor ? "." : ", free on your GPU."}
+                33 looks, each with its own colours and materials. Preview one frame, then make the whole clip, free on your
+                GPU.
               </p>
-              {visitor && <SelfHostNote className="mx-auto mt-3 max-w-[560px]">Mixed Media isn&apos;t available here.</SelfHostNote>}
             </div>
-            <Workspace visitor={visitor} engine={engine} models={models[engine]} frameModels={frameModels[engine]} />
+            <Workspace engine={engine} models={models[engine]} frameModels={frameModels[engine]} />
           </>
         )}
       </div>
@@ -199,7 +194,7 @@ function How({ onStart, cloud, reveal }: { onStart: () => void; cloud: boolean; 
   );
 }
 
-function Workspace({ visitor, engine, models, frameModels }: { visitor: boolean; engine: Engine; models: RestyleModelInfo[]; frameModels: RestyleModelInfo[] }) {
+function Workspace({ engine, models, frameModels }: { engine: Engine; models: RestyleModelInfo[]; frameModels: RestyleModelInfo[] }) {
   const [hasClip, setHasClip] = useState(false);
   const [presetId, setPresetId] = useState<string | null>(null);
   const preset = MIXED_PRESETS.find((p) => p.id === presetId) ?? null;
@@ -280,7 +275,7 @@ function Workspace({ visitor, engine, models, frameModels }: { visitor: boolean;
         )}
       </section>
       <aside ref={panel} id="mm-editor" className="scrollbar-none min-w-0 scroll-mt-16 lg:sticky lg:top-[calc(var(--chrome-top)+1rem)] lg:max-h-[calc(var(--content-h)-4.5rem)] lg:overflow-y-auto lg:overscroll-contain lg:rounded-2xl">
-        <Editor visitor={visitor} engine={engine} models={models} frameModels={frameModels} preset={preset} values={values} setValues={setValues} onClip={setHasClip} />
+        <Editor engine={engine} models={models} frameModels={frameModels} preset={preset} values={values} setValues={setValues} onClip={setHasClip} />
       </aside>
       {preset && !panelVisible && (
         <div className="fixed inset-x-3 bottom-[max(calc(var(--chrome-bottom)+0.75rem),env(safe-area-inset-bottom))] z-30 lg:hidden">
@@ -305,7 +300,6 @@ const LIMITS = "MP4 or MOV · 1 to 10 s · up to 50 MB · at least 4 FPS";
 type FpsChoice = number | "manual";
 
 function Editor({
-  visitor,
   engine,
   models: restyleModels,
   frameModels,
@@ -314,8 +308,6 @@ function Editor({
   setValues,
   onClip,
 }: {
-  /** A guest or an account: the upload, the preview and Generate are off (the page says it runs on a self-hosted Fuobe). */
-  visitor: boolean;
   engine: Engine;
   models: RestyleModelInfo[];
   frameModels: RestyleModelInfo[];
@@ -358,8 +350,7 @@ function Editor({
   const [pickedModel, setModel] = useState<Record<string, string>>({});
   const modelId = (models.some((m) => m.id === pickedModel[slot]) && pickedModel[slot]) || models[0]?.id;
   const model = models.find((m) => m.id === modelId);
-  // An open model is free on a self-hosted Fuobe: a guest or an account reads that, not "your GPU".
-  const priceOf = (m?: RestyleModelInfo) => (visitor && m?.engine === "open" ? "Not available here" : m?.price);
+  const priceOf = (m?: RestyleModelInfo) => m?.price;
   const original = modelId === MIXED_ORIGINAL;
   const [previewId, setPreviewId] = useState<string | null>(null);
   // Every main step of the latest render (cut → frames or restyle → sound), so a failed step shows its own error.
@@ -436,7 +427,7 @@ function Editor({
   // The preview frame is a run of its own: on the cloud its button says its price (the estimate's, per frame), else "· paid";
   // nothing on your GPU (free) or while placeholders are on.
   const placeholders = placeholdersOn(useStatus().data?.demoMode);
-  const previewPaid = cloud && !visitor && !(est ? est.demo : placeholders) ? paidSuffix(est?.previewUsd) : "";
+  const previewPaid = cloud && !(est ? est.demo : placeholders) ? paidSuffix(est?.previewUsd) : "";
 
   // A new clip, preset or engine starts without a preview (and so does another frame editor: the preview is its own work).
   const key = `${preset?.id}|${clip?.preview}|${engine}|${mode === "fast" ? "" : modelId}`;
@@ -466,7 +457,7 @@ function Editor({
                 : estimate.error
                   ? (estimate.error as Error).message
                   : null;
-  const blocker = visitor ? "Mixed Media isn't available here" : setupBlocker;
+  const blocker = setupBlocker;
 
   // One preview and one render per click: a second click while one is on its way does nothing,
   // and the server answers a repeated request id with what the first one started.
@@ -524,7 +515,6 @@ function Editor({
           <ClipDrop
             accept={MIXED.accept}
             limits={LIMITS}
-            disabled={visitor}
             onFile={(f) => {
               const err = source.pick(f);
               if (err) toast.error(err);
@@ -561,7 +551,7 @@ function Editor({
 
       <Field
         label="Restyle"
-        hint={frameMode ? `Every frame drawn again${cloud ? " · priced per frame" : visitor ? "" : " · free on your GPU"}` : smooth ? `First frame, then carried through${cloud ? " · priced per second" : visitor ? "" : " · free on your GPU"}` : "One video-to-video pass · priced by the model"}
+        hint={frameMode ? `Every frame drawn again${cloud ? " · priced per frame" : " · free on your GPU"}` : smooth ? `First frame, then carried through${cloud ? " · priced per second" : " · free on your GPU"}` : "One video-to-video pass · priced by the model"}
       >
         <Segmented<MixedMode> label="Restyle" value={mode} onChange={setMode} options={MODE_OPTIONS.filter((o) => MIXED_MODES[engine].includes(o.value))} />
       </Field>
@@ -654,7 +644,7 @@ function Editor({
         {model && (
           <p className="text-[12px] leading-snug text-muted-foreground">
             {smooth
-              ? `Fuobe Original: the first frame takes the look, then every frame follows it${cloud ? ", at 720p" : visitor ? " (480p, 16 fps)" : " (480p, 16 fps on your GPU)"}.`
+              ? `Fuobe Original: the first frame takes the look, then every frame follows it${cloud ? ", at 720p" : " (480p, 16 fps on your GPU)"}.`
               : original
                 ? "Fuobe Original: every frame drawn again in the look, along its own outlines."
                 : plainTagline(model.tagline)}
@@ -665,7 +655,7 @@ function Editor({
       <div className="space-y-2 rounded-xl border p-3">
         <div className="flex items-center justify-between gap-2">
           <span className="text-[13px] font-medium">Preview frame</span>
-          <span className="font-mono text-[12px] text-muted-foreground tabular-nums">Preview costs: {est ? costText({ costUsd: est.previewUsd, demo: est.demo }, engine, visitor) : "—"}</span>
+          <span className="font-mono text-[12px] text-muted-foreground tabular-nums">Preview costs: {est ? costText({ costUsd: est.previewUsd, demo: est.demo }, engine) : "—"}</span>
         </div>
         <p className="text-[12px] text-muted-foreground">Generate one frame with your current settings before creating the full video.</p>
         {preview && (
@@ -699,7 +689,7 @@ function Editor({
         <button
           type="button"
           onClick={makePreview}
-          disabled={previewBusy || visitor}
+          disabled={previewBusy}
           aria-disabled={!!blocker || previewBusy}
           className={cn(
             "flex h-9 w-full items-center justify-center gap-2 rounded-full border text-[13px] font-medium",
@@ -729,7 +719,7 @@ function Editor({
           </span>
           <span className="flex items-center gap-1.5 font-mono text-[13px] font-medium tabular-nums" aria-live="polite">
             {estimate.isFetching && <Loader2 className="size-3 animate-spin text-muted-foreground" />}
-            {body ? costText(est, engine, visitor) : "—"}
+            {body ? costText(est, engine) : "—"}
           </span>
         </div>
         {frameMode && cloud && est && !est.demo && typeof est.perFrameUsd === "number" && (
@@ -752,7 +742,7 @@ function Editor({
         <button
           type="button"
           onClick={generate}
-          disabled={actions.render.isPending || visitor}
+          disabled={actions.render.isPending}
           aria-disabled={!!blocker || actions.render.isPending}
           aria-describedby={blocker ? "mm-blocker" : undefined}
           className={cn(

@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, Check, Cloud, Cpu, Download, FolderDown, Layers, Loader2, RotateCcw, Scissors, Trash2 } from "lucide-react";
+import { ArrowLeft, Check, Cloud, Cpu, Download, FolderDown, Layers, Loader2, RotateCcw, Scissors, Sparkles, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -22,12 +22,17 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { MediaThumb } from "@/components/studio/result-media";
 import { radioKeys, radioTab } from "@/components/studio/radio-keys";
 import { Viewer } from "@/components/studio/viewer";
-import { chainState, formatSeconds, stitchCurrent, stitchSteps, takeSteps, type ChainState, type ShortsSessionSegment } from "@/lib/catalog/shorts";
+import { chainState, ENHANCE_COPY, formatSeconds, segmentSeconds, stitchCurrent, stitchSteps, takeSteps, type ChainState, type ShortsSessionSegment } from "@/lib/catalog/shorts";
+import { finishLengthProblem } from "@/lib/catalog/regenerate";
+import { OwnSetupChip, useOwnSetupPress } from "@/components/own-setup";
+import { originalSoundLabel, originalSoundOn } from "@/lib/av/original-sound";
+import { useEngineMode, useIsOwner } from "@/lib/api";
 import type { Generation } from "@/lib/catalog/types";
 import { formatCost, ratioValue, timeAgo } from "@/lib/format";
 import { downloadHref, downloadName } from "@/lib/library";
 import { cn } from "@/lib/utils";
 import { toastError } from "@/lib/refusals";
+import { onZipLink } from "@/lib/zip-download";
 import { useShortsActions, useShortsSession, useSubmitGuard, type ShortsSessionView as View } from "./hooks";
 import { Steps } from "./ui";
 
@@ -95,6 +100,9 @@ function Frame({ title, children, actions }: { title: string; children: React.Re
 function Session({ s }: { s: View }) {
   const router = useRouter();
   const actions = useShortsActions(s.id);
+  const engineMode = useEngineMode();
+  // The studio's owner keeps a Trash; a signed-in account's short is its own runs (deleted for good, its parts zipped as the owner's are).
+  const owner = useIsOwner();
   const [open, setOpen] = useState<Generation | null>(null);
   const [confirm, setConfirm] = useState(false);
   const gens = s.generations;
@@ -121,6 +129,15 @@ function Session({ s }: { s: View }) {
     if (!canStitch || actions.stitch.isPending) return;
     void stitchGuard(`stitch:${s.segments.map((g) => g.primary).join(",")}`, (requestId) => actions.stitch.mutateAsync({ requestId }))
       .then((v) => v && toast("Stitching your short"))
+      .catch((e: Error) => toastError(e));
+  };
+  const enhanceGuard = useSubmitGuard();
+  // Enhance needs a 48 GB card: a visitor runs it on its own GPU (own-setup.ts), else gets the step that sets it up.
+  const press = useOwnSetupPress();
+  const enhance = (i: number) => {
+    if (actions.enhance.isPending) return;
+    void enhanceGuard(`enhance:${i}:${s.segments[i].primary}`, (requestId) => actions.enhance.mutateAsync({ index: i, requestId }))
+      .then((v) => v && toast(`Enhancing segment ${i + 1} at 1080p — pick the new take when it's ready`))
       .catch((e: Error) => toastError(e));
   };
   const regenerate = (i: number) => {
@@ -180,7 +197,13 @@ function Session({ s }: { s: View }) {
               </a>
             )}
             {parts.length > 0 && (
-              <a href={`/api/generations/zip?ids=${parts.join(",")}`} className="inline-flex h-9 items-center gap-1.5 rounded-full border bg-background px-4 text-[13px] font-medium hover:bg-accent">
+              <a
+                href={`/api/generations/zip?ids=${parts.join(",")}`}
+                download
+                // Asks first: a refusal (a zip still going, too big) is a toast, never a page of its own.
+                onClick={onZipLink}
+                className="inline-flex h-9 items-center gap-1.5 rounded-full border bg-background px-4 text-[13px] font-medium hover:bg-accent"
+              >
                 <FolderDown className="size-4" /> Download parts{parts.length < s.segments.length ? ` (${parts.length})` : ""}
               </a>
             )}
@@ -204,6 +227,12 @@ function Session({ s }: { s: View }) {
           <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 rounded-xl bg-muted/50 p-3 text-[12px]">
             <dt className="text-muted-foreground">Preset</dt>
             <dd className="truncate">{s.look.name}</dd>
+            {s.source.hasAudio && (
+              <>
+                <dt className="text-muted-foreground">Sound</dt>
+                <dd className="truncate">{originalSoundLabel(originalSoundOn(s.settings.originalSound, s.engine))}</dd>
+              </>
+            )}
             <dt className="text-muted-foreground">Engine</dt>
             <dd className="flex items-center gap-1">
               {s.engine === "open" ? <Cpu className="size-3" /> : <Cloud className="size-3" />}
@@ -245,10 +274,15 @@ function Session({ s }: { s: View }) {
                 onRegenerate={() => regenerate(i)}
                 regenerating={actions.regenerate.isPending && actions.regenerate.variables?.index === i}
                 busy={actions.regenerate.isPending}
+                enhanceable={s.engine === "open" && engineMode !== "cloud"}
+                onEnhance={() => press("regenerate:enhance", () => enhance(i))}
+                enhancing={actions.enhance.isPending && actions.enhance.variables?.index === i}
                 onPrimary={(gid) => actions.primary.mutate({ index: i, generationId: gid }, { onError: (e) => toastError(e) })}
               />
             ))}
           </div>
+          {/* A cloud short: Enhance (H3 regenerate) needs your GPU, said once rather than on every segment. */}
+          {s.engine === "cloud" && engineMode !== "cloud" && <p className="text-[12px] text-muted-foreground">{ENHANCE_COPY.cloudSession}.</p>}
         </section>
       </div>
       {open && <Viewer generation={open} index={0} onClose={() => setOpen(null)} />}
@@ -256,7 +290,7 @@ function Session({ s }: { s: View }) {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete this short?</AlertDialogTitle>
-            <AlertDialogDescription>Its segments and videos move to the Trash, where you can restore them for 30 days.</AlertDialogDescription>
+            <AlertDialogDescription>{owner ? "Its segments and videos move to the Trash, where you can restore them for 30 days." : "Its segments and videos are deleted for good."}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Keep it</AlertDialogCancel>
@@ -265,7 +299,7 @@ function Session({ s }: { s: View }) {
               onClick={() =>
                 actions.remove.mutate(s.id, {
                   onSuccess: () => {
-                    toast("Moved to Trash");
+                    toast(owner ? "Moved to Trash" : "Deleted");
                     router.push("/shorts?tab=history");
                   },
                   onError: (e) => toastError(e),
@@ -294,6 +328,9 @@ function SegmentCard({
   regenerating,
   busy,
   onPrimary,
+  enhanceable,
+  onEnhance,
+  enhancing,
 }: {
   seg: ShortsSessionSegment;
   index: number;
@@ -308,8 +345,14 @@ function SegmentCard({
   /** A new take (of any segment) is on its way. */
   busy: boolean;
   onPrimary: (id: string) => void;
+  /** Enhance (H3 regenerate): on an open-source short (Paid APIs only hides it). */
+  enhanceable: boolean;
+  onEnhance: () => void;
+  enhancing: boolean;
 }) {
   const primary = gens[seg.primary];
+  const chosenTake = seg.takes.find((t) => t.look === seg.primary);
+  const tooLong = finishLengthProblem(segmentSeconds(seg));
   const video = videoOf(primary);
   const price = demo ? "Placeholder · free" : cost === null ? "" : cost === 0 ? "Free" : `≈ ${formatCost(cost)}`;
   return (
@@ -348,7 +391,12 @@ function SegmentCard({
               {state.error && <p className="line-clamp-3 text-[12px] break-words text-muted-foreground">{state.error}</p>}
             </div>
           )}
-          {state.status === "done" && <p className="text-[13px] text-muted-foreground">Take {seg.takes.findIndex((t) => t.look === seg.primary) + 1} is in the full video.</p>}
+          {state.status === "done" && (
+            <p className="text-[13px] text-muted-foreground">
+              Take {seg.takes.findIndex((t) => t.look === seg.primary) + 1}
+              {chosenTake?.enhance ? " (enhanced, 1080p)" : ""} is in the full video.
+            </p>
+          )}
           {seg.takes.length > 1 && (
             // Arrow keys move between the takes and pick them (radio pattern); the chosen take is the Tab stop.
             // Only takes that can't be picked (still rendering, failed) are turned off, with the reason in their name.
@@ -365,7 +413,7 @@ function SegmentCard({
                     type="button"
                     role="radio"
                     aria-checked={chosen}
-                    aria-label={`Take ${ti + 1}${why ? ` (${why})` : chosen ? " (in the full video)" : ""}`}
+                    aria-label={`Take ${ti + 1}${t.enhance ? ", enhanced" : ""}${why ? ` (${why})` : chosen ? " (in the full video)" : ""}`}
                     tabIndex={radioTab(chosen)}
                     disabled={st.status !== "done" && !chosen}
                     onClick={() => !chosen && st.status === "done" && onPrimary(t.look)}
@@ -377,6 +425,7 @@ function SegmentCard({
                   >
                     {v ? <MediaThumb output={v} /> : st.status === "working" ? <Loader2 className="mx-auto size-3.5 animate-spin text-muted-foreground" /> : null}
                     <span className="absolute bottom-0.5 left-0.5 rounded bg-black/55 px-1 text-[10px] font-semibold text-white">{ti + 1}</span>
+                    {t.enhance && <span className="absolute top-0.5 right-0.5 rounded bg-black/55 px-1 text-[9px] font-semibold text-white">HD</span>}
                   </button>
                 );
               })}
@@ -393,6 +442,20 @@ function SegmentCard({
               Regenerate
               {price && <span className="font-mono text-[11px] font-normal text-muted-foreground">{price}</span>}
             </button>
+            {enhanceable && !chosenTake?.enhance && !tooLong && (
+              <button
+                type="button"
+                onClick={onEnhance}
+                disabled={state.status !== "done" || enhancing}
+                title={state.status !== "done" ? ENHANCE_COPY.notReady : `${ENHANCE_COPY.hint} · ${ENHANCE_COPY.gpu}`}
+                className="inline-flex h-8 items-center gap-1.5 rounded-full border bg-background px-3 text-[12px] font-medium hover:bg-accent disabled:opacity-60"
+              >
+                {enhancing ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}
+                {ENHANCE_COPY.label}
+                <OwnSetupChip setup="regenerate:enhance" />
+                <span className="font-mono text-[11px] font-normal text-muted-foreground">1080p · Free</span>
+              </button>
+            )}
             {video && primary && (
               <a
                 href={downloadHref(video.url, downloadName(primary, video, 0))}

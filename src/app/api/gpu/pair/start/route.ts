@@ -31,7 +31,8 @@ export async function POST(request: Request) {
   const facts = cleanFacts(body?.facts);
   delete facts.loras;
   const p = startPairing({ name: typeof body?.name === "string" ? body.name : "ComfyUI", facts });
-  const url = new URL(`/connect?code=${encodeURIComponent(p.code)}`, siteOf(request)).toString();
+  // The page asks for the code; it never takes one from its link (someone else's link can't pair their ComfyUI with you).
+  const url = new URL("/connect?pair=1", siteOf(request)).toString();
   return Response.json(
     { id: p.id, secret: p.secret, code: p.code, url, expiresAt: p.expiresAt, expiresInS: PAIR_MS / 1000, pollMs: 2000 },
     { headers: { "Cache-Control": "no-store" } },

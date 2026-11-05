@@ -1,0 +1,64 @@
+{
+  "$schema": "./case.schema.json",
+  "suite": "mesh",
+  "title": "Idol 3D quick mesh · a rough vertex-coloured mesh from one picture",
+  "description": "Image to 3D → From an image on your GPU (idol-7, docs/research/idol-9.md §9): Idol 3D's splat turned into a vertex-coloured GLB by core ComfyUI's Extract Mesh from Splat (resolution 384, min_opacity 0.02), against TRELLIS.2 on the same pictures. Your own pictures go in local/mesh/: product-render.png (a generated or rendered product on a plain background), product-photo.jpg (a phone photo of a product), figurine.jpg (a photo of a small figurine or toy) and character.png (a generated full-body character). Nothing here has been run on a GPU yet: mesh quality from Idol splats is unknown. What is scored is the turntable video: with Chromium and ffmpeg on the Fuobe server it is the server's turntable of the GLB itself; without them it is Idol's splat orbit, which doesn't show the mesh, so run the suite on a server that renders turntables. Open the GLBs in the run folder (outputs/<case>/) in a viewer too: look for holes, the inner double wall, floaters, smeared colour and thin parts lost before the model ships. Style is DINOv2 or CLIP against the input picture.",
+  "original": "oss-idol-mesh",
+  "kind": "video",
+  "decides": "Whether Idol 3D quick mesh stays in From an image, and its default grid. A person keeps it, or takes it out, in a reviewed commit after one open run of all four cases: the meshes looked at in a viewer, style within 0.05 of TRELLIS.2's on at least three of the four pictures. The fine grid (512) becomes the default only if it beats 384 on style on three of four pictures without running out of memory on an 8 GB GPU.",
+  "targets": {
+    "open": { "models": ["oss-idol-mesh"] },
+    "demo": { "models": ["oss-idol-mesh"] }
+  },
+  "defaults": { "seeds": [1001], "metrics": ["style", "temporal", "aesthetic"], "timeoutSeconds": 3600, "candidate": "idol-mesh" },
+  "variants": {
+    "idol-mesh": {
+      "description": "Idol 3D quick mesh as From an image runs it: Idol Best (50 Euler steps, 262,144 Gaussians), then a 384 grid"
+    },
+    "fine-grid": {
+      "description": "The same splat meshed on a 512 grid (finer surface; memory and time grow with the grid's cube)",
+      "extra": { "meshResolution": 512 }
+    },
+    "trellis2": {
+      "description": "TRELLIS.2 on the same picture, for reference (a textured model; needs a 16 GB GPU)",
+      "engines": ["open"],
+      "models": { "open": ["oss-trellis2"] }
+    }
+  },
+  "cases": [
+    {
+      "id": "mesh/product-render",
+      "title": "A rendered product on a plain background",
+      "op": "image-to-3d",
+      "inputs": { "images": ["local/mesh/product-render.png"] },
+      "demoInputs": { "images": ["fixtures/start-frame.png"] },
+      "references": ["local/mesh/product-render.png"]
+    },
+    {
+      "id": "mesh/product-photo",
+      "title": "A phone photo of a product, with Idol's looser photo crop",
+      "op": "image-to-3d",
+      "inputs": { "images": ["local/mesh/product-photo.jpg"] },
+      "demoInputs": { "images": ["fixtures/end-frame.png"] },
+      "extra": { "photoCrop": true },
+      "references": ["local/mesh/product-photo.jpg"]
+    },
+    {
+      "id": "mesh/figurine",
+      "title": "A small figurine with thin parts",
+      "op": "image-to-3d",
+      "inputs": { "images": ["local/mesh/figurine.jpg"] },
+      "demoInputs": { "images": ["fixtures/start-frame.png"] },
+      "extra": { "photoCrop": true },
+      "references": ["local/mesh/figurine.jpg"]
+    },
+    {
+      "id": "mesh/character",
+      "title": "A generated full-body character, the shape a rig needs",
+      "op": "image-to-3d",
+      "inputs": { "images": ["local/mesh/character.png"] },
+      "demoInputs": { "images": ["fixtures/character/drawn-face-1.png"] },
+      "references": ["local/mesh/character.png"]
+    }
+  ]
+}

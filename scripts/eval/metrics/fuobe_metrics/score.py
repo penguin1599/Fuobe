@@ -18,8 +18,10 @@ import time
 import numpy as np
 
 from . import maths
-from .media import audio_track, have_ffmpeg, images_of, kind_of, video_frames, video_window
-from .models import MODELS, Aesthetic, Clip, Dino, Faces, Missing, device_of
+from . import separation as sep
+from . import splat
+from .media import audio_channels, audio_track, have_ffmpeg, images_of, kind_of, video_frames, video_window
+from .models import MODELS, Aesthetic, Asr, Clip, Dino, Faces, Missing, device_of
 from .registry import FAMILIES
 
 VERSION = 1
@@ -54,10 +56,13 @@ def palette_of(job: dict) -> np.ndarray:
 
 
 def media_outputs(run_dir: pathlib.Path, job: dict) -> list[pathlib.Path]:
-    """The job's picture or clip outputs (masks, first frames and other helpers left out)."""
+    """The job's picture or clip outputs (masks, first frames and other helpers left out). A preview still that comes
+    with a clip (Idol's clean graph renders the input view beside its orbit) is a helper too: the clip is scored."""
+    outs = job.get("outputs", [])
+    with_clip = any(o.get("kind") == "video" for o in outs)
     out = []
-    for o in job.get("outputs", []):
-        if o.get("role") in {"mask", "first-frame", "depth"}:
+    for o in outs:
+        if o.get("role") in {"mask", "first-frame", "depth"} or (with_clip and o.get("role") == "preview" and o.get("kind") == "image"):
             continue
         p = run_dir / o["file"]
         if p.exists() and kind_of(p) in {"image", "video"}:
@@ -65,9 +70,80 @@ def media_outputs(run_dir: pathlib.Path, job: dict) -> list[pathlib.Path]:
     return out
 
 
+def splat_outputs(run_dir: pathlib.Path, job: dict) -> list[pathlib.Path]:
+    """The job's 3D files (the splat suite reads the splat among them)."""
+    return [run_dir / o["file"] for o in job.get("outputs", []) if o.get("kind") == "model3d" and (run_dir / o["file"]).exists()]
+
+
+# Stem names as the providers write them (src/server/generations.ts STEM_ALIASES), folded to the suite's four.
+STEMS = {
+    "voice": "voice", "vocals": "voice", "speech": "voice", "target": "voice", "dialogue": "voice",
+    "background": "background", "accompaniment": "background", "instrumental": "background", "residual": "background", "no_vocals": "background",
+    "music": "music", "effects": "effects", "sfx": "effects",
+}
+
+
+def audio_outputs(run_dir: pathlib.Path, job: dict) -> dict[str, pathlib.Path]:
+    """The job's audio stems by name (voice, music, effects, background; other stems such as Demucs's drums keep
+    their own names). An unnamed first audio output is the voice (a chain without a stem takes the dialogue)."""
+    out: dict[str, pathlib.Path] = {}
+    for o in job.get("outputs", []):
+        p = run_dir / o["file"]
+        if o.get("kind") != "audio" and kind_of(p) != "audio":
+            continue
+        if not p.exists():
+            continue
+        name = str(o.get("stem") or o.get("role") or "").lower()
+        key = STEMS.get(name, name) or ("voice" if "voice" not in out else f"audio{len(out)}")
+        out.setdefault(key, p)
+    return out
+
+
+def text_output(run_dir: pathlib.Path, job: dict, role: str) -> str | None:
+    """A text output by role (its file name ends in -<role>.txt)."""
+    for o in job.get("outputs", []):
+        if o.get("kind") == "text" and (o.get("role") == role or o["file"].endswith(f"-{role}.txt")):
+            p = run_dir / o["file"]
+            if p.exists():
+                return p.read_text(encoding="utf8", errors="replace")
+    return None
+
+
+def references_of(job: dict) -> tuple[dict[str, pathlib.Path], dict]:
+    """A separation case's known parts (voice, music, effects, background, noise, mix .flac/.wav) and its meta.json
+    (the words spoken, levels and licences), from the folder its references name."""
+    files = [pathlib.Path(r) for r in job.get("references", []) if kind_of(r) == "audio" and pathlib.Path(r).exists()]
+    stems = {f.stem.lower(): f for f in files}
+    meta = {}
+    if files:
+        m = files[0].parent / "meta.json"
+        if m.exists():
+            meta = json.loads(m.read_text(encoding="utf8"))
+    return stems, meta
+
+
+def remix_levels(job: dict) -> dict | None:
+    """The levels a Clean up dialogue job asked for (graph C's voiceDb, musicDb, effectsDb), or None for a split."""
+    extra = ((job.get("request") or {}).get("params") or {}).get("extra") or {}
+    if "musicDb" not in extra and "effectsDb" not in extra:
+        return None
+    music, effects = float(extra.get("musicDb", -100)), float(extra.get("effectsDb", -100))
+    # The suite sets music and effects together; when they differ, the bed is scored at the louder one.
+    return {"voiceDb": float(extra.get("voiceDb", 0)), "musicDb": music, "effectsDb": effects, "bedDb": max(music, effects)}
+
+
+def input_file(job: dict) -> pathlib.Path | None:
+    ins = job.get("inputs") or {}
+    for k in ("audio", "video"):
+        v = ins.get(k)
+        if isinstance(v, str) and pathlib.Path(v).exists():
+            return pathlib.Path(v)
+    return None
+
+
 def fingerprint(run_dir: pathlib.Path, job: dict, config: dict) -> str:
     h = hashlib.sha256(json.dumps(config, sort_keys=True).encode())
-    for p in media_outputs(run_dir, job) + [pathlib.Path(r) for r in job.get("references", [])]:
+    for p in media_outputs(run_dir, job) + splat_outputs(run_dir, job) + list(audio_outputs(run_dir, job).values()) + [pathlib.Path(r) for r in job.get("references", [])]:
         try:
             st = p.stat()
             h.update(f"{p}|{st.st_size}|{int(st.st_mtime)}".encode())
@@ -86,6 +162,8 @@ class Scorer:
         self._aesthetic = None
         self._faces = None
         self._dino = None
+        self._asr = None
+        self.run_dir: pathlib.Path | None = None
         self.used: dict[str, dict] = {}
         self.skipped: dict[str, str] = {}
 
@@ -126,6 +204,12 @@ class Scorer:
             found = {"detector": {**MODELS[detector], "key": detector}} if name == "auraface" else {}
             self.used["identity"] = {**MODELS[name], "key": name, **found}
         return self._faces
+
+    def asr(self):
+        if self._asr is None:
+            self._asr = Asr(self.device)
+            self.used["wer"] = {**{k: v for k, v in MODELS["whisper-base-en"].items() if k != "files"}, "key": "whisper-base-en"}
+        return self._asr
 
     # Metric families: each returns a dict of keys from registry.FAMILIES plus notes.
     def family(self, name: str, job: dict, outs: list[pathlib.Path]) -> dict:
@@ -247,6 +331,18 @@ class Scorer:
             return {"_note": "no source frames in the case's range"}
         return {"bgDiff": round(d["mae"], 5), "bgPsnr": round(d["psnr"], 2)}
 
+    def m_splat(self, job, outs):
+        files = splat_outputs(self.run_dir, job)
+        if not files:
+            return {"_note": "no 3D file in the result"}
+        why = []
+        for f in files:
+            try:
+                return splat.haze(splat.opacities(f))
+            except splat.NotASplat as e:
+                why.append(f"{f.name}: {e}")
+        return {"_note": "no splat file to read (" + "; ".join(why) + ")"}
+
     def m_lipsync(self, job, outs):
         clips = [o for o in outs if kind_of(o) == "video"]
         if not clips:
@@ -290,6 +386,120 @@ class Scorer:
                 res["syncnetOffset"] = s.get("offset")
             except (ValueError, KeyError, IndexError):
                 res["_note"] += f"; SyncNet command gave no JSON ({(r.stderr or '').strip()[:120]})"
+        return res
+
+
+    def m_separation(self, job, outs):
+        stems = audio_outputs(self.run_dir, job)
+        if not stems:
+            return {"_note": "no audio stems in the result"}
+        refs, meta = references_of(job)
+        sr = int(meta.get("sampleRate") or 44100)
+        res: dict = {}
+        notes = []
+        got = {k: audio_channels(p, sr) for k, p in stems.items()}
+        got = {k: v for k, v in got.items() if v is not None}
+        # A model without a bed stem (Demucs: drums, bass, other) gets one from every stem that isn't the voice.
+        if "background" not in got:
+            rest = [v for k, v in got.items() if k != "voice"]
+            if rest:
+                got["background"] = sum(sep.crop(*rest)) if len(rest) > 1 else rest[0]
+        src = input_file(job)
+        mix = audio_channels(src, sr) if src else None
+        # Stems from a decoded AAC or a hosted model can sit a few hundred samples off: line each one up with the input.
+        anchor = mix if mix is not None else (audio_channels(refs["mix"], sr) if "mix" in refs else None)
+        if anchor is not None:
+            probe = sum(sep.crop(got["voice"], got["background"])) if "voice" in got and "background" in got else next(iter(got.values()))
+            lag = sep.best_offset(probe, anchor, max_lag=4096)
+            if lag:
+                got = {k: sep.shift(v, lag) for k, v in got.items()}
+                notes.append(f"stems shifted {lag} samples to line up with the input")
+        if mix is not None and "voice" in got and "background" in got:
+            res["mixError"] = sep.mixture_error([got["voice"], got["background"]], mix)["db"]
+            scale = sep.bed_scale(got["background"], got["voice"], mix)
+            if scale is not None:
+                res["bedScale"] = scale
+        for name in ("voice", "music", "effects", "background"):
+            if name in got and name in refs:
+                ref = audio_channels(refs[name], sr)
+                if ref is None:
+                    continue
+                res[f"{name}SiSdr"] = round(sep.si_sdr(got[name], ref), 2)
+                if name in ("voice", "background"):
+                    res[f"{name}Sdr"] = round(sep.sdr(got[name], ref), 2)
+        # Clean up dialogue (graph C): one file, the dialogue with the music and effects at the levels asked for. It is
+        # scored against what was asked (the voice plus the known bed at that level) and for where the bed landed.
+        remix = remix_levels(job)
+        if remix is not None and "voice" in got and "voice" in refs and "background" in refs:
+            vref, bref = audio_channels(refs["voice"], sr), audio_channels(refs["background"], sr)
+            if vref is not None and bref is not None:
+                want = sep.mono(vref) * 10 ** (remix["voiceDb"] / 20) + sep.mono(bref) * 10 ** (remix["bedDb"] / 20)
+                res["remixSiSdr"] = round(sep.si_sdr(got["voice"], want), 2)
+                gains = sep.remix_gains(got["voice"], vref, bref)
+                if gains["bed"] is not None:
+                    res["bedLevel"] = gains["bed"]
+                res["bedPeak"] = round(sep.peak_db(got["voice"]), 2)
+                res["_remix"] = {**remix, "gains": gains}
+                notes.append(f"one file (the dialogue with music and effects at {remix['bedDb']:g} dB): voiceSiSdr is against the voice alone, remixSiSdr against the voice plus the known bed at that level, bedLevel the bed's gain in it")
+        if "background" in got and "background" in refs:
+            ref = audio_channels(refs["background"], sr)
+            lv = sep.bed_level(got["background"], ref)
+            res["bedLevel"], res["bedPeak"] = lv["delta"], lv["peak"]
+            st = sep.stereo_check(got["background"], ref)
+            res["stereoCorrGap"] = st["corrGap"]
+            res["_stereo"] = st
+        if "noise" in refs:
+            share = sep.noise_share({k: v for k, v in got.items() if k in ("voice", "music", "effects")}, audio_channels(refs["noise"], sr))
+            if "voice" in share:
+                res["noiseInVoice"] = share["voice"]
+            res["_noise"] = share
+        report = text_output(self.run_dir, job, "report")
+        speed = None
+        if report:
+            try:
+                speed = sep.report_speed(json.loads(report))
+            except ValueError:
+                speed = None
+        if speed is None and mix is not None and (job.get("comfy") or {}).get("execMs"):
+            speed = (mix.shape[1] / sr) / (job["comfy"]["execMs"] / 1000.0)
+            notes.append("speed from ComfyUI's time for the whole graph")
+        if speed:
+            res["speedX"] = round(speed, 3)
+        if not refs:
+            notes.append("no known stems for this input (a real clip: listen on the blind review page)")
+        if notes:
+            res["_note"] = "; ".join(notes)
+        return res
+
+    def m_wer(self, job, outs):
+        _, meta = references_of(job)
+        text = meta.get("text")
+        if not text:
+            return {"_note": "no known words for this input"}
+        res: dict = {}
+        transcript = text_output(self.run_dir, job, "transcript")
+        if transcript:
+            res["werTranscript"] = round(sep.wer(text, transcript)["wer"], 4)
+        stems = audio_outputs(self.run_dir, job)
+        src = input_file(job)
+        voice = audio_track(stems["voice"]) if "voice" in stems else None
+        heard = audio_track(src) if src is not None else None
+        if voice is None and heard is None:
+            return res
+        # Whisper is optional (pnpm eval:setup --asr): without it the job's own transcript is still scored.
+        try:
+            asr = self.asr()
+        except Missing as e:
+            # Recorded under its own name so the family keeps running for the jobs that have a transcript.
+            self.skipped.setdefault("wer (Whisper)", str(e))
+            res["_note"] = f"wer and werInput skipped: {e}"
+            return res
+        if voice is not None:
+            hyp = asr.text(voice)
+            res["wer"] = round(sep.wer(text, hyp)["wer"], 4)
+            res["_heard"] = hyp
+        if heard is not None:
+            res["werInput"] = round(sep.wer(text, asr.text(heard))["wer"], 4)
         return res
 
 
@@ -346,6 +556,7 @@ def main(argv=None) -> int:
     previous = json.loads(out_file.read_text(encoding="utf8")) if out_file.exists() and not args.force else {}
     config = {"v": VERSION, "clip": args.clip_model, "style": args.style_model, "identity": args.identity_model, "faceDetector": args.face_detector if args.identity_model == "auraface" else "buffalo_l", "frames": args.frames, "fps": args.fps}
     scorer = Scorer(args)
+    scorer.run_dir = run_dir
     jobs = read_jobs(run_dir)
     results: dict[str, dict] = {}
     started = time.time()
@@ -376,6 +587,8 @@ def main(argv=None) -> int:
                 continue
             note = got.pop("_note", None)
             refs = got.pop("_refs", None)
+            for k in [k for k in got if k.startswith("_")]:
+                row[f"_{fam}{k[1:].capitalize()}"] = got.pop(k)
             if note:
                 notes.append(f"{fam}: {note}")
             if refs is not None:

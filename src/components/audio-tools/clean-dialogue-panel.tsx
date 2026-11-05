@@ -50,7 +50,6 @@ const price = (p: { costUsd: number | null; demo: boolean } | undefined) =>
 export function CleanDialoguePanel({
   source,
   engine,
-  visitor,
   blocker,
   onMixer,
 }: {
@@ -58,8 +57,7 @@ export function CleanDialoguePanel({
   source: CleanSource | null;
   /** The header's engine switch: your GPU (DBS) or the cloud (a hosted cleaner). */
   engine: Engine;
-  visitor: boolean;
-  /** Why nothing can run yet (no file, uploading, a visitor), in words. */
+  /** Why nothing can run yet (no file, uploading), in words. */
   blocker: string | null;
   /** Switch to Split into stems (the mixer opens on the Clean dialogue preset). */
   onMixer: () => void;
@@ -92,7 +90,7 @@ export function CleanDialoguePanel({
         : null,
     [source, engine, bed, quality, stereo, cleaner, remux],
   );
-  const settled = useSettled(visitor ? null : body);
+  const settled = useSettled(body);
   const preview = useAudioToolPreview(settled);
   // While a change settles, the last answer is for other settings: say "Checking…" rather than its price.
   const p = settled === body ? preview.data : undefined;
@@ -180,9 +178,7 @@ export function CleanDialoguePanel({
         )}
         <div className="flex flex-wrap items-center gap-3">
           <p className={cn("min-w-0 flex-1 text-[13px]", error && !blocker ? "text-destructive" : "text-muted-foreground")} aria-live="polite">
-            {visitor ? (
-              <span className="font-mono text-foreground">{openToolPrice(p, true)}</span>
-            ) : blocker ? (
+            {blocker ? (
               blocker
             ) : error ? (
               error
@@ -197,7 +193,7 @@ export function CleanDialoguePanel({
               <span className="font-mono text-foreground">{price(p)}</span>
             )}
           </p>
-          <Button size="lg" className={cn("rounded-full", (blocker || error) && "bg-muted text-subtle-foreground hover:bg-muted")} onClick={go} disabled={visitor || busy}>
+          <Button size="lg" className={cn("rounded-full", (blocker || error) && "bg-muted text-subtle-foreground hover:bg-muted")} onClick={go} disabled={busy}>
             {busy ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />} Clean it
           </Button>
         </div>

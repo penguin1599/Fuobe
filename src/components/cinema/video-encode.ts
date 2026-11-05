@@ -81,7 +81,7 @@ export async function vp8Supported(width: number, height: number, fps: number): 
 }
 
 /**
- * `count` frames of two streams (`draw(i)` gives frame i of each) encoded with WebCodecs and written as two WebM files:
+ * `count` frames of two streams (`draw(i)` gives frame i of each, or a promise of them: a frame may wait for a splat's sort) encoded with WebCodecs and written as two WebM files:
  * every frame kept, frame i at i / fps, a keyframe each second.
  */
 export async function encodeVp8(count: number, width: number, height: number, fps: number, outputs: number, draw: (i: number) => FrameSource[] | Promise<FrameSource[]>, opts: EncodeOptions = {}): Promise<Uint8Array[]> {
@@ -125,7 +125,7 @@ export async function encodeVp8(count: number, width: number, height: number, fp
 }
 
 /** The fallback: a canvas per stream recorded with MediaRecorder, each frame handed over 1/fps apart. */
-export async function recordWithMediaRecorder(type: string, count: number, width: number, height: number, fps: number, outputs: number, draw: (i: number) => ImageData[]): Promise<Blob[]> {
+export async function recordWithMediaRecorder(type: string, count: number, width: number, height: number, fps: number, outputs: number, draw: (i: number) => ImageData[] | Promise<ImageData[]>): Promise<Blob[]> {
   const canvases = Array.from({ length: outputs }, () => Object.assign(document.createElement("canvas"), { width, height }));
   const ctxs = canvases.map((c) => c.getContext("2d")!);
   const streams = canvases.map((c) => c.captureStream(0));
@@ -143,7 +143,7 @@ export async function recordWithMediaRecorder(type: string, count: number, width
     await wait(step);
     const t0 = performance.now();
     for (let i = 0; i < count; i++) {
-      draw(i).forEach((img, k) => ctxs[k].putImageData(img, 0, 0));
+      (await draw(i)).forEach((img, k) => ctxs[k].putImageData(img, 0, 0));
       tracks.forEach((t) => t.requestFrame?.());
       await wait(Math.max(0, t0 + (i + 1) * step - performance.now()));
     }
@@ -217,15 +217,15 @@ export async function encodeMp4(codec: string, count: number, width: number, hei
  * One stream of `count` frames as the best video this browser makes: MP4 (H.264) when `preferMp4` and WebCodecs can,
  * else WebM (VP8), else MediaRecorder's own type. Frame-exact except on the MediaRecorder fallback.
  */
-export async function encodeFrames(count: number, width: number, height: number, fps: number, draw: (i: number) => ImageData, preferMp4 = false): Promise<{ blob: Blob; type: string; exact: boolean }> {
+export async function encodeFrames(count: number, width: number, height: number, fps: number, draw: (i: number) => ImageData | Promise<ImageData>, preferMp4 = false): Promise<{ blob: Blob; type: string; exact: boolean }> {
   const avc = preferMp4 ? await avcCodec(width, height, fps) : null;
   if (avc) return { blob: new Blob([(await encodeMp4(avc, count, width, height, fps, draw)) as BlobPart], { type: "video/mp4" }), type: "video/mp4", exact: true };
   if (await vp8Supported(width, height, fps)) {
-    const [a] = await encodeVp8(count, width, height, fps, 1, (i) => [draw(i)]);
+    const [a] = await encodeVp8(count, width, height, fps, 1, async (i) => [await draw(i)]);
     return { blob: new Blob([a as BlobPart], { type: "video/webm" }), type: "video/webm", exact: true };
   }
   const type = pathVideoType();
   if (!type) throw new Error("This browser can't record video — try Chrome or Edge, or upload a render from your 3D app");
-  const [b] = await recordWithMediaRecorder(type, count, width, height, fps, 1, (i) => [draw(i)]);
+  const [b] = await recordWithMediaRecorder(type, count, width, height, fps, 1, async (i) => [await draw(i)]);
   return { blob: b, type: type.split(";")[0], exact: false };
 }

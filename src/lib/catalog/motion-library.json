@@ -1,0 +1,71 @@
+{
+  "asOf": "2026-11-02",
+  "maker": "fuobe-genjutsu-motion",
+  "moves": [
+    {
+      "preset": "Baseball Kick",
+      "presetId": "motion-baseball-kick",
+      "clips": []
+    },
+    {
+      "preset": "Basketball Dunks",
+      "presetId": "motion-basketball-dunks",
+      "clips": []
+    },
+    {
+      "preset": "Boxing",
+      "presetId": "motion-boxing",
+      "clips": []
+    },
+    {
+      "preset": "Face Punch",
+      "presetId": "motion-face-punch",
+      "clips": []
+    },
+    {
+      "preset": "Moonwalk Left",
+      "presetId": "motion-moonwalk-left",
+      "clips": []
+    },
+    {
+      "preset": "Moonwalk Right",
+      "presetId": "motion-moonwalk-right",
+      "clips": []
+    },
+    {
+      "preset": "Skate Cruise",
+      "presetId": "motion-skate-cruise",
+      "clips": []
+    },
+    {
+      "preset": "Skateboard Glide",
+      "presetId": "motion-skateboard-glide",
+      "clips": []
+    },
+    {
+      "preset": "Skateboard Ollie",
+      "presetId": "motion-skateboard-ollie",
+      "clips": []
+    },
+    {
+      "preset": "Ski Carving",
+      "presetId": "motion-ski-carving",
+      "clips": []
+    },
+    {
+      "preset": "Ski Powder",
+      "presetId": "motion-ski-powder",
+      "clips": []
+    },
+    {
+      "preset": "Snowboard Carving",
+      "presetId": "motion-snowboard-carving",
+      "clips": []
+    },
+    {
+      "preset": "Snowboard Powder",
+      "presetId": "motion-snowboard-powder",
+      "clips": []
+    }
+  ]
+}

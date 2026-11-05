@@ -47,9 +47,13 @@ describe("Featured order", () => {
     expect(featuredAll(items).map((i) => i.id)).toEqual([FEATURED.effect[0][0], last, "effect-new-b", "effect-new-a"]);
   });
 
-  it("opens Home's wall and every row's first cards on the first band", () => {
-    const first = [...HOME_WALL, ...HOME_MOTIONS, ...HOME_REVEALS, ...HOME_BEFORE_AFTER, ...HOME_EFFECTS.slice(0, 6)].map((t) => t.id);
+  it("opens Home's wall and every row's first cards on the first band, and takes none from the last", () => {
+    // Each row's first row of six where it's widest (Camera motions its first two), and the six beside the before/after.
+    const first = [...HOME_WALL, ...HOME_MOTIONS.slice(0, 12), ...HOME_REVEALS.slice(0, 6), ...HOME_BEFORE_AFTER, ...HOME_EFFECTS.slice(0, 6)].map((t) => t.id);
     for (const id of first) expect(featuredBand(id), id).toBe(0);
+    // The rows under them: premium first, so nothing from the last band (the novelty effects: flames, wings, clones).
+    const later = [...HOME_MOTIONS.slice(12), ...HOME_REVEALS.slice(6), ...HOME_EFFECTS.slice(12)].map((t) => t.id);
+    for (const id of later) expect(featuredBand(id), id).toBeLessThan(FEATURED_BANDS - 1);
   });
 
   it("opens each gallery on the first band, a category per card, with the tabs in catalog order", () => {

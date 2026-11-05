@@ -9,7 +9,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { StepList, type StepRow } from "@/components/av/step-list";
 import { Panel, ToolHero, ToolShell } from "@/components/av/tool-shell";
 import { useGenerationList } from "@/components/av/use-generation";
-import { SelfHostNote } from "@/components/self-host-note";
 import { VideoCompare } from "@/components/remove-object/video-compare";
 import { useSubmitGuard } from "@/components/shorts/hooks";
 import { ClipBar, ClipDrop, costText, Field, Segmented } from "@/components/shorts/ui";
@@ -17,7 +16,7 @@ import { clipDuration, clipSize, useSourceClip } from "@/components/shorts/use-s
 import { Feed } from "@/components/studio/feed";
 import { fileToList, MediaSlot, type SlotValue } from "@/components/studio/media-slot";
 import { VideoTrimmer, type TrimRange, type VideoTrimmerHandle } from "@/components/studio/video-trimmer";
-import { useEngine, useGenerations, useLikelyVisitor } from "@/lib/api";
+import { useEngine, useGenerations } from "@/lib/api";
 import { DIRECTION_CUT_NOTE, directionPrompt, EVOLUTION, EVOLUTION_CLOUD_NOTE, EVOLUTION_DEFAULT_RESOLUTION, EVOLUTION_RESOLUTIONS, INTENSITIES, type Intensity } from "@/lib/catalog/evolution";
 import { chainState } from "@/lib/catalog/shorts";
 import { downloadHref, downloadName } from "@/lib/library";
@@ -56,9 +55,6 @@ async function frameDataUrl(blob: Blob | null | undefined): Promise<string | und
  */
 export function EvolutionTool() {
   const [engine] = useEngine();
-  // Evolution doesn't run on an account's own GPU or key yet (only the studios' generations do): said up front, and
-  // the upload and Evolve are off, instead of a run the server refuses.
-  const visitor = useLikelyVisitor();
   const source = useSourceClip(EVOLUTION.maxBytes);
   const clip = source.clip;
   const trimmer = useRef<VideoTrimmerHandle>(null);
@@ -112,7 +108,7 @@ export function EvolutionTool() {
             : estimate.isError
               ? (estimate.error as Error).message
               : null;
-  const blocker = visitor ? "Evolution isn't available here" : setupBlocker;
+  const blocker = setupBlocker;
 
   const reset = () => {
     source.clear();
@@ -159,21 +155,18 @@ export function EvolutionTool() {
   };
 
   return (
-    <ToolShell title="Video tools" wide selfHostedOnly>
+    <ToolShell title="Video tools" wide>
       {!clip && (
         <ToolHero
           title="Take a clip further"
-          subtitle={`Evolution keeps your clip's motion and timing and takes the rest where your references and words point${visitor ? "." : ", free on your own ComfyUI."}`}
-        >
-          {visitor && <SelfHostNote className="mt-3 max-w-xl">Evolution isn&apos;t available here.</SelfHostNote>}
-        </ToolHero>
+          subtitle={`Evolution keeps your clip's motion and timing and takes the rest where your references and words point, free on your own ComfyUI.`}
+        />
       )}
       <div className={cn("mx-auto", clip ? "pt-4" : "mt-8 max-w-[640px]")}>
         {!clip ? (
           <ClipDrop
             accept={EVOLUTION.accept}
             limits={LIMITS}
-            disabled={visitor}
             onFile={(f) => {
               const err = source.pick(f);
               if (err) toast.error(err);
@@ -267,7 +260,7 @@ export function EvolutionTool() {
                   className="max-h-64 resize-y"
                 />
                 <div className="flex flex-wrap items-center gap-2">
-                  <Button size="sm" variant="outline" className="rounded-full" onClick={() => void write()} disabled={actions.direction.isPending || !clip || refs.some((r) => r.uploading) || visitor}>
+                  <Button size="sm" variant="outline" className="rounded-full" onClick={() => void write()} disabled={actions.direction.isPending || !clip || refs.some((r) => r.uploading)}>
                     {actions.direction.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />} Write it for me
                   </Button>
                   <span className="text-[12px] text-muted-foreground">
@@ -288,7 +281,7 @@ export function EvolutionTool() {
                     ) : (
                       <>
                         <p className="flex items-center gap-1.5 text-[15px] font-semibold tabular-nums">
-                          {costText(est, engine, visitor)}
+                          {costText(est, engine)}
                           {estimate.isFetching && <Loader2 className="size-3 animate-spin text-muted-foreground" aria-label="Updating the price" />}
                         </p>
                         {est && (
@@ -300,7 +293,7 @@ export function EvolutionTool() {
                       </>
                     )}
                   </div>
-                  <Button className="rounded-full" onClick={start} disabled={!!blocker || actions.run.isPending || visitor}>
+                  <Button className="rounded-full" onClick={start} disabled={!!blocker || actions.run.isPending}>
                     {actions.run.isPending ? <Loader2 className="size-4 animate-spin" /> : <Wand2 className="size-4" />} Evolve
                   </Button>
                 </div>

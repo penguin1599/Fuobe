@@ -34,7 +34,7 @@ async function pixels(data: Buffer, size: { width: number; height: number }) {
 }
 
 /** Frames as RGB into ffmpeg's stdin, an H.264 MP4 out (yuv420p, so every reader plays it), written to `file`. */
-function encode(file: string, frames: number, width: number, height: number, fps: number, frame: (i: number) => Uint8Array): Promise<void> {
+export function encode(file: string, frames: number, width: number, height: number, fps: number, frame: (i: number) => Uint8Array): Promise<void> {
   return new Promise((resolve, reject) => {
     const args = ["-hide_banner", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", `${width}x${height}`, "-r", String(fps), "-i", "pipe:0"];
     args.push("-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-f", "mp4", "-y", file);

@@ -31,7 +31,8 @@ import {
   reviewOfOutput,
 } from "@/lib/catalog/remove-object";
 import type { PlanStep } from "@/lib/catalog/shorts";
-import type { Engine, GenParams, Generation, PixelPoint } from "@/lib/catalog/types";
+import type { Engine, GenParams, Generation, GenerationRequest, PixelPoint } from "@/lib/catalog/types";
+import { generationAccount } from "./account-library";
 import { createPipeline } from "./chains";
 import { ConnectComfyError, getGeneration, previewChained } from "./generations";
 import { db } from "./db";
@@ -41,6 +42,7 @@ import { decodePng } from "./png";
 import { engineMode } from "./settings";
 import { probeSource, ShortsError } from "./shorts";
 import { readRef } from "./storage";
+import { tenantAccount } from "./tenant";
 
 /**
  * Video tools → Remove object: plans, prices and starts a removal (src/lib/catalog/remove-object.ts) as one
@@ -223,7 +225,7 @@ function planInputNow(body: RemovalBody, opts: { probe: boolean; preview?: boole
   if (eraser.engine === "open") {
     const per = (eraser.window?.cap ?? 81) / fps;
     if (count > 1) {
-      notes.push(`${eraserName} works on ${eraser.window?.cap} frames at a time (${per.toFixed(1)} s of this clip): the clip runs as ${count} windows, joined with its own sound. Seams between windows aren't tested on a GPU yet`);
+      notes.push(`${eraserName} works on ${eraser.window?.cap} frames at a time (${per.toFixed(1)} s of this clip): the clip runs as ${count} windows, joined with its own sound`);
       if (eraser.modes.includes("paint")) notes.push("SAM 3.1 hands what you painted on from window to window (each starts on the last frame of the one before), so the windows run one after another");
     }
     if (eraser.cleanFrame) {
@@ -232,13 +234,13 @@ function planInputNow(body: RemovalBody, opts: { probe: boolean; preview?: boole
         "People only — for an object, pick Wan 2.1 VACE + SAM 3.1",
         "Preview the mask first: the person filled green, as H3 will see them — keep every part of them covered (hands, hair, a shadow); grow the mask if an edge shows",
         "When it's done, each 22-frame window has its own preview: redo a weak one with a new seed, and every window before it is kept exactly",
-        "Needs the H3 Relay nodes on your ComfyUI (scripts/comfy/install-comfyui.sh with H3_RELAY=1) and 24 GB of VRAM with offloading (64–128 GB of RAM); the part runs at 24 fps",
+        "Needs the H3 Relay nodes on your ComfyUI and 24 GB of VRAM with offloading (64–128 GB of RAM); the part runs at 24 fps",
       );
     } else notes.push(eraser.effects ? "VOID needs a 24–40 GB GPU" : "Wan 2.1 VACE 14B needs a 24 GB GPU");
   } else {
     const max = pieceSeconds(eraser, source.fps);
     const limit = eraser.window ? `up to ${eraser.window.cap} frames (${max.toFixed(1)} s of this clip)` : max < 5 ? "clips under 5 s" : `up to ${Math.floor(max)} s`;
-    if (count > 1) notes.push(`${eraserName} takes ${limit}: the clip is cut into ${count} pieces, erased one by one and joined, with its own sound put back. Seams between pieces aren't tested yet`);
+    if (count > 1) notes.push(`${eraserName} takes ${limit}: the clip is cut into ${count} pieces, erased one by one and joined, with its own sound put back`);
     if (body.mode !== "type" && (body.mode === "paint" || count > 1)) notes.push("SAM 3.1 first follows what you " + (body.mode === "paint" ? "painted" : "clicked") + " through the whole selection; Bria then erases that mask");
     if (eraser.everyone) notes.push("LTX Clean Plate removes every person in the shot — it doesn't take a target");
   }
@@ -345,20 +347,44 @@ function run(steps: PlanStep[]) {
   }
 }
 
-/** Start the removal; returns the finished video's generation (the other steps wait for each other). */
-export async function createRemoval(body: RemovalBody): Promise<{ final: Generation; items: Generation[] }> {
+/** A planned run: its steps and the key of the one that makes the finished video. Nothing is created yet. */
+export interface RemovalRun {
+  steps: PlanStep[];
+  final: string;
+}
+
+/** A planned run's steps as the requests they make, with how many earlier steps each waits for (account-tool-run.ts). */
+export const removalSteps = (r: RemovalRun): { request: GenerationRequest; deps: number }[] => r.steps.map((s) => ({ request: withChain(s), deps: s.after?.length ?? 0 }));
+
+/** Start a planned run; returns the finished video's generation and every step. */
+export function startRemoval(r: RemovalRun): { final: Generation; items: Generation[] } {
+  const p = run(r.steps);
+  return { final: p.byKey[r.final], items: p.items };
+}
+
+/** Plan a removal (the clip's header and the paint are read; nothing is created). */
+export async function planRemovalRun(body: RemovalBody): Promise<RemovalRun> {
   const { input } = await planInput(body, { probe: true });
   const plan = planRemoval(input);
-  const p = run(plan.steps);
-  return { final: p.byKey[plan.final], items: p.items };
+  return { steps: plan.steps, final: plan.final };
+}
+
+/** Start the removal; returns the finished video's generation (the other steps wait for each other). */
+export async function createRemoval(body: RemovalBody): Promise<{ final: Generation; items: Generation[] }> {
+  return startRemoval(await planRemovalRun(body));
+}
+
+/** Plan a mask preview of the first seconds (nothing is created). */
+export async function planRemovalPreview(body: RemovalBody): Promise<RemovalRun> {
+  const { input } = await planInput(body, { probe: true, preview: true });
+  const steps = planMaskPreview(input);
+  if (!steps) throw new ShortsError(input.engine === "open" ? "The open engine previews masks of what you type — your paint is the preview here" : "Name, click or paint what to remove first", 422);
+  return { steps, final: "preview" };
 }
 
 /** A mask preview of the first seconds: what the engine would remove. */
 export async function createRemovalPreview(body: RemovalBody): Promise<Generation> {
-  const { input } = await planInput(body, { probe: true, preview: true });
-  const steps = planMaskPreview(input);
-  if (!steps) throw new ShortsError(input.engine === "open" ? "The open engine previews masks of what you type — your paint is the preview here" : "Name, click or paint what to remove first", 422);
-  return run(steps).byKey.preview;
+  return startRemoval(await planRemovalPreview(body)).final;
 }
 
 // ---------------------------------------------------------------------------
@@ -412,8 +438,17 @@ function askedAgain<T extends object>(request: T): T {
  * after it continue from it; then the clip's sound goes back on as before. Returns the new finished video.
  */
 export async function createRemovalReroll(body: RerollBody): Promise<{ final: Generation; items: Generation[] }> {
+  return startRemoval(planRemovalReroll(body));
+}
+
+/**
+ * Plan "Redo from here" (nothing is created). The removal must be the asker's own: an account's own run, or the owner's
+ * when the owner asks; anyone else's reads as not found.
+ */
+export function planRemovalReroll(body: RerollBody): RemovalRun {
   const erase = getGeneration(body.id);
   if (!erase || (erase.feature !== REMOVE.feature && erase.feature !== REMOVE.stepFeature)) throw new ShortsError(NOT_FOUND, 404);
+  if ((generationAccount(erase.id) ?? null) !== (tenantAccount() ?? null)) throw new ShortsError(NOT_FOUND, 404);
   if (!getEraserCleanFrame(erase.modelId)) throw new ShortsError("Only an H3 person removal can be redone from a window", 422);
   if (erase.status !== "succeeded") throw new ShortsError("Wait for the removal to finish first", 409);
   mustMatchMode("open");
@@ -469,8 +504,7 @@ export async function createRemovalReroll(body: RerollBody): Promise<{ final: Ge
       chain: cut ? [{ slot: "video" }, { slot: "audio" }] : [{ slot: "video" }],
     });
   }
-  const p = run(steps);
-  return { final: p.byKey[mux ? "final" : "erase0"], items: p.items };
+  return { steps, final: mux ? "final" : "erase0" };
 }
 
 const getEraserCleanFrame = (modelId: string) => !!chooseEraserById(modelId)?.cleanFrame;

@@ -219,24 +219,16 @@ describe("accounts never run on the owner's keys or GPU", () => {
     // Everything else wouldn't run on it even once connected: said first, with no Connect your GPU card.
     for (const p of [
       "/api/canvases/c1/run",
-      "/api/cinema/projects/p1/generate",
       "/api/layers/l1/jobs",
-      "/api/katana/k1/retry",
       "/api/enhance",
       "/api/brands/b1/chat",
-      "/api/faceless/episodes/e1/render",
+      // Faceless, Explainer and Content Factory runs go to their routes (tests/account-content.test.ts); handing a brief
+      // to Claude stays the owner's.
       "/api/content-factory/claude",
       // A run route that ignores ?preview=1 isn't a price check.
-      "/api/cinema/projects/p1/generate?preview=1",
       "/api/faceless/episodes/e1/estimate",
-      // Restore & colourise: its run and its prompt writer.
-      "/api/restore",
+      // Restore & colourise's prompt writer (the studio's AI helper).
       "/api/restore/prompt",
-      // Remove a person on H3: its mask preview and "Redo from here".
-      "/api/remove-object/preview",
-      "/api/remove-object/reroll",
-      // Character Swap Studio's Sharpen: a studio job, like its assembly.
-      "/api/swap-studio/projects/p1/sharpen",
       // Plan layout plans with the studio's own AI helper.
       "/api/layout/plan",
     ]) {
@@ -245,6 +237,27 @@ describe("accounts never run on the owner's keys or GPU", () => {
       expect(r.headers.get(access.CONNECT_GPU_HEADER), p).toBeNull();
       expect((await r.json()).code, p).toBe("own-gpu-tool");
     }
+    // Cinema Studio's takes and the video tools (Remove a person's mask preview and "Redo from here", Katana's retry) run
+    // on its own GPU or key (tests/account-cinema.test.ts, tests/account-video-tools.test.ts): with neither, connect one
+    // first. A run route that ignores ?preview=1 isn't a price check.
+    for (const p of [
+      "/api/cinema/projects/p1/generate",
+      "/api/cinema/projects/p1/generate?preview=1",
+      "/api/cinema/projects/p1/items/g1/finish",
+      "/api/remove-object/preview",
+      "/api/remove-object/reroll",
+      "/api/katana/k1/retry",
+      // Restore & colourise runs on its own GPU.
+      "/api/restore",
+    ]) {
+      const r = proxy(req(p, { method: "POST", cookie }));
+      expect(r.status, p).toBe(403);
+      expect(r.headers.get(access.CONNECT_GPU_HEADER), p).toBe("1");
+      expect((await r.json()).code, p).toBe("connect-gpu");
+    }
+    // Regenerate to 1080p in Faceless and Enhance in Shorts run on its own GPU: the routes check its own episode or
+    // session, then its GPU (tests/account-content.test.ts, tests/account-shorts.test.ts).
+    for (const p of ["/api/faceless/episodes/e1/regenerate", "/api/shorts/sessions/s1/segments/0/enhance"]) expect(passed(proxy(req(p, { method: "POST", cookie }))), p).toBe(true);
     // Owner-only routes say so (not "connect your GPU").
     expect(proxy(req("/api/mcp", { method: "POST", cookie })).headers.get(access.CONNECT_GPU_HEADER)).toBeNull();
     // Price checks and signing out are fine.
@@ -263,10 +276,10 @@ describe("accounts never run on the owner's keys or GPU", () => {
 describe("accounts never see or change the owner's library", () => {
   const families: Record<string, { lists: string[]; records: string[]; changes: [string, string][] }> = {
     generations: {
-      // (/api/generations, its facets and its bulk changes go to the routes, which take only the account's own runs:
-      // tests/account-gpu.test.ts, tests/public-signup-visitors.test.ts.)
+      // (/api/generations, its facets, its zip and its bulk changes go to the routes, which take only the account's own runs:
+      // tests/account-gpu.test.ts, tests/public-signup-visitors.test.ts, tests/account-zip.test.ts.)
       lists: ["/api/generations/trash"],
-      records: ["/api/generations/g1", "/api/generations/zip?ids=g1"],
+      records: ["/api/generations/g1"],
       changes: [["PATCH", "/api/generations/g1"], ["DELETE", "/api/generations/g1"], ["DELETE", "/api/generations/trash"], ["POST", "/api/generations/g1/cancel"]],
     },
     // (POST /api/uploads is the account's own: the route checks it, tests/account-uploads.test.ts; so is the list of its
@@ -277,7 +290,8 @@ describe("accounts never see or change the owner's library", () => {
     layers: { lists: ["/api/layers"], records: ["/api/layers/l1"], changes: [["POST", "/api/layers"], ["PATCH", "/api/layers/l1"], ["DELETE", "/api/layers/l1"], ["POST", "/api/layers/l1/versions"]] },
     elements: { lists: ["/api/elements"], records: ["/api/elements/e1"], changes: [["POST", "/api/elements"], ["PATCH", "/api/elements/e1"], ["DELETE", "/api/elements/e1"]] },
     canvases: { lists: ["/api/canvases"], records: ["/api/canvases/c1"], changes: [["POST", "/api/canvases"], ["PATCH", "/api/canvases/c1"], ["DELETE", "/api/canvases/c1"], ["POST", "/api/canvases/c1/duplicate"]] },
-    cinema: { lists: ["/api/cinema/projects"], records: ["/api/cinema/projects/p1", "/api/cinema/projects/p1/items"], changes: [["POST", "/api/cinema/projects"], ["PATCH", "/api/cinema/projects/p1"], ["DELETE", "/api/cinema/projects/p1"]] },
+    // (Cinema Studio's projects go to the routes, which answer an account with its own projects only:
+    // tests/account-cinema.test.ts.)
     storyboards: { lists: [], records: ["/api/storyboards"], changes: [["POST", "/api/storyboards"]] },
     assist: {
       lists: ["/api/assist/projects", "/api/assist/memory"],
@@ -342,8 +356,10 @@ describe("accounts never see or change the owner's library", () => {
     const cookie = auth.createSession(auth.createAccount("influencer@example.com", "long enough").id).value;
     expect(passed(proxy(req("/api/influencer?preview=1", { method: "POST" })))).toBe(true);
     expect(passed(proxy(req("/api/influencer?preview=1", { method: "POST", cookie })))).toBe(true);
-    // Its run isn't one an account's GPU runs either: the account's own-gpu-tool, not the sign-up card.
-    expect(proxy(req("/api/influencer", { method: "POST" })).status).toBe(403);
+    // Its run is open to accounts (on their own GPU or key): a guest gets the sign-up card.
+    const guest = proxy(req("/api/influencer", { method: "POST" }));
+    expect(guest.status).toBe(401);
+    expect(guest.headers.get(access.GUEST_HEADER)).toBe("1");
   });
 });
 
@@ -524,5 +540,42 @@ describe("an account changes its password (Settings → Account)", () => {
     expect(auth.checkAccount("signed-out-deleter@example.com", "second password")?.id).toBe(a.id);
     // The owner still gets a 403: the studio isn't an account.
     expect((await (await me()).DELETE(remove(auth.createSession().value, { password: "install password" }))).status).toBe(403);
+  });
+});
+
+describe("Set it up with my AI", () => {
+  it("opens a setup's status, the steps for an AI and Fuobe's files to everyone", () => {
+    process.env.FUOBE_PUBLIC_SIGNUP = "1";
+    for (const p of ["/api/setup/ABCD-EFGH-JKMN", "/api/setup/abcdefghjkmn", "/api/setup/guide/direct/windows", "/api/setup/guide/address/other", "/api/setup/files/fuobe_guard.py", "/api/setup/files/start/8188"]) {
+      expect(access.guestRead(p), p).toEqual({ kind: "pass" });
+      expect(passed(proxy(req(p))), p).toBe(true);
+    }
+    for (const p of ["/api/setup/ABCD-EFGH", "/api/setup/guide/direct/android", "/api/setup/files/other.py", "/api/setup/session", "/api/setup/session/ABCD-EFGH-JKMN/wait"]) {
+      expect(access.guestRead(p), p).toEqual({ kind: "closed" });
+    }
+  });
+
+  it("lets an account make, report on, wait on and end its own code, and a guest gets the sign-up card", () => {
+    process.env.FUOBE_PUBLIC_SIGNUP = "1";
+    expect(access.accountMayChange("POST", "/api/setup/session", "")).toBe(true);
+    expect(access.accountMayChange("POST", "/api/setup/session/ABCD-EFGH-JKMN/report", "")).toBe(true);
+    expect(access.accountMayChange("DELETE", "/api/setup/session/ABCD-EFGH-JKMN", "")).toBe(true);
+    expect(access.accountMayChange("DELETE", "/api/setup/session", "")).toBe(false);
+    expect(access.accountOwnRead("/api/setup/session/ABCD-EFGH-JKMN/wait")).toBe(true);
+    const cookie = auth.createSession(auth.createAccount("ai-setup@example.com", "long enough").id).value;
+    expect(passed(proxy(req("/api/setup/session", { method: "POST", cookie })))).toBe(true);
+    expect(passed(proxy(req("/api/setup/session/ABCD-EFGH-JKMN/report", { method: "POST", cookie })))).toBe(true);
+    expect(passed(proxy(req("/api/setup/session/ABCD-EFGH-JKMN/wait", { cookie })))).toBe(true);
+    expect(passed(proxy(req("/api/setup/session/ABCD-EFGH-JKMN", { method: "DELETE", cookie })))).toBe(true);
+    for (const [method, p] of [
+      ["POST", "/api/setup/session"],
+      ["POST", "/api/setup/session/ABCD-EFGH-JKMN/report"],
+      ["DELETE", "/api/setup/session/ABCD-EFGH-JKMN"],
+      ["GET", "/api/setup/session/ABCD-EFGH-JKMN/wait"],
+    ]) {
+      const r = proxy(req(p, { method }));
+      expect(r.status, p).toBe(401);
+      expect(r.headers.get(access.GUEST_HEADER), p).toBe("1");
+    }
   });
 });

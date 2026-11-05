@@ -1,6 +1,6 @@
 /**
- * Which gallery previews play (preset-preview.tsx). A card with a clip plays by itself while it's
- * mostly in view, once scrolling has stopped: the cards most in view and nearest the middle of the
+ * Which gallery previews play (preset-preview.tsx). A card with a clip plays by itself while at least
+ * half of it is in view, once scrolling has stopped: the cards most in view and nearest the middle of the
  * screen, at most MAX_PLAYING at once, so a gallery with dozens of clips stays smooth and doesn't
  * download them all. Procedural previews (no clip) play by themselves only where nothing can hover
  * (phones); a still never moves. Nothing plays by itself when the user prefers reduced motion, asks
@@ -37,8 +37,8 @@ export interface PlaybackEnv {
   saveData(): boolean;
 }
 
-/** A card must be at least this much in view to play by itself. */
-export const MIN_VISIBLE = 0.6;
+/** A card must be at least this much in view to play by itself: half of it. */
+export const MIN_VISIBLE = 0.5;
 /** In full view, near enough (IntersectionObserver reports ratios only as they cross its thresholds). */
 export const FULL_VIEW = 0.85;
 /** How long the pointer (or focus) rests on a card before it plays, in ms. */
@@ -103,7 +103,7 @@ export interface Candidate {
 }
 
 /**
- * Which cards play by themselves, at most `max`: only those mostly in view; the ones in full view
+ * Which cards play by themselves, at most `max`: only those at least half in view; the ones in full view
  * first, then the ones already playing (a small scroll doesn't restart them), then the nearest the
  * middle of the screen.
  */
@@ -251,7 +251,7 @@ export function createPlaybackStore(env: PlaybackEnv) {
             if (card === undefined) continue;
             const ratio = e.isIntersecting ? e.intersectionRatio : 0;
             ratios.set(e.target, ratio);
-            // A playing card stops as soon as it's mostly out of view; the next ones wait for the scroll to settle.
+            // A playing card stops as soon as less than half of it is in view; the next ones wait for the scroll to settle.
             if (ratio < MIN_VISIBLE && auto.has(card)) setAuto([...auto].filter((a) => a !== card));
           }
           schedule();

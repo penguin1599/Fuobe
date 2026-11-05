@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Field, Segmented } from "@/components/shorts/ui";
+import { OwnSetupChip } from "@/components/own-setup";
 import {
   ANCHOR_MODELS,
   anchorModel,
@@ -33,6 +34,7 @@ import {
 import type { GenjutsuTarget, Maker } from "@/lib/catalog/genjutsu";
 import { cloudSharpenUsd, OPEN_TIER_OFF, SHARPEN_COPY, type SharpenTier } from "@/lib/catalog/sharpen";
 import type { Engine } from "@/lib/catalog/types";
+import { limitMb, useClipLimit } from "@/lib/clip-limit";
 
 /** The Quality field's short hint: H3's own sizes in words, a finishing size's price (cloud) or "Free · your GPU". */
 export function qualityShort(engine: Engine, q: CharacterChoice): string {
@@ -169,6 +171,8 @@ export function CharacterControls({
             describedBy={offReasons.length ? "character-quality-off" : undefined}
             options={offered.map((q) => ({ value: q, label: q, disabled: !!qualityOff(engine, q), title: qualityOff(engine, q) ?? undefined }))}
           />
+          {/* Your GPU's 1080p / 2K / 4K regenerate with Open-H3 Regenerate: a 48 GB card, and the choice says so. */}
+          {engine === "open" && characterFinish(shown) && <OwnSetupChip setup="regenerate:swap-sharpen" />}
           {characterFinish(shown) && <p className="text-[12px] leading-snug text-pretty text-muted-foreground">{qualityHint(engine, shown)}</p>}
           {offReasons.length > 0 && (
             <p id="character-quality-off" className="text-[12px] leading-snug text-pretty text-muted-foreground">
@@ -356,6 +360,8 @@ export function CharacterFacts({
   /** Why the studio can't be opened with the clip yet (it is still uploading). */
   waiting?: string | null;
 }) {
+  // The clip size this viewer may upload (an account's is smaller than the studio's own).
+  const clipMax = useClipLimit(CHARACTER_SWAP.maxBytes);
   return (
     <div className="space-y-2 text-[12px] leading-snug text-muted-foreground">
       {cut && (
@@ -368,7 +374,7 @@ export function CharacterFacts({
         {CHARACTER_LIMITS.map((l) => (
           <li key={l}>{l}</li>
         ))}
-        <li>Clips up to {CHARACTER_SWAP.maxBytes / 1024 / 1024} MB</li>
+        <li>Clips up to {limitMb(clipMax)} MB</li>
       </ul>
       {engine === "open" && maker?.h3 && (
         <p className="flex gap-1.5">

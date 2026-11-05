@@ -5,6 +5,7 @@ import { useRef, useState } from "react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { LibraryGrid } from "@/components/studio/media-slot";
 import { radioKeys, radioTab } from "@/components/studio/radio-keys";
+import { useAskBeforeUpload } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { SourceClip } from "./use-source-clip";
 
@@ -89,7 +90,8 @@ export function Field({ label, htmlFor, hint, children }: { label: string; htmlF
 
 /**
  * "Upload a video to edit": click, drop, or pick from the Library. disabled: a tool that can't run here for this
- * visitor (the page says why), so nothing is uploaded only to be refused.
+ * visitor (the page says why), so nothing is uploaded only to be refused. Anyone the upload would refuse is asked first
+ * (useAskBeforeUpload): a guest to sign up, an account with neither its own GPU nor its own key to connect one.
  */
 export function ClipDrop({
   accept,
@@ -97,16 +99,20 @@ export function ClipDrop({
   onFile,
   onLibrary,
   disabled,
+  gpuOnly,
 }: {
   accept: string;
   limits: string;
   onFile: (f: File) => void;
   onLibrary: (url: string, name?: string) => void;
   disabled?: boolean;
+  /** A tool no key runs (Restore & colourise): an account without a GPU is asked for one, even when it has a key. */
+  gpuOnly?: boolean;
 }) {
   const input = useRef<HTMLInputElement>(null);
   const [over, setOver] = useState(false);
   const [lib, setLib] = useState(false);
+  const askFirst = useAskBeforeUpload({ gpuOnly });
   return (
     <div
       aria-disabled={disabled || undefined}
@@ -119,7 +125,7 @@ export function ClipDrop({
         e.preventDefault();
         setOver(false);
         const f = e.dataTransfer.files?.[0];
-        if (f && !disabled) onFile(f);
+        if (f && !disabled && !askFirst()) onFile(f);
       }}
       className={cn(
         "flex flex-col items-center gap-3 rounded-xl border border-dashed border-border-strong px-4 py-7 text-center transition-colors",
@@ -134,7 +140,7 @@ export function ClipDrop({
       <div className="flex flex-wrap justify-center gap-2">
         <button
           type="button"
-          onClick={() => input.current?.click()}
+          onClick={() => askFirst() || input.current?.click()}
           disabled={disabled}
           className="inline-flex h-8 items-center gap-1.5 rounded-full bg-primary px-3.5 text-[13px] font-medium text-primary-foreground hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50"
         >
@@ -169,7 +175,8 @@ export function ClipDrop({
         disabled={disabled}
         onChange={(e) => {
           const f = e.target.files?.[0];
-          if (f) onFile(f);
+          // Asked again here too: a file can arrive without the button (a file picker opened another way).
+          if (f && !askFirst()) onFile(f);
           e.target.value = "";
         }}
       />
@@ -233,13 +240,9 @@ export function Steps({ steps, current, className }: { steps: string[]; current:
   );
 }
 
-/**
- * "≈ $0.42", "Placeholder · free", "Free · your GPU". visitor: a guest or an account, whose GPU these tools don't run on yet
- * (the page says why): "Not available here", a demo's price too, since its button is off.
- */
-export function costText(e: { costUsd: number | null; demo: boolean } | undefined, engine: "cloud" | "open", visitor?: boolean): string {
+/** "≈ $0.42", "Placeholder · free", "Free · your GPU". A visitor's price is never a demo (src/server/visitor.ts priceAs). */
+export function costText(e: { costUsd: number | null; demo: boolean } | undefined, engine: "cloud" | "open"): string {
   if (!e) return "…";
-  if (visitor && (e.demo || engine === "open")) return "Not available here";
   if (e.demo) return "Placeholder · free";
   if (engine === "open") return "Free · your GPU";
   if (e.costUsd === null) return "Price unknown";

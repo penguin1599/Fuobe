@@ -1,0 +1,43 @@
+{
+  "id": "fuobe-soul-core",
+  "name": "Fuobe Soul core",
+  "kind": "style",
+  "base": "z-image-turbo",
+  "media": "image",
+  "presets": [
+    "every photographic Soul look"
+  ],
+  "trigger": "fbsoulcore",
+  "dataset": {
+    "min": 80,
+    "max": 150,
+    "what": "Editorial and street photos Fuobe shot or licensed with AI-training rights; varied skin tones, ages and light.",
+    "captions": [
+      "Every caption starts with \"fbsoulcore style, \" and goes on in one or two long sentences (Z-Image style): who or what is in the picture, where, the light and the framing.",
+      "Describe the scene, never the look the LoRA learns (no \"grainy\", \"film look\" or the like), so the trigger carries it.",
+      "No names of people, places that identify someone, brands, camera models or photographers."
+    ]
+  },
+  "train": {
+    "steps": 2500,
+    "rank": 32,
+    "learningRate": 0.0001
+  },
+  "routes": {
+    "fal": {
+      "trainer": "fal-ai/z-image-trainer",
+      "extra": {
+        "training_type": "style"
+      }
+    },
+    "aiToolkit": {
+      "arch": "zimage:turbo"
+    }
+  },
+  "target": {
+    "file": "fuobe-soul-core.safetensors",
+    "strength": 0.6,
+    "hfRepo": "fuobe/fuobe-soul-core"
+  },
+  "notes": "Replaces the AWPortrait-Z + Lenovo pair in Soul's core slot once it wins the evaluation (scripts/eval). fal trains on Z-Image base: whether a base-trained LoRA behaves the same on Z-Image Turbo (Soul's model) is unverified; AI-Toolkit trains on Turbo with the training adapter, so the first evaluation compares the two routes' files on Soul."
+}

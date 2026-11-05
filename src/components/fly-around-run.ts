@@ -4,6 +4,7 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tansta
 import type { CameraKey } from "@/lib/camera-path";
 import type { ExactOrbit } from "@/lib/exact-orbit";
 import type { Engine, Generation } from "@/lib/catalog/types";
+import { COMPUTER_KICK_EVENT } from "@/lib/api";
 import { formatCost } from "@/lib/format";
 import { responseError, toastError } from "@/lib/refusals";
 
@@ -64,6 +65,8 @@ export function useFlyAround(body: FlyAroundBody | null) {
   const run = useMutation({
     mutationFn: (b: FlyAroundBody) => post<{ items: Generation[]; final: Generation }>("/api/fly-around", b),
     onSuccess: () => {
+      // The tab that runs this person's jobs on the ComfyUI on this computer (an account's "Your GPU") asks for them at once.
+      window.dispatchEvent(new Event(COMPUTER_KICK_EVENT));
       void qc.invalidateQueries({ queryKey: ["generations"] });
       void qc.invalidateQueries({ queryKey: ["library-facets"] });
     },

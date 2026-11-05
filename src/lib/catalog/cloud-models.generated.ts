@@ -14626,6 +14626,53 @@ export const CLOUD_MODELS: ModelDef[] = [
     }
   },
   {
+    "id": "bria-green-screen",
+    "name": "Bria green screen",
+    "vendor": "Bria",
+    "family": "bria",
+    "engine": "cloud",
+    "kind": "video",
+    "tagline": "Keys green-screen footage onto transparency and cleans the green spill off the edges",
+    "routes": [
+      {
+        "op": "bg-remove-video",
+        "provider": "fal",
+        "endpoint": "bria/video/background-removal/green-screen-despill",
+        "map": {
+          "prompt": false,
+          "video": "video_url",
+          "fixed": {
+            "output_container_and_codec": "webm_vp9"
+          }
+        }
+      }
+    ],
+    "options": {
+      "sliders": [
+        {
+          "param": "spill_suppression",
+          "label": "Spill cleanup",
+          "min": 0,
+          "max": 1,
+          "step": 0.1,
+          "default": 1
+        }
+      ],
+      "promptless": true,
+      "matteOutputs": [
+        "cutout"
+      ],
+      "greenScreen": true
+    },
+    "badges": [
+      "new"
+    ],
+    "pricing": {
+      "unit": "second",
+      "usd": 0.05
+    }
+  },
+  {
     "id": "depth-anything-video-cloud",
     "name": "Video Depth Anything (hosted)",
     "vendor": "ByteDance",
@@ -14980,6 +15027,39 @@ export const CLOUD_MODELS: ModelDef[] = [
     "pricing": {
       "unit": "image",
       "usd": 0.01
+    }
+  },
+  {
+    "id": "bria-guided-cutout",
+    "name": "Bria guided cut-out",
+    "vendor": "Bria",
+    "family": "bria",
+    "engine": "cloud",
+    "kind": "image",
+    "tagline": "Cut out the subject, then say what to keep or drop: \u201ckeep the shadow\u201d, \u201cwithout the hand\u201d",
+    "routes": [
+      {
+        "op": "bg-remove",
+        "provider": "fal",
+        "endpoint": "bria/guided-remove-background",
+        "map": {
+          "omitEmptyPrompt": true,
+          "image": "image_url"
+        }
+      }
+    ],
+    "options": {
+      "maxImages": 1,
+      "promptOptional": true,
+      "guided": true,
+      "promptPlaceholder": "What to keep or drop, e.g. \u201ckeep the shadow\u201d or \u201cwithout the hand\u201d"
+    },
+    "badges": [
+      "new"
+    ],
+    "pricing": {
+      "unit": "image",
+      "usd": 0.03
     }
   },
   {
@@ -18755,6 +18835,315 @@ export const CLOUD_MODELS: ModelDef[] = [
         "768p": 0.02,
         "1080p": 0.06,
         "2k": 0.06
+      }
+    }
+  },
+  {
+    "id": "kandinsky-6",
+    "name": "Kandinsky 6.0",
+    "vendor": "Kandinsky Lab",
+    "family": "kandinsky",
+    "engine": "cloud",
+    "kind": "video",
+    "tagline": "Kandinsky 6.0 \u00b7 both engines: 5 s clips with dialogue, lip sync and sound from words or a first frame \u00b7 MIT",
+    "routes": [
+      {
+        "op": "t2v",
+        "provider": "fal",
+        "endpoint": "fal-ai/kandinsky6-pro/text-to-video",
+        "map": {
+          "negativePrompt": "negative_prompt",
+          "seed": "seed",
+          "generateAudio": "generate_audio",
+          "aspectRatio": "aspect_ratio",
+          "defaults": {
+            "enable_prompt_expansion": false
+          },
+          "promptExpansion": "enable_prompt_expansion",
+          "ignore": [
+            "variant",
+            "quality",
+            "promptHelper"
+          ]
+        },
+        "when": {
+          "param": "variant",
+          "value": "pro"
+        }
+      },
+      {
+        "op": "t2v",
+        "provider": "fal",
+        "endpoint": "fal-ai/kandinsky6-lite/text-to-video",
+        "map": {
+          "seed": "seed",
+          "generateAudio": "generate_audio",
+          "aspectRatio": "aspect_ratio",
+          "defaults": {
+            "enable_prompt_expansion": false
+          },
+          "promptExpansion": "enable_prompt_expansion",
+          "ignore": [
+            "variant",
+            "quality",
+            "promptHelper"
+          ]
+        },
+        "when": {
+          "param": "variant",
+          "value": "lite"
+        }
+      },
+      {
+        "op": "i2v",
+        "provider": "fal",
+        "endpoint": "fal-ai/kandinsky6-pro/image-to-video",
+        "map": {
+          "negativePrompt": "negative_prompt",
+          "image": "image_url",
+          "seed": "seed",
+          "generateAudio": "generate_audio",
+          "aspectRatio": "aspect_ratio",
+          "defaults": {
+            "enable_prompt_expansion": false
+          },
+          "promptExpansion": "enable_prompt_expansion",
+          "ignore": [
+            "variant",
+            "quality",
+            "promptHelper"
+          ]
+        },
+        "when": {
+          "param": "variant",
+          "value": "pro"
+        }
+      },
+      {
+        "op": "i2v",
+        "provider": "fal",
+        "endpoint": "fal-ai/kandinsky6-lite/image-to-video",
+        "map": {
+          "image": "image_url",
+          "seed": "seed",
+          "generateAudio": "generate_audio",
+          "aspectRatio": "aspect_ratio",
+          "defaults": {
+            "enable_prompt_expansion": false
+          },
+          "promptExpansion": "enable_prompt_expansion",
+          "ignore": [
+            "variant",
+            "quality",
+            "promptHelper"
+          ]
+        },
+        "when": {
+          "param": "variant",
+          "value": "lite"
+        }
+      }
+    ],
+    "options": {
+      "negativePrompt": true,
+      "seed": true,
+      "audio": true,
+      "aspectRatios": [
+        "16:9",
+        "9:16",
+        "1:1",
+        "4:3",
+        "3:4"
+      ],
+      "maxImages": 1,
+      "durations": [
+        5
+      ],
+      "resolutions": [
+        "480p"
+      ],
+      "controls": [
+        {
+          "param": "quality",
+          "label": "Quality",
+          "values": [
+            "pro-fast",
+            "pro-standard",
+            "pro-best",
+            "lite-fast",
+            "lite-standard",
+            "lite-best"
+          ],
+          "default": "pro-standard",
+          "labels": {
+            "pro-fast": "Pro \u00b7 Fast, 8 steps",
+            "pro-standard": "Pro \u00b7 Standard, 20 steps",
+            "pro-best": "Pro \u00b7 Best, 50 steps",
+            "lite-fast": "Lite \u00b7 Fast, 4 steps \u00b7 no negative prompt",
+            "lite-standard": "Lite \u00b7 Standard, 10 steps \u00b7 no negative prompt",
+            "lite-best": "Lite \u00b7 Best, 16 steps \u00b7 no negative prompt"
+          },
+          "sets": {
+            "pro-fast": {
+              "variant": "pro",
+              "num_inference_steps": 8
+            },
+            "pro-standard": {
+              "variant": "pro",
+              "num_inference_steps": 20
+            },
+            "pro-best": {
+              "variant": "pro",
+              "num_inference_steps": 50
+            },
+            "lite-fast": {
+              "variant": "lite",
+              "num_inference_steps": 4
+            },
+            "lite-standard": {
+              "variant": "lite",
+              "num_inference_steps": 10
+            },
+            "lite-best": {
+              "variant": "lite",
+              "num_inference_steps": 16
+            }
+          }
+        },
+        {
+          "param": "promptHelper",
+          "label": "Prompt helper",
+          "values": [
+            "off",
+            "on"
+          ],
+          "default": "off",
+          "labels": {
+            "off": "Off \u00b7 your words as typed",
+            "on": "On \u00b7 Kandinsky writes a fuller caption"
+          }
+        }
+      ],
+      "promptFormat": "kandinsky6",
+      "promptPlaceholder": "Describe the shot. Put what someone says in quotes: she smiles and says \u201cLook over there!\u201d \u00b7 end with Sound: \u2026 for ambience or music"
+    },
+    "badges": [
+      "new",
+      "audio"
+    ],
+    "licence": {
+      "licence": "MIT",
+      "commercial": true,
+      "note": "Kandinsky Lab's weights (Pro, Lite, VSR) on Hugging Face; the Qwen2.5-VL text encoder is Apache-2.0",
+      "checked": "2026-11-02"
+    },
+    "defaults": {
+      "aspectRatio": "16:9",
+      "duration": 5,
+      "resolution": "480p",
+      "generateAudio": true
+    },
+    "pricing": {
+      "unit": "video",
+      "usd": 0.56,
+      "note": "a 5 s clip at 480p: Pro about $0.027 a step ($0.24 Fast, $0.56 Standard, $1.35 Best), Lite about $0.013 ($0.08, $0.16, $0.24); from a first frame a little more",
+      "steps": {
+        "variantKey": "variant",
+        "stepsKey": "num_inference_steps",
+        "prices": {
+          "pro": {
+            "t2v": {
+              "8": 0.24,
+              "20": 0.56,
+              "50": 1.35
+            },
+            "i2v": {
+              "8": 0.25,
+              "20": 0.58,
+              "50": 1.4
+            }
+          },
+          "lite": {
+            "t2v": {
+              "4": 0.08,
+              "10": 0.16,
+              "16": 0.24
+            },
+            "i2v": {
+              "4": 0.085,
+              "10": 0.17,
+              "16": 0.25
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "id": "kandinsky-vsr",
+    "name": "Kandinsky VSR",
+    "vendor": "Kandinsky Lab",
+    "family": "kandinsky",
+    "engine": "cloud",
+    "kind": "video",
+    "tagline": "Kandinsky 6.0 \u00b7 both engines: sharp 2x, 2.25x or 4x video upscale, clips up to 5 s \u00b7 MIT",
+    "routes": [
+      {
+        "op": "upscale-video",
+        "provider": "fal",
+        "endpoint": "fal-ai/kandinsky6-vsr",
+        "map": {
+          "prompt": false,
+          "video": "video_url",
+          "seed": "seed",
+          "upscaleFactor": {
+            "key": "upscale_factor"
+          }
+        }
+      }
+    ],
+    "options": {
+      "resolutions": [
+        "2x",
+        "2.25x",
+        "4x"
+      ],
+      "seed": true,
+      "promptless": true,
+      "maxSourceSeconds": 5,
+      "sideMultiple": {
+        "of": 16,
+        "factors": [
+          "2x",
+          "4x"
+        ]
+      }
+    },
+    "badges": [
+      "new",
+      "fast"
+    ],
+    "licence": {
+      "licence": "MIT",
+      "commercial": true,
+      "note": "Kandinsky Lab's weights (Pro, Lite, VSR) on Hugging Face; the Qwen2.5-VL text encoder is Apache-2.0",
+      "checked": "2026-11-02"
+    },
+    "defaults": {
+      "resolution": "2.25x"
+    },
+    "pricing": {
+      "unit": "video",
+      "usd": 0.09,
+      "note": "$0.00036 per output megapixel per frame: about $0.09 for 5 s of 480p to 1080p, $0.29 at 4x",
+      "outputFrames": {
+        "usd": 0.00036,
+        "fps": 24,
+        "maxFrames": 121,
+        "assume": {
+          "width": 848,
+          "height": 480
+        }
       }
     }
   },

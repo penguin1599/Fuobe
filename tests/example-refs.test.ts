@@ -178,7 +178,7 @@ describe("a tool's own example", () => {
     setSetting("demoMode", "auto");
     const recording = "/samples/clean-voice/noisy.m4a";
     expect(isExampleRef(recording)).toBe(true);
-    const body = AudioToolBody.parse({ tool: "clean", engine: "open", media: recording, kind: "audio", name: "Brasserie" });
+    const body = AudioToolBody.parse({ tool: "clean", engine: "open", media: recording, kind: "audio", name: "Restaurant" });
     const preview = await guest(() => previewAudioTool(body));
     expect(preview.steps).toBeGreaterThan(0);
     expect(preview.length).toBeGreaterThan(0);

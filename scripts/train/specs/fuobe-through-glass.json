@@ -1,0 +1,39 @@
+{
+  "id": "fuobe-through-glass",
+  "name": "Fuobe through the glass",
+  "kind": "style",
+  "base": "z-image-turbo",
+  "media": "image",
+  "presets": [
+    "Through The Glass"
+  ],
+  "trigger": "fbglass",
+  "dataset": {
+    "min": 40,
+    "max": 80,
+    "what": "Photos shot by Fuobe through fogged, reeded and rain-streaked glass.",
+    "captions": [
+      "Every caption starts with \"fbglass style, \" and goes on in one or two long sentences (Z-Image style): who or what is in the picture, where, the light and the framing.",
+      "Describe the scene, never the look the LoRA learns (no \"grainy\", \"film look\" or the like), so the trigger carries it.",
+      "No names of people, places that identify someone, brands, camera models or photographers."
+    ]
+  },
+  "train": {
+    "steps": 1500,
+    "rank": 16,
+    "learningRate": 0.0001
+  },
+  "routes": {
+    "fal": {
+      "trainer": "fal-ai/z-image-turbo-trainer-v2"
+    },
+    "aiToolkit": {
+      "arch": "zimage:turbo"
+    }
+  },
+  "target": {
+    "file": "fuobe-through-glass.safetensors",
+    "strength": 0.8,
+    "hfRepo": "fuobe/fuobe-through-glass"
+  }
+}

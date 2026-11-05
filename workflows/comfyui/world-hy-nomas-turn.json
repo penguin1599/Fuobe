@@ -1,0 +1,182 @@
+{
+  "1": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "nomas_dit_distilled_int8_convrot.safetensors",
+      "weight_dtype": "default"
+    },
+    "_meta": {
+      "title": "Hy-Nomas DiT (distilled, int8 ConvRot)"
+    }
+  },
+  "2": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "qwen_2.5_vl_7b.safetensors",
+      "type": "qwen_image",
+      "device": "default"
+    },
+    "_meta": {
+      "title": "Qwen2.5-VL 7B text encoder"
+    }
+  },
+  "3": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "nomas_pixelumm_vae_bf16.safetensors"
+    },
+    "_meta": {
+      "title": "PixelUMM decoder"
+    }
+  },
+  "4": {
+    "class_type": "NomasWorldPrompt",
+    "inputs": {
+      "perspective": "third-person follow",
+      "style": "real-world footage",
+      "subject": "a small orange fox",
+      "subject_details": "Orange fur, a white chest and a fluffy tail.",
+      "scene": "<|Subject1|> stands on a stone path in a luminous forest at dusk. Blue fireflies drift between tall mossy trees, and soft mist hangs over the ground.",
+      "action": "<|Subject1|> walks slowly along the path.",
+      "seconds": 5
+    },
+    "_meta": {
+      "title": "Opening turn"
+    }
+  },
+  "5": {
+    "class_type": "NomasCameraPath",
+    "inputs": {
+      "script": "w 2\nw+left 1.5\nw 1.5"
+    },
+    "_meta": {
+      "title": "Opening camera move"
+    }
+  },
+  "6": {
+    "class_type": "NomasWorldGenerate",
+    "inputs": {
+      "model": [
+        "1",
+        0
+      ],
+      "clip": [
+        "2",
+        0
+      ],
+      "turn": [
+        "4",
+        0
+      ],
+      "camera": [
+        "5",
+        0
+      ],
+      "seed": 42,
+      "width": 1280,
+      "height": 704,
+      "steps": 8,
+      "history": "window"
+    },
+    "_meta": {
+      "title": "World: opening"
+    }
+  },
+  "7": {
+    "class_type": "NomasCameraPath",
+    "inputs": {
+      "script": "right 1\nw 2"
+    },
+    "_meta": {
+      "title": "Turn 1 camera move"
+    }
+  },
+  "8": {
+    "class_type": "NomasWorldContinue",
+    "inputs": {
+      "model": [
+        "1",
+        0
+      ],
+      "clip": [
+        "2",
+        0
+      ],
+      "world": [
+        "6",
+        1
+      ],
+      "change": "a wooden bridge crosses a glowing stream ahead",
+      "action": "<|Subject1|> trots onto the bridge.",
+      "camera": [
+        "7",
+        0
+      ],
+      "seconds": 5,
+      "steps": 8
+    },
+    "_meta": {
+      "title": "World: turn 1"
+    }
+  },
+  "9": {
+    "class_type": "TrimVideoLatent",
+    "inputs": {
+      "samples": [
+        "8",
+        0
+      ],
+      "trim_amount": 31
+    },
+    "_meta": {
+      "title": "This turn only (the earlier turns' latents left out)"
+    }
+  },
+  "10": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "9",
+        0
+      ],
+      "vae": [
+        "3",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "Decode the turn"
+    }
+  },
+  "11": {
+    "class_type": "CreateVideo",
+    "inputs": {
+      "images": [
+        "10",
+        0
+      ],
+      "fps": 24,
+      "bit_depth": "auto",
+      "color_space": "sRGB"
+    },
+    "_meta": {
+      "title": "24 fps"
+    }
+  },
+  "12": {
+    "class_type": "SaveVideo",
+    "inputs": {
+      "video": [
+        "11",
+        0
+      ],
+      "filename_prefix": "fuobe/world-hy-nomas-turn",
+      "format": "auto",
+      "format.codec": "auto",
+      "codec": "auto"
+    },
+    "_meta": {
+      "title": "Save the turn"
+    }
+  }
+}

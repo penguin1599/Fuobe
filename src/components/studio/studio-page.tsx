@@ -11,8 +11,8 @@ import { PhoneNavButton } from "@/components/nav/phone-nav-button";
 import { HeaderPill } from "@/components/gpu/readiness-chip";
 import { badgeFor, openGpuSetup, useGpuBadges } from "@/hooks/use-gpu";
 import type { Generation } from "@/lib/catalog/types";
-import { GUEST_PROMPT_EVENT, useEngine, useGenerations, useIsGuest, useLikelyVisitor } from "@/lib/api";
-import { claimStartToken, followEngineDefault, handoffKey, mergeHandoff, promptShown, START_PARAM, withoutStart, withPreset } from "@/lib/composer";
+import { GUEST_PROMPT_EVENT, useEngine, useGenerations, useHydrated, useIsGuest, useLikelyVisitor } from "@/lib/api";
+import { claimStartToken, followEngineDefault, handoffKey, mergeHandoff, promptShown, relatedHref, START_PARAM, withoutStart, withPreset } from "@/lib/composer";
 import { presetGpuKey } from "@/lib/catalog/preset-recipe-routes";
 import { editableLayout, EDIT_LAYOUT_PARAM, readEditLayoutParam } from "@/lib/output-actions";
 import { movedAppRequest } from "@/lib/catalog/plan";
@@ -487,6 +487,8 @@ function StudioBody({ header, tabs, examples }: { header?: React.ReactNode; tabs
   // Config and actions only: the draft lives in the composer, so typing doesn't re-render the page or the feed.
   const { config, setDraft } = useStudioActions();
   const [engine, setEngine, engineMode] = useEngine();
+  // The engine is the browser's own: a link that names its model (Lipsync → Kandinsky) waits for it, so the page hydrates as rendered.
+  const hydrated = useHydrated();
   // A GPU-only step isn't offered while the install runs paid APIs only. A guest or an account sees none: each step
   // opens a tool that runs on a self-hosted Fuobe only.
   const visitor = useLikelyVisitor();
@@ -581,7 +583,7 @@ function StudioBody({ header, tabs, examples }: { header?: React.ReactNode; tabs
             <h2 className="font-heading text-display text-balance">{config.hero}</h2>
             {config.subtitle && <StudioSubtitle text={config.subtitle} />}
             {config.related && (
-              <Link href={config.related.href} className="mt-3 inline-flex items-center gap-1 rounded-full bg-muted px-3 py-1 text-[12px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none">
+              <Link href={hydrated ? relatedHref(config.related, engine) : config.related.href} className="mt-3 inline-flex items-center gap-1 rounded-full bg-muted px-3 py-1 text-[12px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none">
                 {config.related.label}
                 <ArrowRight className="size-3" />
               </Link>

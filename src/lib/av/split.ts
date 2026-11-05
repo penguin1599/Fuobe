@@ -14,6 +14,9 @@ import { clock, type ToolPlan } from "./audio-tools";
 
 export const SPLIT_FEATURE = "audio-split";
 export const SPLIT_MODEL = "oss-dbs-separate";
+/** An account's Export mix, kept as one of its runs (the owner's is an upload in the Library). */
+export const MIX_FEATURE = "audio-split-mix";
+export const MIX_MODEL = "local-mix";
 /** Putting a mix back on its video: the open stream-copy mux, or fal's merge on the cloud. */
 export const REMUX_FEATURE = "audio-split-remux";
 export const REMUX_MODELS: Record<Engine, string> = {
@@ -131,13 +134,14 @@ export function separationPasses(mode: DbsChannels, channels?: number | null): n
 // Time on the open engine
 
 /**
- * Times real time (seconds of audio per second of work, one pass), as measured. CPU: real runs on a 4-CPU host
- * (torch 2.14.1+cpu, ComfyUI-DBS f656e53, 10–20 s clips, other jobs sharing the CPU; docs/research/dbs-separation-7.md
- * §2.4): DBS-BSRNN 0.17–0.33x, typically 0.27x; DBS-TIGER 0.08–0.09x. GPU: the pack author's RTX 5090 (the same
- * section); a smaller GPU is slower, so the estimate is a range.
+ * Times real time (seconds of audio per second of work, one pass), as measured. CPU: the separation suite on a 4-CPU
+ * host (torch 2.14.1+cpu, ComfyUI-DBS f656e53, 24 runs of 12 s mixes with nothing else running, DBS D4;
+ * docs/research/dbs-separation-7.md §2.4): DBS-BSRNN 0.22–0.28x, typically 0.25x; DBS-TIGER 0.10–0.11x (D1 measured
+ * 0.27x and 0.09x on the same host while other jobs shared it). GPU: the pack author's RTX 5090 (the same section); a
+ * smaller GPU is slower, so the estimate is a range.
  */
 export const DBS_SPEED: Record<"cpu" | "cuda", Record<SplitQuality, number>> = {
-  cpu: { fast: 0.27, best: 0.09 },
+  cpu: { fast: 0.25, best: 0.1 },
   cuda: { fast: 22.4, best: 15.9 },
 };
 /** Loading the model and the audio, saving four FLAC stems (seconds, measured on the CPU host). */

@@ -34,6 +34,8 @@ import {
   plannedTiming,
   planRerun,
   previewLine,
+  regeneratePlan,
+  regenerateReuses,
   resolveModels,
   sameCameraMove,
   sceneSpans,
@@ -83,13 +85,17 @@ import {
 } from "@/lib/catalog/faceless";
 import { routesFor } from "@/lib/catalog/plan";
 import { pricingAt } from "@/lib/catalog/promo";
+import { REGEN_COPY, REGEN_OFFERED } from "@/lib/catalog/regenerate";
+import { ownSetupGate } from "./own-setup-run";
 import type { Engine, Generation, GenerationRequest } from "@/lib/catalog/types";
+import { AccountProjectError, accountProjectIds, accountProjectOwner, createAccountProject, deleteAccountProject } from "./account-projects";
 import { DocxError, docxText } from "./assist/docx";
 import { PdfError, pdfText } from "./assist/pdf";
 import { db } from "./db";
 import { listElements } from "./elements";
 import { connectRefusal } from "./connect-refusal";
-import { cancelGeneration, chooseRoute, ConnectComfyError, createGenerations, getGeneration, previewChained } from "./generations";
+import { createPipeline } from "./chains";
+import { asAccount, cancelGeneration, chooseRoute, ConnectComfyError, createGenerations, getGeneration, previewChained } from "./generations";
 import { provider } from "./providers";
 import type { JsonSpec } from "./llm";
 import { llmBackends, probeLocal } from "./providers/llm";
@@ -97,6 +103,7 @@ import { fetchRemote } from "./remote-fetch";
 import { engineMode, getSetting } from "./settings";
 import { fileUrl, saveFile } from "./storage";
 import { firstOn, offeredModel } from "./model-access";
+import { tenant, tenantAccount } from "./tenant";
 
 /**
  * Faceless Studio and the Explainer on the server: channels (genre, saved style, narrator, aspect,
@@ -113,6 +120,13 @@ import { firstOn, offeredModel } from "./model-access";
  *
  * Writing a script runs in this process (the install's LLM through the "llm" provider, or the offline
  * writer); a restart while it writes leaves the episode "write-failed" with a Try again.
+ *
+ * Whose channels and episodes (public sign-up): the owner's, or a signed-in account's own. An account's channel and its
+ * explainers are its own projects in account-projects.ts (kinds "faceless" and "explainer") under the row's id; a
+ * channel's episodes are its channel's. Every read and change here is for whoever the work is for (tenant.ts asAccount):
+ * an account reaches only its own (another's, or the owner's, reads as not found) and the owner's lists never hold an
+ * account's. An account's work never uses the install's AI helper (its scripts, names, topics and summaries are the
+ * offline writer's) or its elements; its renders run on its own GPU or key (src/server/account-tool-run.ts).
  */
 
 export class FacelessError extends Error {
@@ -195,7 +209,60 @@ function updateEpisodeRow(id: string, fields: Partial<EpisodeRow>): void {
     .run({ ...fields, __now: Date.now(), __id: id });
 }
 
-const episodeRow = (id: string) => db().prepare("SELECT * FROM faceless_episodes WHERE id = ?").get(id) as EpisodeRow | undefined;
+// ---------------------------------------------------------------------------
+// Whose rows (see the header)
+
+/** An account's channel, and an account's explainer, as its own project kinds (account-projects.ts). */
+export const CHANNEL_KIND = "faceless";
+export const EXPLAINER_KIND = "explainer";
+
+/** Whether the work is a guest's (a visitor's price check): a guest has no channels or episodes. */
+const guestWork = () => tenant()?.kind === "guest";
+
+/** A new row's id: the owner's as before; an account's is its own project's (its limit of them counts). */
+export function newRowId(kind: string, name: string): string {
+  const account = tenantAccount();
+  return account ? createAccountProject(account, kind, { name, data: {} }).id : nanoid(10);
+}
+
+/** An account's project made for a row that then couldn't be stored: let go of it. */
+export function dropRowId(kind: string, id: string): void {
+  const account = tenantAccount();
+  if (account) deleteAccountProject(account, kind, id);
+}
+
+/** Whose a channel is: an account's id, or null for the owner's. */
+export const channelOwner = (id: string): string | null => accountProjectOwner(CHANNEL_KIND, id);
+
+/** Whose an episode is: its channel's, or (an explainer) its own project's. */
+export const episodeOwner = (r: { id: string; channel_id: string | null }): string | null => (r.channel_id ? channelOwner(r.channel_id) : accountProjectOwner(EXPLAINER_KIND, r.id));
+
+/** Whether a row whose owner this is belongs to whoever the work is for: an account its own, the owner never an account's. */
+export const forViewer = (owner: string | null): boolean => !guestWork() && owner === (tenantAccount() ?? null);
+
+/** `column IN / NOT IN (…)`: the rows of one kind that are whoever the work is for (a guest's: none). */
+export function viewerScope(column: string, kind: string): { sql: string; args: unknown[] } {
+  if (guestWork()) return { sql: "0", args: [] };
+  const account = tenantAccount();
+  const ids = accountProjectIds(kind, account);
+  return { sql: account ? `${column} IN (${ids.sql})` : `${column} NOT IN (${ids.sql})`, args: ids.args };
+}
+
+/** The episodes that are whoever the work is for: an account's channels' and its explainers; the owner's, none of those. */
+function episodeScope(): { sql: string; args: unknown[] } {
+  if (guestWork()) return { sql: "0", args: [] };
+  const account = tenantAccount();
+  const channels = accountProjectIds(CHANNEL_KIND, account);
+  const explainers = accountProjectIds(EXPLAINER_KIND, account);
+  return account
+    ? { sql: `(channel_id IN (${channels.sql}) OR (channel_id IS NULL AND id IN (${explainers.sql})))`, args: [...channels.args, ...explainers.args] }
+    : { sql: `((channel_id IS NULL OR channel_id NOT IN (${channels.sql})) AND id NOT IN (${explainers.sql}))`, args: [...channels.args, ...explainers.args] };
+}
+
+const episodeRow = (id: string) => {
+  const r = db().prepare("SELECT * FROM faceless_episodes WHERE id = ?").get(id) as EpisodeRow | undefined;
+  return r && forViewer(episodeOwner(r)) ? r : undefined;
+};
 
 function mustEpisode(id: string): FacelessEpisode {
   const r = episodeRow(id);
@@ -225,6 +292,8 @@ const TOPICS_TIMEOUT_MS = 25_000;
 
 /** One answer from the engine's text model, or null (no LLM, AI helper off, demo mode on, or it failed: `onError` hears why). */
 export async function askLlm(engine: Engine, system: string, user: string, o: AskOptions = {}): Promise<string | null> {
+  // An account's work, or a visitor's price check, never uses the install's AI helper: the offline wording is used.
+  if (tenant()) return null;
   if (getSetting("demoMode") === "on") return null;
   // A text model switched off in Settings → Models & licences gives way to the offline wording, like no LLM at all.
   const found = getModel(ENGINE_MODELS[engine].write);
@@ -278,10 +347,14 @@ function refreshAvatar(r: ChannelRow): ChannelRow {
   return next;
 }
 
-const channelRow = (id: string) => db().prepare("SELECT * FROM faceless_channels WHERE id = ?").get(id) as ChannelRow | undefined;
+const channelRow = (id: string) => {
+  const r = db().prepare("SELECT * FROM faceless_channels WHERE id = ?").get(id) as ChannelRow | undefined;
+  return r && forViewer(channelOwner(id)) ? r : undefined;
+};
 
 export function listChannels(): FacelessChannel[] {
-  const rows = (db().prepare("SELECT * FROM faceless_channels ORDER BY updated_at DESC").all() as ChannelRow[]).map(refreshAvatar);
+  const scope = viewerScope("id", CHANNEL_KIND);
+  const rows = (db().prepare(`SELECT * FROM faceless_channels WHERE ${scope.sql} ORDER BY updated_at DESC`).all(...scope.args) as ChannelRow[]).map(refreshAvatar);
   const counts = new Map(
     (db().prepare("SELECT channel_id, COUNT(*) AS n FROM faceless_episodes WHERE channel_id IS NOT NULL GROUP BY channel_id").all() as { channel_id: string; n: number }[]).map((r) => [r.channel_id, r.n]),
   );
@@ -300,11 +373,15 @@ export function getChannel(id: string): FacelessChannel | null {
   return r ? toChannel(refreshAvatar(r)) : null;
 }
 
-/** Title and thumbnail of a YouTube link (oEmbed, through the SSRF-safe fetch); the thumbnail is saved as an upload. */
+/**
+ * Title and thumbnail of a YouTube link (oEmbed, through the SSRF-safe fetch); the thumbnail is saved as an upload. An
+ * account's is kept as the plain link: the server never fetches a link for an account (docs/public-signup.md).
+ */
 async function readReference(url: string): Promise<ChannelReference> {
   const kind = youtubeKind(url);
   if (!kind) throw new FacelessError(YOUTUBE_ERROR);
   const ref: ChannelReference = { url: url.trim(), kind };
+  if (tenant()) return ref;
   try {
     const res = await fetchRemote(`https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(ref.url)}`, { maxBytes: 256 * 1024, timeoutMs: 8000 });
     const j = JSON.parse(res.data.toString("utf8")) as { title?: string; author_name?: string; thumbnail_url?: string };
@@ -341,9 +418,10 @@ export async function createChannel(input: { idea: string; genre: FacelessGenre;
   const reference = input.reference?.trim() ? await readReference(input.reference) : null;
   const given = input.name?.trim().slice(0, 60) || null;
   const now = Date.now();
+  const firstName = given ?? channelName(idea);
   const row: ChannelRow = {
-    id: nanoid(10),
-    name: given ?? channelName(idea),
+    id: newRowId(CHANNEL_KIND, firstName),
+    name: firstName,
     idea: idea.slice(0, 500),
     genre: input.genre,
     avatar_url: null,
@@ -353,9 +431,14 @@ export async function createChannel(input: { idea: string; genre: FacelessGenre;
     created_at: now,
     updated_at: now,
   };
-  db()
-    .prepare(`INSERT INTO faceless_channels (${Object.keys(row).join(", ")}) VALUES (${Object.keys(row).map((k) => `@${k}`).join(", ")})`)
-    .run(row);
+  try {
+    db()
+      .prepare(`INSERT INTO faceless_channels (${Object.keys(row).join(", ")}) VALUES (${Object.keys(row).map((k) => `@${k}`).join(", ")})`)
+      .run(row);
+  } catch (e) {
+    dropRowId(CHANNEL_KIND, row.id);
+    throw e;
+  }
   const job = (async () => {
     if (!given) {
       const answer = await askLlm(input.engine, NAME_SYSTEM, `Channel idea: ${idea}\nGenre: ${genreInfo(input.genre).label}`, { timeoutMs: NAME_TIMEOUT_MS });
@@ -364,8 +447,9 @@ export async function createChannel(input: { idea: string; genre: FacelessGenre;
     }
     try {
       // avatar: false (Assist's channel) leaves the initials and the "Draw an avatar" button; Content Factory
-      // series show their reference instead (no picture to pay for).
-      if (input.avatar !== false && channelRow(row.id)) makeAvatar(row.id);
+      // series show their reference instead (no picture to pay for). An account's avatar is a run on its own GPU or
+      // key, started by the route after that run's checks (src/app/api/faceless/channels).
+      if (input.avatar !== false && !tenantAccount() && channelRow(row.id)) makeAvatar(row.id);
     } catch {
       // No picture model can run right now: the channel shows its initials, and "Draw an avatar" is there.
     }
@@ -409,25 +493,44 @@ export async function deleteChannel(id: string): Promise<void> {
     db().prepare("DELETE FROM faceless_episodes WHERE channel_id = ?").run(id);
     db().prepare("DELETE FROM faceless_channels WHERE id = ?").run(id);
   })();
+  dropRowId(CHANNEL_KIND, id);
   await Promise.all(stops);
+}
+
+/**
+ * When an account is deleted (account-sweep.ts purgeAccount, before its projects go): its channels, their episodes and
+ * its explainers. Its runs are deleted with the account.
+ */
+export function deleteAccountFaceless(accountId: string): void {
+  const channels = accountProjectIds(CHANNEL_KIND, accountId);
+  const explainers = accountProjectIds(EXPLAINER_KIND, accountId);
+  db().transaction(() => {
+    db().prepare(`DELETE FROM faceless_episodes WHERE channel_id IN (${channels.sql}) OR (channel_id IS NULL AND id IN (${explainers.sql}))`).run(...channels.args, ...explainers.args);
+    db().prepare(`DELETE FROM faceless_channels WHERE id IN (${channels.sql})`).run(...channels.args);
+  })();
 }
 
 /** A channel avatar in the channel's style (one picture generation); it becomes the channel's picture when it's done. */
 export function makeAvatar(id: string): Generation {
+  const [g] = createGenerations(avatarRequest(id));
+  db().prepare("UPDATE faceless_channels SET avatar_job = ? WHERE id = ?").run(g.id, id);
+  return g;
+}
+
+/** The avatar's one picture generation, as makeAvatar creates it (an account's run is checked with it first). */
+export function avatarRequest(id: string): GenerationRequest {
   const c = getChannel(id);
   if (!c) throw new FacelessError("Channel not found", 404);
   const style = getStyle(c.settings.styleId);
   const engine = c.settings.engine;
-  const [g] = createGenerations({
+  return {
     feature: "faceless-avatar",
     modelId: ENGINE_MODELS[engine].still,
     // The words name only what the picture shows (the open still model draws any words it is given, and reads no negatives).
     prompt: `A round channel avatar for a YouTube channel about ${subjectOf(c.idea) || c.name}: one bold, simple pictorial emblem, centred on a plain background. Style: ${style.look}.`,
     params: { aspectRatio: "1:1", numOutputs: 1 },
     title: `${c.name} · avatar`,
-  });
-  db().prepare("UPDATE faceless_channels SET avatar_job = ? WHERE id = ?").run(g.id, id);
-  return g;
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -471,11 +574,22 @@ export interface EpisodeInput {
   blocks?: Partial<ScriptBlock>[];
   /** The title before the script names it (a series' planned episode title). */
   title?: string;
+  /**
+   * A script composed already (composeScript): an account's, written before its run is checked, so what renders is
+   * what was checked. No writer runs; it's ready to review, or renders at once with autoRender.
+   */
+  composed?: EpisodeScript;
+  /** The render's batch: an account's series renders its episodes as one run. */
+  batchId?: string;
 }
+
+/** An account's episode on the cloud engine without a key of its own (its engine mode is open source only). */
+export const ACCOUNT_CLOUD_ENGINE = "Add a fal.ai or Replicate key to make this on the cloud engine, or switch to open source to make it on your GPU.";
 
 function cleanSettings(s: EpisodeSettings): EpisodeSettings {
   const mode = engineMode();
   if (mode !== "both" && s.engine !== mode) {
+    if (tenant()) throw new FacelessError(ACCOUNT_CLOUD_ENGINE, 422);
     throw new FacelessError(mode === "open" ? "This install is set to open source only (Settings → Engine mode)" : "This install is set to paid cloud APIs only (Settings → Engine mode)");
   }
   return {
@@ -489,7 +603,8 @@ function cleanSettings(s: EpisodeSettings): EpisodeSettings {
 export function createEpisode(input: EpisodeInput): FacelessEpisode {
   const topic = input.topic.trim();
   const pasted = input.script?.trim() ?? "";
-  const written = input.blocks ? normalizeBlocks(input.blocks) : null;
+  const composed = input.composed ?? null;
+  const written = composed ? normalizeBlocks(composed.blocks) : input.blocks ? normalizeBlocks(input.blocks) : null;
   if (!topic && !pasted && !input.sources?.length && !written?.length) throw new FacelessError(input.kind === "explainer" ? "Add a prompt, or attach a file or link" : "Add a topic, or bring your own script");
   if (pasted.length > MAX_SCRIPT || (written && narrationText(written).length > MAX_SCRIPT)) throw new FacelessError("That script is too long to narrate. Shorten it and try again.");
   if (written && !written.length) throw new FacelessError("The script has no scenes yet");
@@ -499,9 +614,12 @@ export function createEpisode(input: EpisodeInput): FacelessEpisode {
   const sources = (input.sources ?? []).slice(0, MAX_SOURCES);
   settings.sourceImages = sources.filter((s): s is Extract<ExplainerSource, { kind: "image" }> => s.kind === "image").map((s) => s.url);
   const now = Date.now();
-  const title = (input.title?.trim() || topic || pasted || written?.[0]?.narration || "").replace(/\s+/g, " ").slice(0, input.title ? 120 : 80) || "Untitled episode";
+  const named = composed?.title?.trim() || input.title?.trim();
+  const title = (named || topic || pasted || written?.[0]?.narration || "").replace(/\s+/g, " ").slice(0, named ? 120 : 80) || "Untitled episode";
+  const script: EpisodeScript = composed ? { ...composed, blocks: written! } : written ? { blocks: written, source: "ai" } : { blocks: [], source: pasted ? "pasted" : "ai" };
   const row: EpisodeRow = {
-    id: nanoid(10),
+    // An explainer of an account's is its own project (a channel's episodes are their channel's).
+    id: channel ? nanoid(10) : newRowId(EXPLAINER_KIND, title),
     channel_id: channel?.id ?? null,
     kind: input.kind,
     title,
@@ -509,7 +627,7 @@ export function createEpisode(input: EpisodeInput): FacelessEpisode {
     status: written ? "review" : "writing",
     error: null,
     settings_json: JSON.stringify(settings),
-    script_json: JSON.stringify((written ? { blocks: written, source: "ai" } : { blocks: [], source: pasted ? "pasted" : "ai" }) satisfies EpisodeScript),
+    script_json: JSON.stringify(script),
     plan_json: null,
     sources_json: JSON.stringify(sources),
     favorite: 0,
@@ -517,9 +635,14 @@ export function createEpisode(input: EpisodeInput): FacelessEpisode {
     updated_at: now,
   };
   const first = channel ? !(db().prepare("SELECT 1 FROM faceless_episodes WHERE channel_id = ? LIMIT 1").get(channel.id) as unknown) : false;
-  db()
-    .prepare(`INSERT INTO faceless_episodes (${Object.keys(row).join(", ")}) VALUES (${Object.keys(row).map((k) => `@${k}`).join(", ")})`)
-    .run(row);
+  try {
+    db()
+      .prepare(`INSERT INTO faceless_episodes (${Object.keys(row).join(", ")}) VALUES (${Object.keys(row).map((k) => `@${k}`).join(", ")})`)
+      .run(row);
+  } catch (e) {
+    if (!channel) dropRowId(EXPLAINER_KIND, row.id);
+    throw e;
+  }
   if (channel && (input.saveLook ?? first)) {
     void updateChannel(channel.id, {
       settings: {
@@ -539,14 +662,16 @@ export function createEpisode(input: EpisodeInput): FacelessEpisode {
   if (written) {
     if (!input.autoRender) return toEpisode(row);
     try {
-      return renderEpisode(row.id);
+      return renderEpisode(row.id, input.batchId);
     } catch (e) {
       // The script is there: show it with what's in the way, as a written script that can't render does.
       updateEpisodeRow(row.id, { status: "review", error: (e as Error).message });
       return mustEpisode(row.id);
     }
   }
-  startWriting(row.id, pasted, !!input.autoRender);
+  // An account's render starts only after its run's checks (src/server/account-tool-run.ts), with a script composed
+  // first: one written here waits for review.
+  startWriting(row.id, pasted, !!input.autoRender && !tenant());
   return toEpisode(row);
 }
 
@@ -577,9 +702,20 @@ function startWriting(id: string, pasted: string, autoRender: boolean): Promise<
 /** Wait for a script that's being written (tests, and the API's `?wait=1`). */
 export const scriptWritten = (id: string) => writing().get(id)?.job ?? Promise.resolve();
 
-async function writeScript(id: string, pasted: string, signal: AbortSignal): Promise<void> {
-  const ep = mustEpisode(id);
-  const genre = genreInfo(ep.channelId ? (getChannel(ep.channelId)?.genre ?? "education") : "education");
+/** What the script writer reads: the episode as it is (or will be) stored. */
+export type ScriptAsk = Pick<FacelessEpisode, "kind" | "channelId" | "topic" | "settings" | "sources"> & {
+  /** The channel's genre, for an episode whose channel isn't made yet (an account's series, composed before its run). */
+  genre?: FacelessGenre;
+};
+
+/**
+ * A script for an episode: the engine's LLM when it answers, else the offline writer (a pasted script is split into scenes
+ * and its pictures planned). An account's is always the offline writer's (askLlm), without the install's notes about its
+ * AI helper, and never names the owner's elements.
+ */
+export async function composeScript(ep: ScriptAsk, pasted: string, signal?: AbortSignal): Promise<EpisodeScript> {
+  const visitor = !!tenant();
+  const genre = genreInfo(ep.genre ?? (ep.channelId ? (getChannel(ep.channelId)?.genre ?? "education") : "education"));
   const channel = ep.channelId ? getChannel(ep.channelId) : null;
   const s = ep.settings;
   const style = getStyle(s.styleId);
@@ -588,7 +724,7 @@ async function writeScript(id: string, pasted: string, signal: AbortSignal): Pro
   const sceneSecs = s.brief?.sceneSeconds ? Math.max(4, Math.min(10, Math.round(s.brief.sceneSeconds))) : 10;
   const scenes = s.brief?.sceneSeconds && !auto ? Math.max(1, Math.round(s.length / sceneSecs)) : blockCount(auto ? AUTO_SECONDS : s.length);
   const handles = new Set(s.elements.map((h) => h.toLowerCase()));
-  const elements = listElements()
+  const elements = (visitor ? [] : listElements())
     .filter((e) => e.kind !== "voice" && handles.has(e.handle.toLowerCase()))
     .map((e) => ({ handle: e.handle, kind: e.kind, description: e.description }));
   const textSources = ep.sources.flatMap((x) => (x.kind === "text" ? [`${x.name}: ${x.text.slice(0, SOURCE_CHARS)}`] : x.kind === "link" ? [`${x.title ?? x.url} (${x.url}): ${x.text.slice(0, SOURCE_CHARS)}`] : []));
@@ -602,7 +738,7 @@ async function writeScript(id: string, pasted: string, signal: AbortSignal): Pro
     script = {
       source: "pasted",
       blocks: visuals ? blocks.map((b, i) => ({ ...b, visual: visuals[i].visual, motion: visuals[i].motion || b.motion })) : blocks,
-      ...(!visuals && { offline: true, note: failure ? `Pictures planned offline (${failure}).` : "Pictures planned from your words — connect Claude or a local model (Ollama, LM Studio or Unsloth Studio) in Settings for better scenes." }),
+      ...(!visuals && !visitor && { offline: true, note: failure ? `Pictures planned offline (${failure}).` : "Pictures planned from your words — connect Claude or a local model (Ollama, LM Studio or Unsloth Studio) in Settings for better scenes." }),
     };
   } else {
     const topic = ep.topic || textSources[0]?.slice(0, 300) || "this topic";
@@ -628,9 +764,15 @@ async function writeScript(id: string, pasted: string, signal: AbortSignal): Pro
       // The offline beats run about 10 s each: a brief's shorter scenes would overshoot the length, so middle beats go.
       if (s.brief?.sceneSeconds && !auto) while (blocks.length > 1 && totalSeconds(blocks) > s.length * 1.15) blocks.splice(Math.floor(blocks.length / 2), 1);
       if (elements.length) for (const b of blocks) b.visual = `${b.visual}, with ${elements.map((e) => `@${e.handle}`).join(" and ")}`;
-      script = { source: "ai", blocks, offline: true, note: failure ? `${OFFLINE_NOTE} (${failure})` : OFFLINE_NOTE };
+      script = visitor ? { source: "ai", blocks } : { source: "ai", blocks, offline: true, note: failure ? `${OFFLINE_NOTE} (${failure})` : OFFLINE_NOTE };
     }
   }
+  return script;
+}
+
+async function writeScript(id: string, pasted: string, signal: AbortSignal): Promise<void> {
+  const ep = mustEpisode(id);
+  const script = await composeScript(ep, pasted, signal);
   if (signal.aborted || !episodeRow(id)) return;
   updateEpisodeRow(id, {
     status: "review",
@@ -676,7 +818,7 @@ function stopEpisode(ep: FacelessEpisode): Promise<void>[] {
     w.abort.abort();
     writing().delete(ep.id);
   }
-  const ids = new Set([...Object.values(ep.plan?.ids ?? {}), ...Object.values(ep.plan?.previous?.ids ?? {}), ...(ep.plan?.upscaled ? [ep.plan.upscaled] : [])]);
+  const ids = new Set([...Object.values(ep.plan?.ids ?? {}), ...Object.values(ep.plan?.previous?.ids ?? {}), ...(ep.plan?.upscaled ? [ep.plan.upscaled] : []), ...Object.values(ep.plan?.regenerated?.ids ?? {})]);
   return [...ids].map((g) => cancelGeneration(g).catch(() => {}));
 }
 
@@ -685,6 +827,7 @@ export async function deleteEpisode(id: string): Promise<void> {
   const ep = mustEpisode(id);
   const stops = stopEpisode(ep);
   db().prepare("DELETE FROM faceless_episodes WHERE id = ?").run(id);
+  if (!ep.channelId) dropRowId(EXPLAINER_KIND, id);
   await Promise.all(stops);
 }
 
@@ -898,8 +1041,8 @@ function advance(ep: FacelessEpisode): FacelessEpisode {
   return mustEpisode(ep.id);
 }
 
-/** Start the render: the whole graph is checked first, then stage one (pictures, narration, its timing) starts. */
-export function renderEpisode(id: string): FacelessEpisode {
+/** The episode ready to render and its whole graph, checked (nothing is created). */
+function renderable(id: string): { ready: FacelessEpisode; blocks: ScriptBlock[]; graph: GraphStep[] } {
   const ep = mustEpisode(id);
   if (ep.status === "writing") throw new FacelessError("The script is still being written", 409);
   if (ep.status === "rendering") throw new FacelessError("This episode is already rendering", 409);
@@ -909,7 +1052,75 @@ export function renderEpisode(id: string): FacelessEpisode {
   const ready = { ...ep, script: { ...ep.script, blocks } };
   const graph = buildGraph(ready, blocks);
   validate(graph);
-  const batchId = nanoid(10);
+  return { ready, blocks, graph };
+}
+
+/**
+ * A graph's steps as an account's run is checked with them (src/server/account-tool-run.ts ToolStep): each request with
+ * its chain, waiting for as many earlier steps as it names. Every step of the graph, so every provider it reaches, its
+ * words and its files are checked before the first one starts.
+ */
+export function graphToolSteps(graph: GraphStep[]): { request: GenerationRequest; deps: number }[] {
+  return graph.map((s) => ({ request: { ...s.request, ...(s.chain && { chain: s.chain }) }, deps: s.after?.length ?? 0 }));
+}
+
+/** The files a graph's steps read (uploads and results): an account's must all be its own. */
+export function graphFiles(graph: GraphStep[]): string[] {
+  const files = new Set<string>();
+  for (const s of graph) {
+    for (const v of Object.values(s.request.inputs ?? {})) for (const x of Array.isArray(v) ? v : [v]) if (typeof x === "string" && x) files.add(x);
+  }
+  return [...files];
+}
+
+/** What "Render" would run (an account's run is checked with it first). */
+export const renderGraph = (id: string): GraphStep[] => renderable(id).graph;
+
+/** The settings an episode is stored with: its picture sources set from the explainer's image sources. */
+function storedSettings(settings: EpisodeSettings, sources: ExplainerSource[]): EpisodeSettings {
+  const s = cleanSettings(settings);
+  s.sourceImages = sources.slice(0, MAX_SOURCES).filter((x): x is Extract<ExplainerSource, { kind: "image" }> => x.kind === "image").map((x) => x.url);
+  return s;
+}
+
+/**
+ * The graph an episode that isn't made yet would render with this script: an account's explainer or series episode,
+ * checked before anything is made. `genre`: the channel's (one that's made in the same run isn't there yet).
+ */
+export function draftGraph(input: { kind: "faceless" | "explainer"; channelId?: string | null; title: string; settings: EpisodeSettings; sources?: ExplainerSource[]; script: EpisodeScript; genre?: FacelessGenre }): GraphStep[] {
+  const blocks = normalizeBlocks(input.script.blocks);
+  if (!blocks.length) throw new FacelessError("The script has no scenes yet");
+  const ep: FacelessEpisode = {
+    id: "draft",
+    channelId: input.channelId ?? null,
+    kind: input.kind,
+    title: input.title,
+    topic: "",
+    status: "review",
+    error: null,
+    settings: storedSettings(input.settings, input.sources ?? []),
+    script: { ...input.script, blocks },
+    plan: null,
+    sources: [],
+    favorite: false,
+    createdAt: 0,
+    updatedAt: 0,
+  };
+  let graph: GraphStep[];
+  try {
+    graph = buildEpisodeGraph({ ...graphInput(ep, blocks), ...(input.genre && { genre: genreInfo(input.genre) }) }, getModel);
+  } catch (e) {
+    if (e instanceof FacelessError || e instanceof ConnectComfyError) throw e;
+    throw new FacelessError((e as Error).message, 422);
+  }
+  validate(graph);
+  return graph;
+}
+
+/** Start the render: the whole graph is checked first, then stage one (pictures, narration, its timing) starts. */
+export function renderEpisode(id: string, batch?: string): FacelessEpisode {
+  const { ready, graph } = renderable(id);
+  const batchId = batch ?? nanoid(10);
   const { ids, awaiting } = launch(ready, graph, {}, graph.map((s) => s.key), batchId);
   const plan: EpisodePlan = { batchId, ids, awaiting, changes: [] };
   updateEpisodeRow(id, { status: "rendering", error: null, plan_json: JSON.stringify(plan), script_json: JSON.stringify(ready.script) });
@@ -972,6 +1183,19 @@ export interface ChangeInput {
   instruction?: string;
   /** Narration: the block's new lines (one per block). */
   narration?: string[];
+}
+
+/** What "Retry" would run, at most (an account's run is checked with it first): the episode's graph as it renders now. */
+export function retryGraph(id: string): GraphStep[] {
+  const ep = mustEpisode(id);
+  return ep.plan ? currentGraph(ep) : renderGraph(id);
+}
+
+/** The steps a change would run (an account's run is checked with them first). */
+export function changeGraph(id: string, c: ChangeInput): GraphStep[] {
+  const { graph, plan } = changed(mustEpisode(id), c);
+  const rerun = new Set(plan.rerun);
+  return graph.filter((s) => rerun.has(s.key));
 }
 
 /** The blocks, picture edits and graph a change would render, and the steps it touches. */
@@ -1054,8 +1278,9 @@ export function applyChange(id: string, c: ChangeInput): FacelessEpisode {
     stillEdits,
     previous: { ids: p.ids, blocks: ep.script.blocks, stillEdits: p.stillEdits, timing: p.timing, untimed: p.untimed, awaiting: p.awaiting },
     lastFinal: final?.status === "succeeded" ? final.id : p.lastFinal,
-    // A new version: its upscale is made again on request.
+    // A new version: its upscale (or regenerated film) is made again on request.
     upscaled: undefined,
+    regenerated: undefined,
     changes: [...p.changes, { at: Date.now(), blocks: ids, part: c.part, instruction: c.part === "narration" ? (c.narration ?? []).join(" / ") : (c.instruction ?? ""), costUsd: est.unknown ? null : est.total }].slice(-50),
   };
   updateEpisodeRow(id, { status: "rendering", error: null, plan_json: JSON.stringify(updated), script_json: JSON.stringify({ ...ep.script, blocks }) });
@@ -1082,6 +1307,7 @@ export function undoChange(id: string): FacelessEpisode {
     previous: undefined,
     lastFinal: undefined,
     upscaled: undefined,
+    regenerated: undefined,
     changes,
   };
   updateEpisodeRow(id, { status: "rendering", error: null, plan_json: JSON.stringify(plan), script_json: JSON.stringify({ ...ep.script, blocks: prev.blocks }) });
@@ -1113,23 +1339,119 @@ function upscaleOffer(ep: FacelessEpisode, seconds: number): EpisodeView["upscal
 /** "Upscale to 1080p": one upscale step on the finished film, offered as the download once it's done. */
 export function upscaleEpisode(id: string): FacelessEpisode {
   const ep = mustEpisode(id);
+  const up = upscaleStep(ep);
+  if (!up) return ep;
+  let g: Generation;
+  try {
+    [g] = createGenerations(up.request, { batchId: ep.plan!.batchId, dependsOn: up.final.id });
+  } catch (e) {
+    if (e instanceof ConnectComfyError) throw e;
+    throw new FacelessError((e as Error).message, 422);
+  }
+  updateEpisodeRow(id, { plan_json: JSON.stringify({ ...ep.plan!, upscaled: g.id } satisfies EpisodePlan) });
+  return mustEpisode(id);
+}
+
+/** The upscale step on the finished film, or null when one is made or making already. */
+function upscaleStep(ep: FacelessEpisode): { request: GenerationRequest; final: Generation } | null {
   const modelId = ENGINE_MODELS[ep.settings.engine].upscale;
   if (!modelId) throw new FacelessError("This engine has no video upscaler", 422);
   const final = finalOf(ep);
   if (!ep.plan || !final) throw new FacelessError("Wait for the episode to finish first", 409);
   const had = ep.plan.upscaled ? getGeneration(ep.plan.upscaled) : null;
-  if (had && had.status !== "failed" && had.status !== "canceled") return ep;
-  let g: Generation;
+  if (had && had.status !== "failed" && had.status !== "canceled") return null;
+  const request: GenerationRequest = { feature: ep.kind, modelId, op: "upscale-video", params: { resolution: "1080p" }, chain: [{ slot: "video" }], title: `${ep.title} · 1080p`, batchTitle: ep.title, step: { label: "Upscale to 1080p", index: 0, of: 1 } };
+  return { request, final };
+}
+
+/** What "Upscale to 1080p" would run (an account's run is checked with it first): nothing when it's made or making. */
+export function upscaleToolSteps(id: string): { request: GenerationRequest; deps: number }[] {
+  const up = upscaleStep(mustEpisode(id));
+  return up ? [{ request: up.request, deps: 1 }] : [];
+}
+
+// ---------------------------------------------------------------------------
+// Regenerate to 1080p (open engine)
+
+/** "Regenerate to 1080p" on this episode: offered on the open engine once the film is done (null otherwise). */
+function regenerateOffer(ep: FacelessEpisode, scenes: number): EpisodeView["regenerate"] {
+  const modelId = ENGINE_MODELS[ep.settings.engine].regenerate;
+  // Open-H3 Regenerate needs a 48 GB card: offered with its label (own-setup.ts "regenerate:faceless"); an account's run
+  // goes to its own GPU only (regenerateEpisode), the owner's once it is offered.
+  if (!modelId || !getModel(modelId)) return null;
+  let demo = false;
   try {
-    [g] = createGenerations(
-      { feature: ep.kind, modelId, op: "upscale-video", params: { resolution: "1080p" }, chain: [{ slot: "video" }], title: `${ep.title} · 1080p`, batchTitle: ep.title, step: { label: "Upscale to 1080p", index: 0, of: 1 } },
-      { batchId: ep.plan.batchId, dependsOn: final.id },
-    );
+    demo = runsAsDemo(modelId, "upscale-video");
+  } catch {
+    // Nothing connected runs it yet: offered, and the click opens the connect card.
+  }
+  return { scenes, demo };
+}
+
+const REGENERATE_OPEN_ONLY = "Regenerate runs on your GPU (open source): switch the episode to open source to use it";
+const REGENERATE_WAIT = "Wait for the episode to finish first";
+
+/** Regenerate to 1080p has run on this episode, or is running. */
+function regeneratedAlready(ep: FacelessEpisode): boolean {
+  const had = ep.plan?.regenerated ? getGeneration(ep.plan.regenerated.final) : null;
+  return !!had && had.status !== "failed" && had.status !== "canceled";
+}
+
+/** What "Regenerate to 1080p" would run (an account's run is checked with it first): none once it has run or is running. */
+export function regenerateToolSteps(id: string): { request: GenerationRequest; deps: number }[] {
+  const ep = mustEpisode(id);
+  if (!ENGINE_MODELS[ep.settings.engine].regenerate) throw new FacelessError(REGENERATE_OPEN_ONLY, 422);
+  if (!ep.plan || !finalOf(ep)) throw new FacelessError(REGENERATE_WAIT, 409);
+  if (regeneratedAlready(ep)) return [];
+  const models = resolveModels(withOfferedVideo(ep.settings), narrationText(ep.script.blocks).length, getModel);
+  let plan: ReturnType<typeof regeneratePlan>;
+  try {
+    plan = regeneratePlan(currentGraph(ep), { engine: ep.settings.engine, joinMax: models.joinMax, lookup: getModel });
+  } catch (e) {
+    throw new FacelessError((e as Error).message, 422);
+  }
+  return plan.steps.map((s) => ({ request: { ...s.request, ...(s.chain && { chain: s.chain }) }, deps: s.after?.length ?? 0 }));
+}
+
+/**
+ * "Regenerate to 1080p": every scene redrawn by Open-H3 Regenerate (RIFE first for a 16 fps clip), joined at 1080p, with
+ * the episode's own narration, music bed and subtitles put back on (regeneratePlan). Runs on your GPU only; the finished
+ * film becomes the download once it's done, beside "Upscale to 1080p".
+ */
+export function regenerateEpisode(id: string): FacelessEpisode {
+  const ep = mustEpisode(id);
+  // Made or making already: the episode as it is (before any gate: nothing new runs).
+  if (regeneratedAlready(ep)) return ep;
+  // Open-H3 Regenerate needs a 48 GB card: an account runs it on its own GPU when that GPU fits it (own-setup-run.ts),
+  // never on this studio's. The owner's waits until it has run on a card that fits it (REGEN_OFFERED): nothing is made.
+  if (tenant()) ownSetupGate("regenerate:faceless");
+  else if (!REGEN_OFFERED) throw new FacelessError(REGEN_COPY.heldEpisode, 422);
+  if (!ENGINE_MODELS[ep.settings.engine].regenerate) throw new FacelessError(REGENERATE_OPEN_ONLY, 422);
+  const final = finalOf(ep);
+  if (!ep.plan || !final) throw new FacelessError(REGENERATE_WAIT, 409);
+  const graph = currentGraph(ep);
+  const models = resolveModels(withOfferedVideo(ep.settings), narrationText(ep.script.blocks).length, getModel);
+  let plan: ReturnType<typeof regeneratePlan>;
+  try {
+    plan = regeneratePlan(graph, { engine: ep.settings.engine, joinMax: models.joinMax, lookup: getModel });
+  } catch (e) {
+    throw new FacelessError((e as Error).message, 422);
+  }
+  const existing: Record<string, string> = {};
+  for (const k of regenerateReuses(plan.steps)) {
+    const gid = ep.plan.ids[k];
+    if (!gid || getGeneration(gid)?.status !== "succeeded") throw new FacelessError(`“${graph.find((s) => s.key === k)?.label ?? k}” has no result to reuse — retry the episode first`, 409);
+    existing[k] = gid;
+  }
+  let made: Record<string, string>;
+  try {
+    const pipeline = createPipeline(plan.steps, { batchId: ep.plan.batchId, existing });
+    made = Object.fromEntries(plan.steps.map((s) => [s.key, pipeline.byKey[s.key].id]));
   } catch (e) {
     if (e instanceof ConnectComfyError) throw e;
     throw new FacelessError((e as Error).message, 422);
   }
-  updateEpisodeRow(id, { plan_json: JSON.stringify({ ...ep.plan, upscaled: g.id } satisfies EpisodePlan) });
+  updateEpisodeRow(id, { plan_json: JSON.stringify({ ...ep.plan, regenerated: { ids: made, final: made[plan.final] } } satisfies EpisodePlan) });
   return mustEpisode(id);
 }
 
@@ -1196,7 +1518,10 @@ function sweep(): void {
   const rows = db().prepare("SELECT * FROM faceless_episodes WHERE status = 'rendering' AND plan_json LIKE '%\"awaiting\":true%'").all() as EpisodeRow[];
   for (const r of rows) {
     try {
-      settle(toEpisode(r));
+      // An account's episode goes on as its own work: its steps stamped as its runs, on its own GPU or key.
+      const owner = episodeOwner(r);
+      if (owner) asAccount(owner, () => settle(toEpisode(r)));
+      else settle(toEpisode(r));
     } catch (e) {
       console.warn(`[faceless] couldn't continue ${r.id}: ${(e as Error).message}`);
     }
@@ -1235,6 +1560,8 @@ export function episodeView(id: string): EpisodeView {
   const spent = [...gens.values()].reduce((n, g) => n + (g && g.status !== "failed" && g.status !== "canceled" ? (g.costUsd ?? 0) : 0), 0);
   const spans = sceneSpans(graph, current.script.blocks.length);
   const upscaled = plan?.upscaled ? getGeneration(plan.upscaled) : null;
+  const regenIds = Object.values(plan?.regenerated?.ids ?? {});
+  const regenerated = plan?.regenerated ? getGeneration(plan.regenerated.final) : null;
   return {
     episode: current,
     channel: current.channelId ? getChannel(current.channelId) : null,
@@ -1248,6 +1575,9 @@ export function episodeView(id: string): EpisodeView {
     timing: plan?.timing && !plan.untimed ? "narration" : "planned",
     upscaled,
     upscale: final ? upscaleOffer(current, spans.reduce((n, s) => n + s.seconds, 0)) : null,
+    regenerated,
+    regenerating: regenerated && (regenerated.status === "queued" || regenerated.status === "running") ? { done: regenIds.filter((g) => getGeneration(g)?.status === "succeeded").length, of: regenIds.length } : null,
+    regenerate: final ? regenerateOffer(current, steps.filter((s) => s.part === "clip").length) : null,
   };
 }
 
@@ -1288,8 +1618,10 @@ function toCard(r: EpisodeRow): EpisodeCard {
 }
 
 export function listEpisodes(o: { channelId?: string; kind?: "faceless" | "explainer"; q?: string; liked?: boolean; limit?: number }): EpisodeCard[] {
-  const where: string[] = [];
-  const args: unknown[] = [];
+  // Whoever the work is for: an account's own episodes, or the owner's.
+  const scope = episodeScope();
+  const where: string[] = [scope.sql];
+  const args: unknown[] = [...scope.args];
   if (o.channelId) {
     where.push("channel_id = ?");
     args.push(o.channelId);
@@ -1305,7 +1637,7 @@ export function listEpisodes(o: { channelId?: string; kind?: "faceless" | "expla
     args.push(`%${q}%`, `%${q}%`);
   }
   const rows = db()
-    .prepare(`SELECT * FROM faceless_episodes ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY created_at DESC LIMIT ?`)
+    .prepare(`SELECT * FROM faceless_episodes WHERE ${where.join(" AND ")} ORDER BY created_at DESC LIMIT ?`)
     .all(...args, Math.max(1, Math.min(o.limit ?? 60, 200))) as EpisodeRow[];
   return rows.map(toCard);
 }
@@ -1387,18 +1719,27 @@ function notesFor(settings: EpisodeSettings, seconds: number): { notes?: string[
 
 /** A short sample of a premade narrator (one cheap speech generation, reused once made). */
 export function voicePreview(voice: NarratorVoice & { kind: "preset" }): Generation {
+  const p = voicePreviewPlan(voice);
+  return "made" in p ? p.made : createGenerations(p.request)[0];
+}
+
+/**
+ * The narrator sample made before (only the asker's own: an account's, or the owner's), or the one speech generation that
+ * makes it (an account's run is checked with it first).
+ */
+export function voicePreviewPlan(voice: NarratorVoice & { kind: "preset" }): { made: Generation } | { request: GenerationRequest } {
   const modelId = ENGINE_MODELS.cloud.narration;
   const model = getModel(modelId)!;
   const v = model.options.voices?.find((x) => x.id === voice.id);
   if (!v) throw new FacelessError("Unknown voice");
   const existing = db()
     .prepare(
-      "SELECT g.id FROM generations g LEFT JOIN generation_trash t ON t.generation_id = g.id WHERE t.deleted_at IS NULL AND g.feature = 'faceless-voice' AND g.model_id = ? AND json_extract(g.request_json, '$.params.voice') = ? AND g.status IN ('queued', 'running', 'succeeded') ORDER BY g.created_at DESC LIMIT 1",
+      "SELECT g.id FROM generations g LEFT JOIN generation_trash t ON t.generation_id = g.id WHERE t.deleted_at IS NULL AND g.feature = 'faceless-voice' AND g.model_id = ? AND json_extract(g.request_json, '$.params.voice') = ? AND COALESCE(json_extract(g.request_json, '$.account'), '') = ? AND g.status IN ('queued', 'running', 'succeeded') ORDER BY g.created_at DESC LIMIT 1",
     )
-    .get(modelId, v.id) as { id: string } | undefined;
+    .get(modelId, v.id, tenantAccount() ?? "") as { id: string } | undefined;
   const found = existing && getGeneration(existing.id);
-  if (found) return found;
-  return createGenerations({ feature: "faceless-voice", modelId, op: "tts", prompt: previewLine(v.name), params: { voice: v.id }, title: `${v.name} · narrator sample` })[0];
+  if (found) return { made: found };
+  return { request: { feature: "faceless-voice", modelId, op: "tts", prompt: previewLine(v.name), params: { voice: v.id }, title: `${v.name} · narrator sample` } };
 }
 
 const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
@@ -1586,7 +1927,7 @@ export async function handle(fn: () => Promise<Response> | Response, request?: R
   try {
     return await fn();
   } catch (e) {
-    if (e instanceof FacelessError) return Response.json({ error: e.message }, { status: e.status });
+    if (e instanceof FacelessError || e instanceof AccountProjectError) return Response.json({ error: e.message }, { status: e.status });
     if (e instanceof ConnectComfyError) return (request && connectRefusal(e, request)) || Response.json({ error: e.message }, { status: 422 });
     console.error("[faceless]", e);
     return Response.json({ error: (e as Error).message || "Something went wrong" }, { status: 500 });

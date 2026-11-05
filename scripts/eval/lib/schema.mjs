@@ -5,7 +5,7 @@
 import { z } from "zod";
 
 export const ENGINES = /** @type {const} */ (["demo", "open", "cloud"]);
-export const METRICS = /** @type {const} */ (["clip", "aesthetic", "style", "identity", "temporal", "lipsync", "continuity", "palette", "background"]);
+export const METRICS = /** @type {const} */ (["clip", "aesthetic", "style", "identity", "temporal", "lipsync", "continuity", "palette", "background", "separation", "wer", "splat"]);
 
 const Slug = z.string().regex(/^[a-z0-9][a-z0-9-]*$/, "lower-case letters, digits and dashes");
 const CaseId = z.string().max(120).regex(/^[a-z0-9][a-z0-9._-]*(\/[a-z0-9][a-z0-9._-]*)*$/, "lower-case words joined by - . _ and /");
@@ -142,6 +142,10 @@ const Variant = z
     models: PerEngine(z.array(z.string().min(1)).min(1)).optional(),
     /** The engines this variant runs on (a partner model is a cloud model: on the others it would repeat another variant). */
     engines: z.array(z.enum(ENGINES)).min(1).optional(),
+    /** The op this variant's models run (a cleaner beside the splitters: enhance-voice), over the case's and the target's. */
+    op: z.string().optional(),
+    /** The cases this variant runs on: those with one of these tags (the splat suite's photo crop runs on photos only). The others skip it. */
+    tags: z.array(Slug).min(1).optional(),
     params: Params.optional(),
     extra: Json.optional(),
     /** Send this variant through a studio route instead of /api/generations (the case's own submit wins). */
@@ -229,6 +233,8 @@ export const SuiteSchema = z
         variant: Slug.optional(),
         /** The variant the promote rule judges and the blind review pairs with the others (default: recipe, else the first). */
         candidate: Slug.optional(),
+        /** The style metric's embedder for this suite's runs (pnpm eval:run / report --style-model overrides it): dinov2 compares pictures without words. */
+        styleModel: z.enum(["clip", "dinov2"]).optional(),
         timeoutSeconds: z.number().positive().default(1800),
       })
       .strict()
@@ -267,6 +273,10 @@ export const SuiteSchema = z
     const variants = Object.keys(s.variants ?? { default: {} });
     for (const k of ["variant", "candidate"]) {
       if (s.defaults[k] && !variants.includes(s.defaults[k])) ctx.addIssue({ code: "custom", path: ["defaults", k], message: `no variant ${s.defaults[k]} (have ${variants.join(", ")})` });
+    }
+    // A variant limited to tags must find at least one case with them.
+    for (const [name, v] of Object.entries(s.variants ?? {})) {
+      if (v.tags && !s.cases.some((c) => v.tags.some((t) => c.tags?.includes(t)))) ctx.addIssue({ code: "custom", path: ["variants", name, "tags"], message: `no case is tagged ${v.tags.join(" or ")}` });
     }
   });
 

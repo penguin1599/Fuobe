@@ -2,6 +2,7 @@ import "server-only";
 import { nanoid } from "nanoid";
 import { getModel, supportsOp } from "@/lib/catalog";
 import { MODEL3D_STEP_FEATURE, stillPromptFor3d } from "@/lib/av/model3d";
+import { HI3D_CHAIN_PARAM, HI3D_MODEL, HI3D_OP, HI3D_PARAM, chainedRefine } from "@/lib/av/hi3d";
 import { chainTiming, chainedWaitMessage, frameTimes, framesWait, planKeyframeClips, spread, type KeyframeClip } from "@/lib/catalog/keyframes";
 import { gapPrompt, MAKE_FPS, requestTiming } from "@/lib/inbetween";
 import { faceMosaicStep } from "@/lib/catalog/open-tools";
@@ -100,7 +101,8 @@ export interface JoinOptions {
   copy?: boolean;
 }
 
-const joinModelId = (engine: Engine, copy = false) => (engine === "open" ? (copy ? "oss-join-encoded" : "oss-join-clips") : "join-clips");
+/** The join a film of clips ends on: ComfyUI on your GPU (copied as they are when `copy`), fal in the cloud. */
+export const joinModelId = (engine: Engine, copy = false) => (engine === "open" ? (copy ? "oss-join-encoded" : "oss-join-clips") : "join-clips");
 
 /** Join generations' clips, in order. ComfyUI joins 4 at a time, so longer films are joined in steps. */
 export function joinClips(ids: string[], o: JoinOptions): Generation {
@@ -435,6 +437,62 @@ export function createStillTo3d(original: GenerationRequest, model: ModelDef, ro
     return withAsked([built, still], original, model.engine);
   } catch (e) {
     void cancelGeneration(still.id);
+    throw e;
+  }
+}
+
+/**
+ * Image to 3D's "Refine detail · Hi3D 1.0" (params.extra.hi3dRefine, open engine only): the model the user picked builds
+ * the coarse mesh from the photo, then Hi3D refines that mesh's geometry with the same photo (chain slot model3d) at the
+ * resolution asked for. Both results stay (the refined one is geometry only), in one batch.
+ */
+export function createRefinedModel(original: GenerationRequest, model: ModelDef, waits: { batchId?: string; dependsOn?: string | string[] } = {}): Generation[] {
+  const resolution = chainedRefine(original);
+  if (resolution === null) throw new Error("No refine step was asked for");
+  // Hi3D runs on your GPU only (nobody hosts the open model): the model before it runs there too.
+  if (model.engine !== "open") throw new Error("Refine detail runs on your GPU only: pick an open model, or turn Refine detail off");
+  // The model's photo may come from an earlier step (a Canvas image node, an Assist plan's still): Hi3D then waits for
+  // that step too, and reads the same photo the model was built from.
+  const deps = waits.dependsOn === undefined ? [] : Array.isArray(waits.dependsOn) ? waits.dependsOn : [waits.dependsOn];
+  const slots: ChainSlot[] = deps.map((_, i) => original.chain?.[i] ?? { slot: "images", position: original.chainFrom ?? "last" });
+  const own = original.inputs?.images?.[0];
+  const fed = slots.findIndex((s) => s.slot === "images");
+  const fedFirst = fed >= 0 && (slots[fed].at === 0 || (slots[fed].at === undefined && slots[fed].position === "first"));
+  const photoStep = fed >= 0 && (!own || fedFirst) ? deps[fed] : undefined;
+  const photo = photoStep ? undefined : own;
+  if (!photo && !photoStep) throw new Error("Add a photo of the object: Hi3D refines the model from it");
+  const op = original.op ?? "image-to-3d";
+  assertOneMode([
+    { label: model.name, modelId: model.id, op, engine: "open" },
+    { label: "Hi3D 1.0", modelId: HI3D_MODEL, op: HI3D_OP, engine: "open" },
+  ]);
+  const extra = { ...original.params?.extra };
+  delete extra[HI3D_CHAIN_PARAM];
+  const params: GenParams = { ...original.params, extra };
+  if (!Object.keys(extra).length) delete params.extra;
+  const batchId = waits.batchId ?? nanoid(10);
+  const built = createGenerations(
+    { ...original, op, ...(Object.keys(params).length ? { params } : { params: undefined }), step: { label: "3D model", index: 0, of: 2 } },
+    { batchId, ...(deps.length && { dependsOn: deps }) },
+  )[0];
+  try {
+    const seed = original.params?.seed;
+    const refined = createGenerations(
+      {
+        feature: original.feature,
+        modelId: HI3D_MODEL,
+        op: HI3D_OP,
+        engine: "open",
+        ...(photo && { inputs: { images: [photo] } }),
+        params: { extra: { [HI3D_PARAM]: resolution }, ...(seed !== undefined && { seed }) },
+        chain: photoStep ? [{ slot: "model3d" }, { slot: "images" }] : [{ slot: "model3d" }],
+        step: { label: "Refined detail", index: 1, of: 2 },
+      },
+      { batchId, dependsOn: photoStep ? [built.id, photoStep] : built.id },
+    )[0];
+    return withAsked([refined, built], original, "open");
+  } catch (e) {
+    void cancelGeneration(built.id);
     throw e;
   }
 }

@@ -5,6 +5,7 @@ import type { Intensity } from "@/lib/catalog/evolution";
 import type { Engine, Generation } from "@/lib/catalog/types";
 import { useDebounced } from "@/components/faceless/hooks";
 import { send } from "@/components/shorts/hooks";
+import { COMPUTER_KICK_EVENT } from "@/lib/api";
 
 /** React Query hooks for /api/evolution/** (the Evolution tab of Video tools). */
 
@@ -59,6 +60,8 @@ export function useEvolutionActions() {
     run: useMutation({
       mutationFn: (b: EvolutionBody) => send<{ final: Generation; items: Generation[]; direction: string; by: DirectionAnswer["by"] | "you" }>("/api/evolution", "POST", b),
       onSuccess: (r) => {
+        // The tab that runs this person's jobs on the ComfyUI on this computer asks for them at once.
+        window.dispatchEvent(new Event(COMPUTER_KICK_EVENT));
         r.items.forEach((g) => qc.setQueryData(["generation", g.id], g));
         void qc.invalidateQueries({ queryKey: ["generations"] });
       },

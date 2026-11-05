@@ -30,7 +30,7 @@ import { FUOBE_REPO } from "@/lib/connections";
 import { HOME_LIVE, presetHref, type HomeShowcase } from "@/lib/home-showcase";
 import { area } from "@/lib/nav-areas";
 import { studioCount } from "@/lib/nav-model";
-import { staggered } from "@/lib/preview-playback";
+import { staggered, type AutoPlay } from "@/lib/preview-playback";
 import { cn } from "@/lib/utils";
 import { plainTagline } from "@/lib/plain-tagline";
 import type { PresetCardData } from "@/lib/preset-cards";
@@ -120,26 +120,31 @@ export function SectionHead({
 }
 
 /**
- * Preset cards with a short line each: all of them in a phone's rail; from sm up, the first `wide`, and from lg to
- * xl the first `lg` (a rail costs no height, a grid does). The cards' own padding hangs outside the column, so each
- * picture lines up with the heading and the wall, 12 px from the next.
+ * Preset cards with a short line each: all of them in a phone's rail; as a grid, the first `xl` from xl, the first `lg`
+ * from lg to xl and the first `sm` from sm to lg (a rail costs no height, a grid does), so each grid's rows are full.
+ * The cards' own padding hangs outside the column, so each picture lines up with the heading and the wall, 12 px from
+ * the next. `item`: more classes for the `i`th card (Apps places its cards beside and under the before/after).
  */
 function Cards({
   items,
   className,
-  wide = items.length,
-  lg = wide,
+  xl = items.length,
+  lg = xl,
+  sm = lg,
+  item,
 }: {
   /** A card without a caption shows its description. */
   items: { card: HomeShowcase["effects"][number]["card"]; caption?: string }[];
   className: string;
-  wide?: number;
+  xl?: number;
   lg?: number;
+  sm?: number;
+  item?: (i: number) => string | false;
 }) {
   return (
     <HomeRail className={cn("gap-0 scroll-px-2.5 max-sm:px-2.5 sm:-mx-1.5", className)}>
       {items.map(({ card, caption }, i) => (
-        <div key={card.id} className={cn(RAIL_ITEM, i >= wide && "sm:hidden", i >= lg && "lg:max-xl:hidden")}>
+        <div key={card.id} className={cn(RAIL_ITEM, i >= xl && "xl:hidden", i >= lg && "lg:max-xl:hidden", i >= sm && "sm:max-lg:hidden", item?.(i))}>
           <PresetCard preset={card} href={presetHref(card.id)} caption={caption} place={staggered(i)} sizes={CARD_SIZES} bare />
         </div>
       ))}
@@ -147,7 +152,10 @@ function Cards({
   );
 }
 
-/** Home's preset rows (Effects, Camera motions), for an area page that shows them the same way. */
+/** A preset row on Home: four full rows wherever it's a grid (six a row from xl, four from lg, three from sm). */
+const ROWS = { xl: 24, lg: 16, sm: 12 };
+
+/** Home's preset rows (Camera motions, Effects), for an area page that shows them the same way. */
 export const PresetRail = Cards;
 
 /**
@@ -187,7 +195,7 @@ export function ShowcaseWall({
 
 export function EffectsSection({ facts, effects }: Pick<HomeShowcase, "facts" | "effects">) {
   return (
-    <section aria-labelledby="home-effects" data-reveal className={cn(SECTION, "[--cv:336px] sm:[--cv:946px] md:[--cv:846px] lg:[--cv:691px] xl:[--cv:490px]")}>
+    <section aria-labelledby="home-effects" data-reveal className={cn(SECTION, "[--cv:336px] sm:[--cv:951px] md:[--cv:1014px] lg:[--cv:1023px] xl:[--cv:930px]")}>
       <SectionHead
         id="home-effects"
         title="Effects"
@@ -195,14 +203,14 @@ export function EffectsSection({ facts, effects }: Pick<HomeShowcase, "facts" | 
         all="/effects"
         line="Add one photo and get the shot: storms, blooms, flares, floods."
       />
-      <Cards items={effects} className="sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6" />
+      <Cards items={effects} {...ROWS} className="sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6" />
     </section>
   );
 }
 
 export function MotionsSection({ facts, motions }: Pick<HomeShowcase, "facts" | "motions">) {
   return (
-    <section aria-labelledby="home-motions" data-reveal className={cn(SECTION, "[--cv:336px] sm:[--cv:528px] md:[--cv:492px] lg:[--cv:293px] xl:[--cv:290px]")}>
+    <section aria-labelledby="home-motions" data-reveal className={cn(SECTION, "[--cv:336px] sm:[--cv:935px] md:[--cv:1014px] lg:[--cv:1039px] xl:[--cv:930px]")}>
       <SectionHead
         id="home-motions"
         title="Camera motions"
@@ -210,7 +218,7 @@ export function MotionsSection({ facts, motions }: Pick<HomeShowcase, "facts" | 
         all="/motions"
         line="Moves a film crew would make: orbits, drone dives, crash zooms. Mix any two."
       />
-      <Cards items={motions} wide={6} lg={4} className="sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6" />
+      <Cards items={motions} {...ROWS} className="sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6" />
     </section>
   );
 }
@@ -218,21 +226,31 @@ export function MotionsSection({ facts, motions }: Pick<HomeShowcase, "facts" | 
 /**
  * Apps on Home: a before and after, and the apps whose clip wipes from one to the other. /apps opens on the same section
  * as its "Start here" (`start`): its own heading, no count and no "See all" (the page is all of them).
+ *
+ * From xl the cards take their places in the section's own grid of 36 columns (their row is `display: contents`
+ * there): the before/after over 15 of them and two rows, three cards a row beside it (7 columns each), then a row of six
+ * under both (6 each), as wide as the rows above and below the section. The cards' own padding sets the space between
+ * them, so the grid has no gap of its own; the before/after keeps 16 px from the cards beside it. Under xl, the
+ * before/after sits over the cards: four a row from lg, three from sm, a phone's rail.
  */
 export function AppsSection({ facts, beforeAfter, reveals, start }: Pick<HomeShowcase, "facts" | "beforeAfter" | "reveals"> & { start?: { title: string; line: string } }) {
   const id = start ? "apps-start" : "home-apps";
   return (
-    <section aria-labelledby={id} data-reveal className={cn(SECTION, "[--cv:676px] sm:[--cv:1004px] md:[--cv:943px] lg:[--cv:957px] xl:[--cv:525px]")}>
+    <section aria-labelledby={id} data-reveal className={cn(SECTION, "[--cv:676px] sm:[--cv:1384px] md:[--cv:1496px] lg:[--cv:1198px] xl:[--cv:719px]")}>
       {start ? (
         <SectionHead id={id} title={start.title} line={start.line} />
       ) : (
         <SectionHead id={id} title="Apps" count={facts.apps} all="/apps" line="One click changes one thing and keeps the rest." />
       )}
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-12 xl:gap-4">
-        <div className="min-w-0 xl:col-span-5 xl:pt-1.5">
+      <div className="grid grid-cols-1 gap-6 xl:-mx-1.5 xl:grid-cols-36 xl:gap-0">
+        <div className="min-w-0 xl:col-span-15 xl:row-span-2 xl:pt-1.5 xl:pr-2.5 xl:pl-1.5">
           <BeforeAfter pairs={beforeAfter} />
         </div>
-        <Cards items={reveals} className="self-start sm:grid-cols-3 xl:col-span-7" />
+        <Cards
+          items={reveals}
+          className="self-start sm:grid-cols-3 lg:grid-cols-4 xl:contents"
+          item={(i) => (i < 6 ? "xl:col-span-7" : "xl:col-span-6")}
+        />
       </div>
     </section>
   );
@@ -352,7 +370,8 @@ export interface DestinationPill {
 /**
  * Home's "Studios and tools" section, and each section of an area page (/create, /studios): a heading with its count,
  * one line, the cards (a phone's rail, two a row from sm, four from lg), then the rest as pills. More than eight pills
- * scroll sideways on a phone in a long row; eight or fewer wrap. `className`: the section's own spacing.
+ * scroll sideways on a phone in a long row; eight or fewer wrap. `className`: the section's own spacing. `sm`: how
+ * many of the rail's cards show from sm to lg (Home's: four rows of two), the rest on a phone and from lg.
  */
 export function DestinationsSection({
   id,
@@ -370,6 +389,8 @@ export function DestinationsSection({
   allCount,
   allNoun,
   after,
+  auto,
+  sm,
 }: {
   id: string;
   title: string;
@@ -390,11 +411,23 @@ export function DestinationsSection({
   allNoun?: string;
   /** Pills only the viewer's island adds (the owner's), after the others. */
   after?: React.ReactNode;
+  /** When the cards' clips play by themselves (StudioCard): Home's row, "always", like the preset rows above it. */
+  auto?: AutoPlay;
+  sm?: number;
 }) {
   const items = cards.map((s, i) => (
-    <div key={s.href} className={grid ? "min-w-0" : RAIL_ITEM}>
+    <div key={s.href} className={grid ? "min-w-0" : cn(RAIL_ITEM, sm !== undefined && i >= sm && "sm:max-lg:hidden")}>
       {s.card ? (
-        <StudioCard href={s.href} label={s.label} line={s.line} card={s.card} zoom={!s.card.preview.video} place={staggered(i)} sizes={grid ? GRID_SIZES : STUDIO_SIZES} />
+        <StudioCard
+          href={s.href}
+          label={s.label}
+          line={s.line}
+          card={s.card}
+          zoom={!s.card.preview.video}
+          place={staggered(i)}
+          sizes={grid ? GRID_SIZES : STUDIO_SIZES}
+          auto={auto}
+        />
       ) : s.drawn === "live" ? (
         <DrawnCard href={s.href} label={s.label} line={s.line}>
           {/* A picture inside the link: its own controls stay out of reach (the card is one tap). */}
@@ -458,7 +491,9 @@ export function StudiosSection({ facts, studios, audioTools, pills }: Pick<HomeS
       all={area("studios").href}
       allCount={studioCount()}
       allNoun="studios"
-      data-reveal className={cn(SECTION, "[--cv:529px] sm:[--cv:1597px] md:[--cv:1482px] lg:[--cv:770px] xl:[--cv:795px]")}
+      auto="always"
+      sm={8}
+      data-reveal className={cn(SECTION, "[--cv:529px] sm:[--cv:1526px] md:[--cv:1614px] lg:[--cv:1262px] xl:[--cv:1394px]")}
     />
   );
 }

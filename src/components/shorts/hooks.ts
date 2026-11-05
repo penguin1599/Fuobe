@@ -6,10 +6,16 @@ import { nanoid } from "nanoid";
 import { useCallback, useDeferredValue, useRef } from "react";
 import type { ShortsCustomPreset, ShortsRange, ShortsRatio, ShortsSession } from "@/lib/catalog/shorts";
 import type { Engine, Generation } from "@/lib/catalog/types";
-import { useGenerationEvents } from "@/lib/api";
+import { COMPUTER_KICK_EVENT, useGenerationEvents } from "@/lib/api";
 import { responseError } from "@/lib/refusals";
 
 /** React Query hooks for /api/shorts/** (kept next to the studio that uses them). */
+
+/**
+ * A run started: the tab that runs this person's jobs on the ComfyUI on this computer (an account's "Your GPU") asks for
+ * them at once, as after a studio run.
+ */
+const kick = () => window.dispatchEvent(new Event(COMPUTER_KICK_EVENT));
 
 async function json<T>(res: Response): Promise<T> {
   if (res.status === 204) return undefined as T;
@@ -153,10 +159,20 @@ export function useShortsActions(id?: string) {
   return {
     create: useMutation({
       mutationFn: (body: ShortsBody) => send<ShortsSession>("/api/shorts/sessions", "POST", body),
-      onSuccess: () => void qc.invalidateQueries({ queryKey: ["shorts", "sessions"] }),
+      onSuccess: () => {
+        kick();
+        void qc.invalidateQueries({ queryKey: ["shorts", "sessions"] });
+      },
     }),
     regenerate: useMutation({
       mutationFn: (v: { index: number; requestId?: string }) => send<ShortsSessionView>(`/api/shorts/sessions/${id}/segments/${v.index}`, "POST", { requestId: v.requestId }),
+      onSuccess: (s: ShortsSessionView) => {
+        kick();
+        put(s);
+      },
+    }),
+    enhance: useMutation({
+      mutationFn: (v: { index: number; requestId?: string }) => send<ShortsSessionView>(`/api/shorts/sessions/${id}/segments/${v.index}/enhance`, "POST", { requestId: v.requestId }),
       onSuccess: put,
     }),
     primary: useMutation({
@@ -165,7 +181,10 @@ export function useShortsActions(id?: string) {
     }),
     stitch: useMutation({
       mutationFn: (v: { requestId?: string } = {}) => send<ShortsSessionView>(`/api/shorts/sessions/${id}/stitch`, "POST", { requestId: v.requestId }),
-      onSuccess: put,
+      onSuccess: (s: ShortsSessionView) => {
+        kick();
+        put(s);
+      },
     }),
     rename: useMutation({
       mutationFn: (title: string) => send<ShortsSession>(`/api/shorts/sessions/${id}`, "PATCH", { title }),

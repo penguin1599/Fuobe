@@ -12,6 +12,7 @@ import {
   CREATURE_TYPES,
   DISPLAY_ORDER_FIRST,
   INFLUENCER_CATEGORIES,
+  RETIRED_OPTIONS,
   SHUFFLE_RESEARCH,
   type CreatureType,
   type HumanTier,
@@ -23,7 +24,7 @@ import type { PlanCaps } from "@/lib/catalog/packs";
 import { CAST_LOOK } from "@/lib/catalog/soul-cards";
 import type { ChainSlot, Engine, GenerationRequest } from "@/lib/catalog/types";
 
-export { CONFLICT_MESSAGES, CREATURE_TYPES, INFLUENCER_CATEGORIES };
+export { CONFLICT_MESSAGES, CREATURE_TYPES, INFLUENCER_CATEGORIES, RETIRED_OPTIONS };
 export type { CreatureType, HumanTier, InfluencerCategory, InfluencerOption, InfluencerTier };
 
 export const HUMAN_TIERS: { id: HumanTier; label: string; hint: string }[] = [
@@ -267,7 +268,7 @@ const one = (id: string | undefined): string[] => (id ? [id] : []);
  * Curvy, never Ultra Muscular in Average, never Heavy with Tall heights or a Tiny waist, never Centaur with
  * an Egg body or Ultra Muscular with a Long neck (nor any pick that would conflict). Those pairs hold whichever
  * side is kept: with a locked Heavy, Shuffle picks no tall height and no Tiny waist. Facial hair is Clean
- * unless the gender is male or trans man. How many multi-pick options it adds is Fuobe's choice (up to 1
+ * unless the gender is male. How many multi-pick options it adds is Fuobe's choice (up to 1
  * proportion, 1–2 features, up to 1 distinctive feature, 1 accessory).
  */
 export function shuffleInfluencer(state: InfluencerState, rand: () => number, opts: ShuffleOptions = {}): InfluencerState {
@@ -299,7 +300,7 @@ export function shuffleInfluencer(state: InfluencerState, rand: () => number, op
         break;
       case "facial_hair": {
         const g = picks.gender?.[0];
-        pick = g === "male" || g === "trans_man" ? one(uniform(ids, rand)) : ids.includes("fh_none") ? ["fh_none"] : [];
+        pick = g === "male" ? one(uniform(ids, rand)) : ids.includes("fh_none") ? ["fh_none"] : [];
         break;
       }
       case "proportions":
@@ -330,9 +331,7 @@ export const PHRASES: Record<string, string> = {
   // gender (people; creatures read CREATURE_GENDER)
   female: "woman",
   male: "man",
-  trans_man: "trans man",
-  trans_woman: "trans woman",
-  non_binary: "non-binary person",
+  other: "androgynous person",
   // ethnicity
   african: "African",
   east_asian: "East Asian",
@@ -518,7 +517,7 @@ export const PHRASES: Record<string, string> = {
   acc_bag: "a bag",
 };
 
-const CREATURE_GENDER: Record<string, string> = { female: "female", male: "male", trans_man: "trans-masculine", trans_woman: "trans-feminine", non_binary: "non-binary" };
+const CREATURE_GENDER: Record<string, string> = { female: "female", male: "male", other: "androgynous" };
 const CREATURE_NOUN: Record<CreatureType, string> = { insects: "insect", frogs: "frog", cats: "cat", dogs: "dog", capybaras: "capybara", birds: "bird" };
 const CREATURE_COAT: Record<CreatureType, string> = { insects: "body", frogs: "skin", cats: "fur", dogs: "fur", capybaras: "fur", birds: "feathers" };
 
@@ -650,9 +649,9 @@ export function describeInfluencer(state: InfluencerState): string {
   ].filter((x): x is string => !!x);
   const accessories = state.picks.accessory ?? [];
   const parts = [subject(state), ...body];
-  // "Clean" is what Shuffle gives everyone but men and trans men: said only where it means something.
+  // "Clean" is what Shuffle gives everyone but men: said only where it means something.
   const g = pick1(state, "gender");
-  if (pick1(state, "facial_hair") === "fh_none" && (g === "male" || g === "trans_man" || !g)) parts.push("clean-shaven");
+  if (pick1(state, "facial_hair") === "fh_none" && (g === "male" || !g)) parts.push("clean-shaven");
   if (withs.length) parts.push(`with ${list(withs)}`);
   const outfit = phrases(state, "aesthetic")[0];
   if (outfit) parts.push(`wearing ${outfit}`);
@@ -770,8 +769,9 @@ export function influencerName(state: InfluencerState): string {
 const HEX = /^#[0-9a-f]{6}$/i;
 
 /**
- * A state from the browser made safe: unknown categories and options, options the tier doesn't show and
- * picks over a category's limit are dropped (Features: one per slot). A conflict is reported, not fixed.
+ * A state from the browser made safe: a retired option id becomes its new option (an old Trans man pick is
+ * Male, Trans woman is Female, Non-binary is Other); unknown categories and options, options the tier doesn't
+ * show and picks over a category's limit are dropped (Features: one per slot). A conflict is reported, not fixed.
  */
 export function cleanState(raw: unknown): { state: InfluencerState; problem: string | null } {
   const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
@@ -779,7 +779,8 @@ export function cleanState(raw: unknown): { state: InfluencerState; problem: str
   const picks: Record<string, string[]> = {};
   const rawPicks = (r.picks && typeof r.picks === "object" ? r.picks : {}) as Record<string, unknown>;
   for (const c of categoriesFor(tier)) {
-    const ids = Array.isArray(rawPicks[c.id]) ? (rawPicks[c.id] as unknown[]).filter((x): x is string => typeof x === "string") : [];
+    const retired = RETIRED_OPTIONS[c.id] ?? {};
+    const ids = Array.isArray(rawPicks[c.id]) ? (rawPicks[c.id] as unknown[]).filter((x): x is string => typeof x === "string").map((id) => (Object.hasOwn(retired, id) ? retired[id] : id)) : [];
     let next: string[] = [];
     for (const id of ids) if (c.options.some((o) => o.id === id) && !next.includes(id)) next = picked(c, next, id).next;
     if (next.length) picks[c.id] = next;

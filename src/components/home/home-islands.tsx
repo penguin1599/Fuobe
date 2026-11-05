@@ -4,25 +4,38 @@ import { ArrowRight, Check, Copy, Pause, Play } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { CardPending, IntentLink } from "@/components/intent-link";
 import { useFadeEdges } from "@/components/use-fade-edges";
+import { useRailStills } from "@/components/use-rail-stills";
 import { PresetPreview, setPreviewsPaused, usePreviewPlayback, usePreviewsPaused } from "@/components/preset-preview";
 import { CONNECT_GPU_EVENT, signInHref, useHydrated, useIsOwner, useStatus } from "@/lib/api";
 import { copyWithToast } from "@/lib/clipboard";
 import type { PresetCardData } from "@/lib/preset-cards";
+import type { AutoPlay } from "@/lib/preview-playback";
 import { cn } from "@/lib/utils";
+
+const FADE_ROW = "fade-x scrollbar-none max-sm:-mx-4 max-sm:overflow-x-auto max-sm:px-4";
 
 /** A row that scrolls sideways on a phone, its edges fading where there's more to see. */
 export function FadeRow({ className, children }: { className?: string; children: React.ReactNode }) {
   const ref = useFadeEdges<HTMLDivElement>();
   return (
-    <div ref={ref} className={cn("fade-x scrollbar-none max-sm:-mx-4 max-sm:overflow-x-auto max-sm:px-4", className)}>
+    <div ref={ref} className={cn(FADE_ROW, className)}>
       {children}
     </div>
   );
 }
 
-/** A row of cards: a grid from sm up, a rail that snaps on a phone, with the next card peeking at the edge. */
+/**
+ * A row of cards: a grid from sm up, a rail that snaps on a phone, with the next card peeking at the edge. Every card's
+ * still loads as the row nears the screen, so a card sliding in from the side is never blank (useRailStills).
+ */
 export function HomeRail({ className, children }: { className?: string; children: React.ReactNode }) {
-  return <FadeRow className={cn("flex snap-x snap-mandatory scroll-px-4 sm:grid sm:[mask-image:none]", className)}>{children}</FadeRow>;
+  const ref = useFadeEdges<HTMLDivElement>();
+  useRailStills(ref);
+  return (
+    <div ref={ref} className={cn(FADE_ROW, "flex snap-x snap-mandatory scroll-px-4 sm:grid sm:[mask-image:none]", className)}>
+      {children}
+    </div>
+  );
 }
 
 /** Stops every preview playing by itself, on every page, for this visit; a hover still plays one. */
@@ -73,9 +86,10 @@ export function CopyCommand({ text }: { text: string }) {
 }
 
 /**
- * A studio's card. It plays where nothing can hover, like the cards above it; with a mouse it waits for one, so the
- * clips higher on the page keep the screen's few players. A hover on a card resting on its peak starts where the
- * change starts (PresetPreview's `asked`). `zoom`: a still that slowly closes in on hover instead.
+ * A studio's card. `auto` "always" (Home's row): its clip plays by itself while it's in view, like the preset cards
+ * above it, within the screen's few players. "touch" (an area page's grid): it plays by itself only where nothing can
+ * hover; with a mouse it waits for one. A hover on a card resting on its peak starts where the change starts
+ * (PresetPreview's `asked`). `zoom`: a still that slowly closes in on hover instead.
  */
 export function StudioCard({
   href,
@@ -85,6 +99,7 @@ export function StudioCard({
   zoom,
   place,
   sizes,
+  auto = "touch",
 }: {
   href: string;
   label: string;
@@ -93,8 +108,9 @@ export function StudioCard({
   zoom?: boolean;
   place?: number;
   sizes?: string;
+  auto?: AutoPlay;
 }) {
-  const { ref, playing, asked, handlers } = usePreviewPlayback<HTMLAnchorElement>(card.id, card.preview, { auto: "touch" });
+  const { ref, playing, asked, handlers } = usePreviewPlayback<HTMLAnchorElement>(card.id, card.preview, { auto });
   return (
     <IntentLink ref={ref} href={href} {...handlers} className="group/studio flex min-w-0 flex-col gap-2 rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-ring">
       <StudioPicture zoom={zoom}>

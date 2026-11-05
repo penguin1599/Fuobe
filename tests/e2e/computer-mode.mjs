@@ -164,11 +164,14 @@ try {
     await linkToggle.click();
     await dialog.getByRole("button", { name: "Find my ComfyUI" }).click();
     await dialog.getByText(`Something is running on port ${FAKE_PORT}, where your ComfyUI was before.`).waitFor({ timeout: 20_000 });
-    check("ComfyUI that this page can't use yet: one step, Fuobe Connect from ComfyUI-Manager", await dialog.getByText("Install Fuobe Connect in ComfyUI-Manager").isVisible());
-    check("the step names the Manager's search term and a git address to copy", (await dialog.getByLabel("the search term").first().textContent()) === "Fuobe Connect" && /git clone https:\/\//.test((await dialog.getByLabel("the git command", { exact: true }).textContent()) ?? ""));
-    check("the start setting and the guard are not shown until Advanced is opened", !(await dialog.getByRole("button", { name: "Download start file" }).isVisible()) && !(await dialog.getByText("--enable-cors-header").first().isVisible()));
+    // Fuobe Connect is the one step once it is published (FUOBE_CONNECT_PUBLISHED); until then the setting with the guard is.
+    const connectOffered = await dialog.getByText("Install Fuobe Connect in ComfyUI-Manager").isVisible();
+    if (connectOffered) {
+      check("the step names the Manager's search term and a git address to copy", (await dialog.getByLabel("the search term").first().textContent()) === "Fuobe Connect" && /git clone https:\/\//.test((await dialog.getByLabel("the git command", { exact: true }).textContent()) ?? ""));
+      check("the start setting and the guard are not shown until Advanced is opened", !(await dialog.getByRole("button", { name: "Download start file" }).isVisible()) && !(await dialog.getByText("--enable-cors-header").first().isVisible()));
+    } else check("ComfyUI that this page can't use yet: one step, Fuobe's setting with the guard", (await dialog.getByRole("button", { name: /Advanced: a start setting instead/ }).count()) === 0);
     await page.screenshot({ path: path.join(shots, "2-needs-setting.png") });
-    await dialog.getByRole("button", { name: /Advanced: a start setting instead/ }).click();
+    if (connectOffered) await dialog.getByRole("button", { name: /Advanced: a start setting instead/ }).click();
     check("Advanced: what the setting does to other websites, and that Fuobe's guard turns them away, before the download", await dialog.getByText(/other websites send work to your ComfyUI\. The start file adds Fuobe's guard/).isVisible());
     const startButton = dialog.getByRole("button", { name: "Download start file" });
     if (await startButton.isVisible()) {
@@ -448,8 +451,9 @@ try {
     const iphone = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1";
     const { ctx, page } = await account("e2e-phone@example.com", { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, userAgent: iphone });
     await page.goto(`${SITE}/connect`, { waitUntil: "load" });
-    const phone = await until(() => page.getByText("Your phone can't run ComfyUI.").first().isVisible(), 30_000);
-    check("a phone gets the link option, with why", !!phone && (await page.getByText(/public address/i).first().isVisible()));
+    const phone = await until(() => page.getByText("A phone or tablet can't reach the ComfyUI on your computer from a website.").first().isVisible(), 30_000);
+    check("a phone gets the link option, with why", !!phone && (await page.getByText("Give your ComfyUI a web address", { exact: true }).first().isVisible()));
+    check("…with where to get cloudflared, and no word to look up", (await page.getByRole("link", { name: "Windows", exact: true }).first().isVisible()) && !(await page.getByText(/start a tunnel|tunnel command|https address|public address|ngrok/i).first().isVisible().catch(() => false)));
     check("…and only the tunnel steps: nothing looks for a ComfyUI on the phone", !(await page.getByText(/No ComfyUI answered|may ask to let this site reach/).first().isVisible().catch(() => false)) && ctx.loopback.length === 0, ctx.loopback.slice(0, 3).join(" "));
     await page.screenshot({ path: path.join(shots, "6-phone.png") });
     // In "this computer" mode, the phone's page never tries to run the jobs itself: they wait for the computer's tab.
@@ -459,14 +463,49 @@ try {
     await page.reload({ waitUntil: "load" });
     await sleep(4000);
     check("a phone in this-computer mode never runs the jobs itself", beats.length === 0, beats.join(" "));
+    // …and its GPU settings say the computer is connected, not that this page can't reach it: the web address only on
+    // request.
+    await page.goto(`${SITE}/settings#your-gpu`, { waitUntil: "load" });
+    const shown = (l) => l.locator("visible=true").count();
+    await until(async () => (await shown(page.getByRole("button", { name: "Use a web address instead" }))) > 0, 30_000);
+    check(
+      "a phone in this-computer mode shows the computer first, with the web address on request",
+      (await shown(page.getByText("Your computer", { exact: true }))) > 0 &&
+        (await shown(page.getByRole("button", { name: "Use a web address instead" }))) > 0 &&
+        (await shown(page.getByText("A phone or tablet can't reach"))) === 0,
+    );
+    await page.screenshot({ path: path.join(shots, "6b-phone-computer.png") });
+    await page.getByRole("button", { name: "Use a web address instead" }).locator("visible=true").first().click();
+    check(
+      "…which opens the web address steps, saying the runs then go there",
+      !!(await until(async () => (await shown(page.getByText("Give your ComfyUI a web address", { exact: true }))) > 0, 10_000)) &&
+        (await shown(page.getByText("Once a web address is connected, your runs go there instead of to your computer."))) > 0,
+    );
+    await page.screenshot({ path: path.join(shots, "6d-phone-web-address.png") });
     await ctx.close();
+    // An iPad's Safari says "Macintosh", as a Mac's does: its touch screen makes it a tablet, never "Safari on your Mac".
+    const ipadUa = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15";
+    const ipad = await account("e2e-ipad@example.com", { viewport: { width: 1024, height: 1366 }, hasTouch: true, userAgent: ipadUa });
+    await ipad.ctx.addInitScript(() => {
+      Object.defineProperty(Navigator.prototype, "userAgentData", { get: () => undefined });
+      Object.defineProperty(Navigator.prototype, "maxTouchPoints", { get: () => 5 });
+    });
+    await ipad.page.goto(`${SITE}/connect`, { waitUntil: "load" });
+    const tablet = await until(() => ipad.page.getByText("A phone or tablet can't reach the ComfyUI on your computer from a website.").first().isVisible(), 30_000);
+    check("an iPad gets the tablet words, not Safari's or the finder", !!tablet && !(await ipad.page.getByText(/talk to programs on your Mac|switching browser/).first().isVisible().catch(() => false)));
+    await ipad.page.screenshot({ path: path.join(shots, "6c-ipad.png") });
+    await ipad.ctx.close();
     const safari = "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15";
     const s = await account("e2e-safari@example.com", { userAgent: safari });
     // Safari has no navigator.userAgentData (Chromium keeps its own under another user agent).
     await s.ctx.addInitScript(() => Object.defineProperty(Navigator.prototype, "userAgentData", { get: () => undefined }));
     await s.page.goto(`${SITE}/connect`, { waitUntil: "load" });
-    const sa = await until(() => s.page.getByText("Safari can't reach apps on this computer").first().isVisible(), 30_000);
+    const sa = await until(() => s.page.getByText("Safari doesn't let a website talk to programs on your Mac").first().isVisible(), 30_000);
     check("Safari gets the link option, with why", !!sa);
+    check(
+      "…the other browsers only as a last line, never \"open Fuobe in\"",
+      (await s.page.getByText("Chrome, Edge and Firefox allow this, so switching browser also works.").first().isVisible()) && !(await s.page.getByText(/open (Fuobe|fuobe\.com) in/i).first().isVisible().catch(() => false)),
+    );
     await s.ctx.close();
   }
 } catch (e) {

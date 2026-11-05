@@ -11,6 +11,8 @@
  *   tokens (owner only).
  */
 
+import { SETUP_CODE_PATH } from "./ai-setup/code";
+
 /** Set by the proxy on a guest's request to a route that answers guests itself (GUEST_FILTERED), and on its 401s. */
 export const GUEST_HEADER = "x-fuobe-guest";
 
@@ -67,6 +69,7 @@ const EMPTY: Record<string, unknown> = {
   "/api/shares": { items: [], signIn: true },
   "/api/photodump": { packs: [] },
   "/api/photodump/packs": { packs: [] },
+  "/api/photodump/characters": { items: [] },
   "/api/generations/facets": NO_FACETS,
   // GPU pre-flight: a guest has no GPU (Connect your GPU), so no board and no chips.
   "/api/gpu/readiness": { connected: false, reason: "guest" },
@@ -85,10 +88,23 @@ export type GuestRead =
   /** The owner's data: 401. */
   | { kind: "closed" };
 
+/**
+ * "Set it up with my AI" (src/app/api/setup): a setup's status by its code, the steps for an AI, and Fuobe's files those
+ * steps download. Open to everyone, with no session: the person's AI reads them. They hold nothing of an account.
+ */
+export const SETUP_PUBLIC_READ = new RegExp(
+  `^/api/setup/(?:${SETUP_CODE_PATH}|guide/(?:direct|address|connect)/(?:windows|mac|linux|other)|files/(?:fuobe_guard\\.py|start/\\d{1,5}))$`,
+  "i",
+);
+/** An account's own setup code: End this code, its tab's report, and its tab's wait. The routes take its own code only. */
+const SETUP_OWN = new RegExp(`^/api/setup/session/${SETUP_CODE_PATH}$`, "i");
+const SETUP_REPORT = new RegExp(`^/api/setup/session/${SETUP_CODE_PATH}/report$`, "i");
+const SETUP_WAIT = new RegExp(`^/api/setup/session/${SETUP_CODE_PATH}/wait$`, "i");
+
 /** What a guest's GET or HEAD gets. Anything not named here under /api stays closed. */
 export function guestRead(pathname: string): GuestRead {
   if (pathname !== "/api" && !pathname.startsWith("/api/")) return { kind: "pass" };
-  if (GUEST_READS.has(pathname)) return { kind: "pass" };
+  if (GUEST_READS.has(pathname) || SETUP_PUBLIC_READ.test(pathname)) return { kind: "pass" };
   if (GUEST_FILTERED.has(pathname) || GUEST_SKILL.test(pathname)) return { kind: "filtered" };
   if (Object.hasOwn(EMPTY, pathname)) return { kind: "empty", body: EMPTY[pathname] };
   if (pathname === "/api/generations/stream") return { kind: "none" };
@@ -119,8 +135,6 @@ export function isPriceCheck(method: string, pathname: string, search: string): 
  * the MCP endpoint…) is refused with "Connect your GPU": it never spends the owner's keys or GPU.
  */
 const LIBRARY_CHANGES: [methods: string, path: RegExp][] = [
-  // Split soundtrack's Export mix: a WAV saved, in parts, as an asset of the owner's Library (no account's upload).
-  ["POST", /^\/api\/audio-tools\/export$/],
   ["POST", /^\/api\/folders$/],
   ["PATCH DELETE", /^\/api\/folders\/[^/]+$/],
   ["PATCH DELETE", /^\/api\/generations\/[^/]+$/],
@@ -170,11 +184,34 @@ export function accountGeneration(method: string, pathname: string): string | un
  */
 export function accountOwnRead(pathname: string): boolean {
   if (ACCOUNT_LISTS.has(pathname)) return true;
-  return pathname === "/api/generations" || pathname === "/api/account/gpu" || pathname === "/api/account/keys" || GPU_READS.has(pathname) || COMPUTER_READ.test(pathname) || PAIRING_READS.has(pathname);
+  return (
+    pathname === "/api/generations" ||
+    pathname === "/api/account/gpu" ||
+    pathname === "/api/account/keys" ||
+    ACCOUNT_CANVASES.test(pathname) ||
+    GPU_READS.has(pathname) ||
+    COMPUTER_READ.test(pathname) ||
+    PAIRING_READS.has(pathname) ||
+    SETUP_WAIT.test(pathname)
+  );
 }
 
-/** The Library's counts and its Uploads (its stored files): each route answers an account with its own only. */
-const ACCOUNT_LISTS = new Set(["/api/generations/facets", "/api/assets"]);
+/** An account's own canvases (src/app/api/account/canvases): the routes read and change its own boards only. */
+const ACCOUNT_CANVASES = /^\/api\/account\/canvases(\/[^/]+)?$/;
+
+/**
+ * The Library's counts, its Uploads (its stored files), a zip of its runs (the Library's Download, a result's
+ * Download all, Shorts' Download parts), its own dubs (src/server/dub.ts) and its own Photodump packs (GET /api/photodump,
+ * the same list as /api/photodump/packs): each route answers an account with its own only.
+ */
+const ACCOUNT_LISTS = new Set(["/api/generations/facets", "/api/assets", "/api/generations/zip", "/api/dub", "/api/photodump"]);
+
+/**
+ * A signed-in account's zip of its own runs (/api/generations/zip; src/server/account-files.ts ACCOUNT_LIMITS): at most
+ * this many runs and this many bytes in one zip, one zip at a time. The Library sends at most this many.
+ */
+export const ACCOUNT_ZIP_MAX_RUNS = 200;
+export const ACCOUNT_ZIP_MAX_BYTES = 2 ** 30;
 
 /**
  * "Use the ComfyUI on this computer": the routes the person's own Fuobe tab runs their jobs through. Each takes whose
@@ -196,7 +233,8 @@ const GPU_READS = new Set(["/api/gpu/readiness", "/api/gpu/badges", "/api/gpu/pl
  * A change an account may send: signing out, its own GPU and its check, its own fal.ai and Replicate keys, price checks
  * (reads go by guestRead, as a guest's), an upload (the route checks it: src/app/api/uploads, which the proxy's matcher
  * leaves out), a look at its own clip's header (the route reads only its own files), and a result it made in its
- * browser (POST /api/generations/local: the route takes its own Kinetic Motion clips only).
+ * browser (POST /api/generations/local: a Kinetic Motion clip, a colour grade or a Relight blend of its own files;
+ * POST /api/audio-tools/export: Split soundtrack's Export mix), kept as its own run.
  */
 export function accountMayChange(method: string, pathname: string, search: string): boolean {
   if (method === "POST" && pathname === "/api/auth/logout") return true;
@@ -207,15 +245,24 @@ export function accountMayChange(method: string, pathname: string, search: strin
   // Running its own jobs on its own computer, and pairing (or unpairing) its own ComfyUI.
   if (COMPUTER_CHANGES.some(([m, p]) => m === method && p.test(pathname))) return true;
   if ((method === "POST" && pathname === "/api/gpu/pair") || (method === "DELETE" && /^\/api\/gpu\/paired\/[^/]+$/.test(pathname))) return true;
+  // "Set it up with my AI": its own setup code (make or update it, its tab's report, End this code). The routes take the
+  // account's own setup only.
+  if (method === "POST" && (pathname === "/api/setup/session" || SETUP_REPORT.test(pathname))) return true;
+  if (method === "DELETE" && SETUP_OWN.test(pathname)) return true;
   if (method === "POST" && (pathname === "/api/uploads" || pathname === "/api/media/probe")) return true;
+  // Its own canvases: save a board, rename it, save its pages, delete it (the routes take its own boards only).
+  if ((method === "POST" && pathname === "/api/account/canvases") || ((method === "PATCH" || method === "DELETE") && /^\/api\/account\/canvases\/[^/]+$/.test(pathname))) return true;
   // "Report this result", and a click on an offer the billing service sent (each route checks the rest).
   if (method === "POST" && (pathname === "/api/reports" || pathname === "/api/billing/interest")) return true;
   // Like, pin or review many of its own runs at once (the route checks each is its own, and refuses the rest).
   if (method === "POST" && pathname === "/api/generations/bulk") return true;
-  // A Kinetic Motion clip it rendered in its browser and uploaded, recorded as its own run (the route checks the files
-  // are its own, its run rate and the studio's checks; a grade or a Relight blend stays the owner's there). No model
-  // runs, so it needs no GPU or key of its own.
+  // A result it made in its browser and uploaded (a Kinetic Motion clip, a colour grade, a Relight blend), recorded as
+  // its own run (the route checks the files are its own, its run rate and the studio's checks). No model runs, so it
+  // needs no GPU or key of its own.
   if (method === "POST" && pathname === "/api/generations/local") return true;
+  // Split soundtrack's Export mix, sent in parts and kept as its own run (the route checks its room, its run rate and
+  // the studio's checks; the proxy's matcher leaves this route out, which runs the proxy itself).
+  if (method === "POST" && pathname === "/api/audio-tools/export") return true;
   return isPriceCheck(method, pathname, search);
 }
 
@@ -259,17 +306,91 @@ export function isLibraryChange(method: string, pathname: string): boolean {
 export const ACCOUNT_LIBRARY_MESSAGE = "We can't find that.";
 export const LIBRARY_MESSAGE = "Saving here isn't available. Download what you make from your runs.";
 
-/**
- * Runs an account may start once it has connected its own ComfyUI ("Your GPU") or added its own fal.ai or Replicate key
- * ("Your keys"): the studios' generations, camera motions, effects and apps, which the route sends to that ComfyUI or
- * that key only, with only its own uploaded files (src/app/api/generations/route.ts, generations.ts accountRun). Other
- * tools plan with the install's AI helpers or its own ComfyUI, so they stay refused.
- */
 /** A report anyone may send, signed in or not ("Report this result" on a shared link). */
 export const anyoneMayReport = (method: string, pathname: string): boolean => method === "POST" && pathname === "/api/reports";
 
+/**
+ * The tools an account runs on its own GPU or key, beside the studios' generations. Each route makes an account's checks
+ * itself (src/server/account-tool-run.ts: its own files, its limits, its GPU or key for every step) and refuses a guest
+ * with the sign-up card. Genjutsu's "Describe my character" runs its GPU describer on the account's own GPU.
+ */
+export const ACCOUNT_TOOL_RUNS: readonly RegExp[] = [
+  /^\/api\/genjutsu(\/(scene|transcribe))?$/,
+  // Storyboard: a board, and its film (the route reads the account's own board only).
+  /^\/api\/storyboards(\/[^/]+\/film)?$/,
+  // Image to 3D's runs (a model, a splat, a rig, a retexture): the model is finished on this server under the account's limits.
+  /^\/api\/image-to-3d$/,
+  // Genjutsu's "Describe my character": the GPU describer on the account's own GPU.
+  /^\/api\/genjutsu\/describe$/,
+  // Character Swap Studio's jobs on an account's own project (src/server/swap-studio-account.ts).
+  /^\/api\/swap-studio\/projects\/[^/]+\/(anchors|assemble|clips|masks|prepare|queue|sharpen|transcribe)$/,
+  // Cinema Studio: a take in the account's own project, a retry and a 2K finish of one of its takes.
+  /^\/api\/cinema\/projects\/[^/]+\/(generate|items\/[^/]+\/(retry|finish))$/,
+  // The photo apps: Photodump, Fashion Factory, Character Sheet, AI Influencer, and a retry of its own photo.
+  /^\/api\/(photodump(\/(fashion|character|retry))?|influencer)$/,
+  // Video tools: Remove object (a mask preview, and "Redo from here" on its own removal), Evolution (its direction is
+  // Fuobe's offline writer's), Mixed Media (a preview frame, and "Try again" on its own render), Turnaround video and
+  // Fly around (Image to 3D's "Film it photoreal"), and Katana (a retry or Run again of its own run).
+  /^\/api\/remove-object(\/(preview|reroll))?$/,
+  /^\/api\/evolution(\/direction)?$/,
+  /^\/api\/mixed-media(\/(preview|retry))?$/,
+  /^\/api\/(turnaround|fly-around)$/,
+  /^\/api\/katana(\/[^/]+\/retry)?$/,
+  // Audio's tools (Split soundtrack, Clean up dialogue, Remove dialogue, Edit speech, Loop, Join, Clean up voice), and
+  // Translate & dub: a dub, and voicing one language of the account's own dub (src/server/dub.ts).
+  /^\/api\/audio-tools$/,
+  /^\/api\/dub(\/[^/]+\/voice)?$/,
+  // Restore & colourise: its windows or pieces and their join on the account's own GPU or fal.ai key, with Fuobe's
+  // offline template for the words when none are given (the studio's AI helper stays the owner's: /api/restore/prompt).
+  /^\/api\/restore$/,
+];
+
+/**
+ * A tool's project routes that keep each account's projects apart (src/server/account-projects.ts): the proxy lets an
+ * account's reads and changes through, and the route answers with its own projects only (another's reads as not found).
+ * A guest's change gets the sign-up card; its reads go by guestRead. A tool adds its routes here when it opens to
+ * accounts.
+ */
+export const ACCOUNT_PROJECT_ROUTES: RegExp[] = [
+  // Character Swap Studio: the list, a project, its prices, its decisions, and stopping its jobs.
+  /^\/api\/swap-studio\/projects(\/[^/]+(\/(decisions|estimate|stop|takes\/stop))?)?$/,
+  // Shorts Studio: its own sessions (start one, a new take, Enhance a take on its own GPU, stitch again, pick a take,
+  // rename, delete) and its own presets.
+  /^\/api\/shorts\/sessions(\/[^/]+(\/stitch|\/segments\/[^/]+(\/(primary|enhance))?)?)?$/,
+  /^\/api\/shorts\/presets(\/[^/]+)?$/,
+  // Cinema Studio: its projects, folders, takes, grid tiles and AI Director chat (the Director's built-in breakdown:
+  // no AI helper, GPU or key), and a ready film made as its own project (src/server/cinema.ts).
+  /^\/api\/cinema\/projects(\/[^/]+(\/(director|folders|items|folders\/[^/]+|items\/[^/]+\/tiles))?)?$/,
+  /^\/api\/starters\/cinema\.[^/]+$/,
+  // Photodump and Fashion Factory: its own packs and its own characters (src/server/photodump.ts).
+  /^\/api\/photodump\/(packs|characters)(\/[^/]+)?$/,
+  // Katana: its own runs (the list, one run, forgetting one), and how far its own Mixed Media render's frames are.
+  /^\/api\/katana(\/[^/]+)?$/,
+  /^\/api\/mixed-media\/progress$/,
+  // Translate & dub: one of its own dubs (open it, save its reviewed lines, forget it). Its list is ACCOUNT_LISTS', and
+  // starting one is a tool run (ACCOUNT_TOOL_RUNS), so its price check is counted as every other.
+  /^\/api\/dub\/[^/]+$/,
+  // Faceless Studio, the Explainer and Content Factory: their own channels, episodes, explainers and series, their topic
+  // ideas, documents and narrator samples, and their runs (renders, retries, changes, upscales, avatars, readings), each
+  // checked by the route on its own GPU or key (src/server/faceless.ts, content-factory.ts). "Generate in Claude" isn't
+  // here (it hands the brief to the studio's own MCP server), nor reading a link (the server never fetches a link for an
+  // account: it uploads the file or pastes the words). "Regenerate to 1080p" runs on the account's own GPU only.
+  /^\/api\/faceless\/(channels(\/[^/]+(\/avatar)?)?|episodes(\/[^/]+(\/(render|retry|rewrite|undo|upscale|regenerate|change))?)?|topics|voices\/preview)$/,
+  /^\/api\/explainer(\/document)?$/,
+  /^\/api\/content-factory\/series(\/[^/]+(\/(episodes|generate|read))?)?$/,
+  /^\/api\/starters\/faceless\.[^/]+$/,
+];
+
+export const accountProjectRoute = (pathname: string): boolean => ACCOUNT_PROJECT_ROUTES.some((r) => r.test(pathname));
+
+/**
+ * Runs an account may start once it has connected its own ComfyUI ("Your GPU") or added its own fal.ai or Replicate key
+ * ("Your keys"): the studios' generations, camera motions, effects and apps, which the route sends to that ComfyUI or
+ * that key only, with only its own uploaded files (src/app/api/generations/route.ts, generations.ts accountRun), and
+ * the tools in ACCOUNT_TOOL_RUNS. Other tools plan with the install's AI helpers or its own ComfyUI, so they stay refused.
+ */
 export function ownGpuRun(method: string, pathname: string): boolean {
-  return method === "POST" && pathname === "/api/generations";
+  return method === "POST" && (pathname === "/api/generations" || ACCOUNT_TOOL_RUNS.some((r) => r.test(pathname)));
 }
 
 /** The code on an account's run refused because its runs going are at the limit: the next one may wait for a place and send again. */
@@ -287,9 +408,10 @@ export const CONNECT_GPU_UPLOAD_MESSAGE = "Connect your GPU, or add a fal.ai or 
 /** The same, on a studio with paid models off (no keys). */
 export const CONNECT_GPU_UPLOAD_OPEN_MESSAGE = "Connect your GPU to add your own files.";
 /**
- * Sent with the upload of a Kinetic Motion clip (or its poster) rendered in the browser, set to "1". Saving one needs no
- * model, so an account with neither its own GPU nor its own key may upload it too: an MP4 or WebM clip, or a PNG
- * poster, within the account's space and upload limits (src/app/api/uploads).
+ * Sent with the upload of a result rendered in the browser (a Kinetic Motion clip or its poster, a colour grade, a
+ * Relight blend), set to "1". Saving one needs no model, so an account with neither its own GPU nor its own key may
+ * upload it too: an MP4 or WebM clip, or a PNG picture, within the account's space and upload limits
+ * (src/app/api/uploads).
  */
 export const KINETIC_UPLOAD_HEADER = "x-fuobe-kinetic";
 /** An account with neither its own GPU nor its own key (the proxy's answer to a run): the card it opens offers both. */

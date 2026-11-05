@@ -9,7 +9,7 @@ import { fileToSlot } from "@/components/studio/media-slot";
 import { radioKeys, radioTab } from "@/components/studio/radio-keys";
 import { VoiceRecorder } from "@/components/studio/voice-recorder";
 import { useMaybeClean } from "@/components/audio-tools/clean-voice-switch";
-import { useElements } from "@/lib/api";
+import { useAskBeforeUpload, useElements, useLikelyVisitor } from "@/lib/api";
 import type { NarratorVoice, PickerData } from "@/lib/catalog/faceless";
 import type { Engine } from "@/lib/catalog/types";
 import { cn } from "@/lib/utils";
@@ -95,6 +95,11 @@ const sameVoice = (a: NarratorVoice | null, b: NarratorVoice) => !!a && a.kind =
 export function NarratorList({ engine, voices, value, onChange }: { engine: Engine; voices: PickerData["voices"]; value: NarratorVoice | null; onChange: (v: NarratorVoice) => void }) {
   const saved = (useElements().data ?? []).filter((e) => e.kind === "voice" && e.references[0]);
   const file = useRef<HTMLInputElement>(null);
+  // Your own file: a guest is asked to sign up, and an account with neither its own GPU nor its own key to connect one,
+  // before the chooser opens (as Record does).
+  const askFirst = useAskBeforeUpload();
+  // Saved voices are the studio owner's Elements: a visitor records or uploads one.
+  const visitor = useLikelyVisitor();
   const [q, setQ] = useState("");
   const [uploading, setUploading] = useState(false);
   // "Clean up voice" on the sample: the narration is cloned from the clean file (Faceless and Explainer both).
@@ -162,7 +167,7 @@ export function NarratorList({ engine, voices, value, onChange }: { engine: Engi
       )}
       <div>
         <p className="px-1 pb-1.5 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">{engine === "open" ? "Narrator to clone" : "Your own voice"}</p>
-        {engine === "open" && <p className="px-1 pb-2 text-[12px] text-muted-foreground">Open-source narration clones a voice: pick a saved voice, or record or upload 10–60 s of clean speech.</p>}
+        {engine === "open" && <p className="px-1 pb-2 text-[12px] text-muted-foreground">Open-source narration clones a voice: {saved.length ? "pick a saved voice, or record or upload" : "record or upload"} 10–60 s of clean speech.</p>}
         <div className="space-y-0.5">
           {saved.map((e) => row(`saved:${e.id}`, { kind: "sample", url: e.references[0], name: e.name }, e.name, voiceOrigin(e.voice) ?? e.description ?? "Saved voice", async () => e.references[0]))}
           {own && row(`own:${own.url}`, own, own.name ?? "Your recording", "Recorded or uploaded", async () => own.url)}
@@ -171,7 +176,7 @@ export function NarratorList({ engine, voices, value, onChange }: { engine: Engi
           <VoiceRecorder clean onRecorded={(v) => onChange({ kind: "sample", url: v.ref, name: v.name ?? "Your recording" })} />
           <button
             type="button"
-            onClick={() => file.current?.click()}
+            onClick={() => askFirst() || file.current?.click()}
             disabled={uploading}
             className="inline-flex h-8 items-center gap-1.5 rounded-full bg-secondary px-3 text-[13px] font-medium hover:bg-accent disabled:opacity-60"
           >
@@ -196,7 +201,7 @@ export function NarratorList({ engine, voices, value, onChange }: { engine: Engi
               );
             }}
           />
-          {!saved.length && (
+          {!saved.length && !visitor && (
             <Link href="/elements?new=1" className="ml-auto text-[12px] text-brand-text hover:underline">
               Save voices in Elements
             </Link>

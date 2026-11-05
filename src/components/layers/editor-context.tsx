@@ -92,7 +92,7 @@ export interface EditorCtx {
   setSplitTarget: (id: string | null) => void;
 }
 
-export type ToolId = "decompose" | "edit-text" | "remove-bg" | "regional" | "inpaint" | "upscale" | "enhance" | "relight" | "angles" | "expand" | "grade";
+export type ToolId = "decompose" | "edit-text" | "remove-bg" | "regional" | "inpaint" | "upscale" | "enhance" | "relight" | "angles" | "expand" | "grade" | "rerender";
 
 /** The tool form that started each kind of job (none: the layer card or the Generate layer dialog). */
 export const TOOL_FOR_JOB: Record<LayerTool, ToolId | null> = {
@@ -110,6 +110,7 @@ export const TOOL_FOR_JOB: Record<LayerTool, ToolId | null> = {
   expand: "expand",
   inpaint: "inpaint",
   enhance: "enhance",
+  rerender: "rerender",
 };
 
 /**

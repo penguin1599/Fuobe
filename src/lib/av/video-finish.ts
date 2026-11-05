@@ -81,6 +81,35 @@ export function framesPerPass(clip: ClipFacts, o: { shortSide?: number; modelSca
   return n;
 }
 
+/** The workflow of RTX Video Super Resolution (Upscale → Video's Quick · RTX). */
+export const RTX_UPSCALE_WORKFLOW = "upscale-video-rtx";
+
+/**
+ * The factor RTX Video Super Resolution runs at in upscale-video-rtx: the shorter edge asked for ÷ the clip's, within the
+ * node's 1-4x (the graph works it out the same way from the decoded size, then scales to exactly `shortSide`). 4 when the
+ * size is unknown (the most a pass can hold).
+ */
+export function rtxScale(clip: ClipFacts, shortSide: number): number {
+  const short = clip.width && clip.height ? Math.min(clip.width, clip.height) : 0;
+  if (!(short > 0)) return 4;
+  return Math.min(4, Math.max(1, shortSide / short));
+}
+
+/** The node's output size for a scale: each side × scale, rounded to the nearest multiple of 8 (the pack's rule). */
+export function rtxOutputSize(width: number, height: number, scale: number): { width: number; height: number } {
+  const to8 = (n: number) => Math.max(8, Math.round((n * scale) / 8) * 8);
+  return { width: to8(width), height: to8(height) };
+}
+
+/**
+ * Frames RTX Video Frame Generation returns for `frames` inputs at multiplier m: (N - 1) × m + 1 (one frame comes back
+ * unchanged). fps-rtx-framegen holds the last frame once more first, so a clip's N frames become N × m + 1, as RIFE's do.
+ */
+export function rtxFrameGenFrames(frames: number, multiplier: number): number {
+  if (frames < 2) return Math.max(0, frames);
+  return (frames - 1) * multiplier + 1;
+}
+
 /**
  * Bytes a whole-clip graph holds (FPS Boost, HDR, EXR export decode the whole clip as float32 frames):
  * `copies` frame-sized copies of every source frame (SDR to HDR and EXR 2, FPS Boost 2 + m). Undefined

@@ -551,9 +551,11 @@ export function buildPayload(map: FieldMap, input: GenInput): Record<string, unk
   }
   // The API's prompt expansion would rewrite a layout's boxes: off whenever the request carries one (a route that takes the
   // boxes in a field of their own, fal's FLUX 3 Klein, only when the draft places any). Prompt helper "off" turns it off too;
-  // "on" leaves the API's default (on).
+  // "on" leaves the API's default, or turns it on where the route sends it off by default.
   const laidOut = map.boundingBoxes ? carriesBoxes(input.extra) : carriesLayout(input.extra);
   if (map.promptExpansion && (laidOut || input.extra?.[PROMPT_HELPER_PARAM] === "off")) out[map.promptExpansion] = false;
+  // "on" for an API whose expansion is off unless asked (fal's Kandinsky 6.0: the route's default sends false).
+  else if (map.promptExpansion && input.extra?.[PROMPT_HELPER_PARAM] === "on" && map.defaults?.[map.promptExpansion] === false) out[map.promptExpansion] = true;
   // A background colour given as hex goes out in the palette's shape (Recraft wants {r,g,b}).
   const bg = map.palette?.background;
   if (bg && typeof out[bg] === "string") {

@@ -306,6 +306,7 @@ export function FolderSidebar({
   setView,
   counts,
   onDropItems,
+  elements = true,
   className,
 }: {
   projectId: string;
@@ -314,6 +315,8 @@ export function FolderSidebar({
   setView: (v: CinemaView) => void;
   counts: { home: number; favorites: number; folders: Map<string, number> };
   onDropItems: (ids: string[], folderId: string) => void;
+  /** "My Elements": the studio's saved elements (the owner's library), so the owner's only. */
+  elements?: boolean;
   className?: string;
 }) {
   const actions = useFolderActions(projectId);
@@ -326,7 +329,7 @@ export function FolderSidebar({
   const sections: { view: CinemaView; label: string; icon: typeof Home; count?: number }[] = [
     { view: { kind: "home" }, label: "Home", icon: Home, count: counts.home },
     { view: { kind: "studio" }, label: "My Generations", icon: Library },
-    { view: { kind: "elements" }, label: "My Elements", icon: AtSign },
+    ...(elements ? [{ view: { kind: "elements" } as CinemaView, label: "My Elements", icon: AtSign }] : []),
     { view: { kind: "favorites" }, label: "My Favorites", icon: Heart, count: counts.favorites },
   ];
   const newFolder = async () => {

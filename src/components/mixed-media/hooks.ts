@@ -5,7 +5,7 @@ import { keepPreviousData, useMutation, useQueries, useQuery, useQueryClient } f
 import { useDeferredValue } from "react";
 import type { MixedMode, MixedResolution, MixedValues } from "@/lib/catalog/mixed-media";
 import type { Engine, Generation } from "@/lib/catalog/types";
-import { useGenerationEvents } from "@/lib/api";
+import { COMPUTER_KICK_EVENT, useGenerationEvents } from "@/lib/api";
 import { send } from "@/components/shorts/hooks";
 
 /** React Query hooks for /api/mixed-media/** (renders, preview frames, estimates). */
@@ -139,6 +139,12 @@ export function renderSteps(chain: (Generation | undefined)[]): { g?: Generation
 /** A per-frame render (its frames go back together in an images-to-video step; a retry may keep the extraction from before). */
 export const isFrameRender = (chain: (Generation | undefined)[]) => chain.some((g) => g?.op === "extract-frames" || g?.op === "images-to-video");
 
+/**
+ * A run started: the tab that runs this person's jobs on the ComfyUI on this computer (an account's "Your GPU") asks for
+ * them at once, as after a studio run.
+ */
+const kick = () => window.dispatchEvent(new Event(COMPUTER_KICK_EVENT));
+
 export function useMixedActions() {
   const qc = useQueryClient();
   const seed = (g: Generation) => qc.setQueryData(["mixed-media", "generation", g.id], g);
@@ -146,18 +152,23 @@ export function useMixedActions() {
     render: useMutation({
       mutationFn: (b: MixedBody) => send<{ final: Generation; items: Generation[]; frames?: number }>("/api/mixed-media", "POST", b),
       onSuccess: (r) => {
+        kick();
         r.items.forEach(seed);
         void qc.invalidateQueries({ queryKey: ["generations"] });
       },
     }),
     preview: useMutation({
       mutationFn: (b: MixedBody) => send<Generation>("/api/mixed-media/preview", "POST", b),
-      onSuccess: seed,
+      onSuccess: (g) => {
+        kick();
+        seed(g);
+      },
     }),
     /** Run a finished-or-failed render again with the same settings (History's "Try again"). */
     retry: useMutation({
       mutationFn: (v: { id: string; requestId?: string }) => send<{ final: Generation; items: Generation[]; frames?: number }>("/api/mixed-media/retry", "POST", v),
       onSuccess: (r) => {
+        kick();
         r.items.forEach(seed);
         void qc.invalidateQueries({ queryKey: ["generations"] });
       },

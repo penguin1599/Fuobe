@@ -47,10 +47,10 @@ step vitest env FUOBE_ACCOUNT_DISK_FREE_GB="${FUOBE_ACCOUNT_DISK_FREE_GB:-1}" pn
 step eval-validate pnpm eval:validate
 step build env NEXT_TELEMETRY_DISABLED=1 pnpm build
 
-# Demo mode with ComfyUI and Ollama unreachable: every browser check.
+# Demo mode (placeholder results on; main's default is off since 11-03) with ComfyUI and Ollama unreachable: every browser check.
 rm -rf "$S/data-demo"; mkdir -p "$S/data-demo"
 stop_port 3399
-COMFYUI_URL=http://127.0.0.1:1 OLLAMA_URL=http://127.0.0.1:1 FUOBE_DATA_DIR=$S/data-demo NEXT_TELEMETRY_DISABLED=1 pnpm start -p 3399 > "$L/server-demo.log" 2>&1 &
+FUOBE_DEMO_MODE=on COMFYUI_URL=http://127.0.0.1:1 OLLAMA_URL=http://127.0.0.1:1 FUOBE_DATA_DIR=$S/data-demo NEXT_TELEMETRY_DISABLED=1 pnpm start -p 3399 > "$L/server-demo.log" 2>&1 &
 wait_up http://localhost:3399/ && echo "demo server up" >> "$SUM"
 for t in $DEMO_CHECKS; do
   step "e2e-$t" timeout 1200 node "tests/e2e/$t.mjs" http://localhost:3399

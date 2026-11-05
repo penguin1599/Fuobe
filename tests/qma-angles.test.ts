@@ -176,7 +176,7 @@ describe("the turnaround", () => {
   });
 
   it("makes the 8-view still set from the front view in one batch, with no film", () => {
-    expect(ROUTES_ON.open).toEqual(["frames", "stills"]);
+    expect(ROUTES_ON.open).toEqual(["worldcast", "frames", "stills"]);
     expect(TURN_ROUTES.stills.modelId).toBe(QMA_MODEL);
     const plan = planTurnaround({ engine: "open", views: { front: "/api/files/front.png", back: "/api/files/back.png" }, route: "stills", name: "Ada" });
     expect(plan.route).toBe("stills");

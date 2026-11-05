@@ -26,7 +26,6 @@ export const STARTER_SURFACES: Record<StarterSurface, { base: string; name: stri
     name: "Cinema Studio",
     section: "Start from a ready film",
     note: "Each one comes with its look, its brief and three shots. It opens with shot 1 ready to make.",
-    visitorNote: "Each one comes with its look, its brief and three shots.",
     unavailable: "Projects aren't available here.",
   },
   storyboard: {
@@ -130,3 +129,10 @@ export const starterHref = (s: Pick<StarterCardData, "id" | "surface"> & { use?:
 
 /** Who sees a starter's card: a visitor only one with its real cover (the owner sees all, marked). */
 export const starterShown = (s: Pick<StarterCardData, "cover">, visitor: boolean) => !visitor || !!s.cover;
+
+/**
+ * Surfaces whose starters a visitor makes too: a signed-in account's Cinema film and Faceless channel are its own
+ * projects, and a ready series or explainer fills its own composer (a guest is offered a free account first). Elsewhere
+ * a starter is saved to the owner's library, so only the owner makes it.
+ */
+export const VISITOR_MAKES: ReadonlySet<StarterSurface> = new Set<StarterSurface>(["cinema", "faceless", "content-factory", "explainer"]);

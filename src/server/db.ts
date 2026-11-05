@@ -981,6 +981,13 @@ declare global {
   var __fuobeAuthTablesError: string | null | undefined;
 }
 
+/** Whether skill_runs is the earlier build's table (no engine column), and no table holds the earlier runs yet. */
+function skillRunsFromEarlierBuild(db: Database.Database): boolean {
+  const columns = (db.prepare("PRAGMA table_info(skill_runs)").all() as { name: string }[]).map((c) => c.name);
+  if (!columns.length || columns.includes("engine")) return false;
+  return !db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'skill_runs_earlier'").get();
+}
+
 /**
  * A data folder that ran PR #15's branch before the owner dropped the old accounts packages on 10-30
  * (`claude/fuobe-parity-4` up to f7c6d8e, `claude/fuobe-r5-batch-7` up to c9cd489) has places 23 and 24 marked done for
@@ -1064,8 +1071,19 @@ function open(): Database.Database {
   }
   // Admin tokens and the admin API's log.
   db.exec(ADMIN_TABLES);
-  // Skills: the runs that wait across studios.
+  // Skills: the runs that wait across studios. A data folder that ran claude/fuobe-parity-4's earlier build of this
+  // feature (its numbered migration at place 27, a skill_runs with no engine column and runs kept in another shape)
+  // keeps that table under another name, so these runs start from an empty table. Nothing is deleted.
+  if (skillRunsFromEarlierBuild(db)) {
+    db.exec("DROP INDEX IF EXISTS skill_runs_skill; DROP INDEX IF EXISTS skill_runs_status; ALTER TABLE skill_runs RENAME TO skill_runs_earlier;");
+  }
   db.exec(SKILL_TABLES);
+  // An account's own canvases (account-canvas.ts): not a numbered migration, so branches never clash over its place.
+  db.exec(ACCOUNT_CANVAS_TABLES);
+  // Its list reads this small summary, never every board's pages (a table made before it had the column gets it).
+  if (!(db.prepare("PRAGMA table_info(account_canvases)").all() as { name: string }[]).some((c) => c.name === "summary_json")) {
+    addColumn(db, "ALTER TABLE account_canvases ADD COLUMN summary_json TEXT");
+  }
   // A billing hold's rows are found through this index (only rows that have one are in it).
   try {
     db.exec("CREATE INDEX IF NOT EXISTS generations_hold ON generations(json_extract(request_json, '$.hold')) WHERE json_extract(request_json, '$.hold') IS NOT NULL");
@@ -1082,6 +1100,19 @@ function open(): Database.Database {
   keepPrivate(file);
   return db;
 }
+
+/** An account's own canvases (public sign-up, src/server/account-canvas.ts), never in the owner's `canvases`. */
+const ACCOUNT_CANVAS_TABLES = `CREATE TABLE IF NOT EXISTS account_canvases (
+    id TEXT PRIMARY KEY,
+    account_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    pages_json TEXT NOT NULL,
+    template_id TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    summary_json TEXT
+  );
+  CREATE INDEX IF NOT EXISTS account_canvases_account ON account_canvases(account_id, updated_at DESC);`;
 
 export function db(): Database.Database {
   globalThis.__fuobeDb ??= open();

@@ -45,7 +45,7 @@ async function pair(who: string, name = "pc") {
   expect(ok.status).toBe(200);
   const p = await (await pollRoute.POST(program("/api/gpu/pair/poll", undefined, { body: JSON.stringify({ id: s.id, secret: s.secret }) }))).json();
   expect(p.state).toBe("approved");
-  return { token: p.token as string, id: p.workerId as string, code: s.code as string, secret: s.secret as string, pairId: s.id as string };
+  return { token: p.token as string, id: p.workerId as string, code: s.code as string, secret: s.secret as string, pairId: s.id as string, account: p.account as string };
 }
 
 beforeAll(() => {
@@ -68,7 +68,9 @@ describe("pairing a ComfyUI", () => {
     const s = await res.json();
     expect(s.code).toMatch(/^[A-HJKMNP-Z2-9]{4}-[A-HJKMNP-Z2-9]{4}$/);
     // The studio's own address, as the request reached it.
-    expect(s.url).toBe(`${SITE}/connect?code=${s.code}`);
+    // The page asks for the code: the link never carries one to fill in.
+    expect(s.url).toBe(`${SITE}/connect?pair=1`);
+    expect(s.url).not.toContain(s.code);
     expect(s.secret).toMatch(/^[0-9a-f]{64}$/);
     const p = await (await pollRoute.POST(program("/api/gpu/pair/poll", undefined, { body: JSON.stringify({ id: s.id, secret: s.secret }) }))).json();
     expect(p.state).toBe("waiting");
@@ -93,6 +95,8 @@ describe("pairing a ComfyUI", () => {
     auth.setAccountGpu(a, null);
     const p = await pair("a");
     expect(p.token).toMatch(/^fuobe_wkr_[A-Za-z0-9_-]{43}$/);
+    // ComfyUI's window says who approved it, masked.
+    expect(p.account).toBe("a•••@example.com");
     expect(auth.accountGpu(a)?.mode).toBe("computer");
     const rows = JSON.stringify(db().prepare("SELECT * FROM relay_workers").all()) + JSON.stringify(db().prepare("SELECT * FROM relay_pairings").all());
     expect(rows).not.toContain(p.token);
@@ -114,6 +118,7 @@ describe("pairing a ComfyUI", () => {
   it("the owner can pair too: ComfyUI then runs on the owner's computer", async () => {
     setSetting("comfyWhere", "server");
     const p = await pair("owner");
+    expect(p.account).toBe("the studio's owner");
     expect(getSetting("comfyWhere")).toBe("computer");
     const req = program("/api/gpu/computer/beat", p.token);
     expect(principalOf(req)).toBe("owner");

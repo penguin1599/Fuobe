@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { createContext, Suspense, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { PhoneNavButton } from "@/components/nav/phone-nav-button";
+import { OwnSetupMark } from "@/components/own-setup";
 import { EngineSwitch } from "@/components/studio/engine-switch";
 import { useEngine, useLikelyVisitor } from "@/lib/api";
 import { HUB_MODES, HUB_TITLE, hubOfPath, modeHref, modeOfPath, type HubKind } from "@/lib/hubs";
@@ -157,6 +158,7 @@ function HubTabs({
               {...onAttr(on)}
             >
               {m.label}
+              {m.ownSetup && <OwnSetupMark setup={m.ownSetup} />}
               <TabWaiting onWaiting={onWaiting} />
             </Link>
           );

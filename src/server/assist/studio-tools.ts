@@ -1,4 +1,5 @@
 import "server-only";
+import { worldcastContext } from "../worldcast-on";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import type { PlannedJob } from "@/lib/assist";
@@ -11,7 +12,8 @@ import { offlineRestorePrompt, RESTORE, restoreNegative } from "@/lib/catalog/re
 import { SHORTS_MODELS } from "@/lib/catalog/shorts";
 import type { ChainSlot, Engine, GenerationRequest, Operation } from "@/lib/catalog/types";
 import { TOOL_MODELS } from "@/lib/layers";
-import { planCinema } from "@/lib/catalog/cinema";
+import { planCinema, worldFilmSteps } from "@/lib/catalog/cinema";
+import { normalizeWorld, PERSPECTIVES, STYLES as WORLD_STYLES, WORLD_LIMITS, WORLD_MODEL, WORLD_MOVES, type Perspective, type WorldScript, type WorldStyle } from "@/lib/world";
 import { FLY_VIEWS_MAX, planFlyAround } from "@/lib/catalog/fly-around";
 import { PATH_PRESETS } from "@/lib/camera-path";
 import { createPipeline, type PipelineStep } from "../chains";
@@ -21,6 +23,8 @@ import { db } from "../db";
 import { chooseRoute, ConnectComfyError, createGenerations, outputKind, previewChained } from "../generations";
 import { isOffered } from "../model-access";
 import { engineMode } from "../settings";
+import { storedMedia } from "../storage";
+import { EMOTIONS, PACES, PITCH_STEPS, planSpeechEdit, VOLUME_STEPS, CLOUD_ONLY_SPEECH_EDIT_PROBLEM, type SpeechEffect } from "@/lib/speech-edit";
 import { fileUrl, saveFile } from "../storage";
 import { defineTool, type JobPlace, type ToolContext, type ToolOutcome } from "./define";
 
@@ -820,6 +824,156 @@ const blockoutFilm = defineTool({
 });
 
 // ---------------------------------------------------------------------------
+// World mode: Hy-Nomas on your GPU, turn after turn, joined into one film
+
+const WorldTurnInput = z.object({
+  words: z.string().max(WORLD_LIMITS.maxWords).describe("What changes in this turn, e.g. 'a wooden bridge crosses a glowing stream ahead'. Can be empty when the camera move alone steers the turn."),
+  action: z.string().max(WORLD_LIMITS.maxWords).optional().describe("What the subject does during the turn."),
+  move: z.string().optional().describe(`The camera move: ${WORLD_MOVES.map((m) => m.id).join(", ")} (still = the camera stays put).`),
+  seconds: z.number().min(WORLD_LIMITS.minSeconds).max(WORLD_LIMITS.maxSeconds).optional().describe(`Seconds, ${WORLD_LIMITS.minSeconds}–${WORLD_LIMITS.maxSeconds} (default 12).`),
+});
+const WorldFilmInput = z.object({
+  scene: z.string().min(1).max(WORLD_LIMITS.maxScene).describe("The world the film starts in, in words: place, light, weather, what is in view."),
+  subject: z.string().max(120).optional().describe("Who or what the camera follows (optional), e.g. 'a small orange fox'."),
+  details: z.string().max(WORLD_LIMITS.maxWords).optional().describe("How the subject looks."),
+  action: z.string().max(WORLD_LIMITS.maxWords).optional().describe("What happens in the opening."),
+  perspective: z.enum(PERSPECTIVES.map((p) => p.id) as [Perspective, ...Perspective[]]).optional().describe("The camera: third-person follow (default), third-person observer, first-person or second-person."),
+  style: z.enum(WORLD_STYLES.map((p) => p.id) as [WorldStyle, ...WorldStyle[]]).optional().describe("The look (default real-world footage)."),
+  move: z.string().optional().describe("The opening's camera move (default zoom_in)."),
+  seconds: z.number().min(WORLD_LIMITS.minSeconds).max(WORLD_LIMITS.maxSeconds).optional().describe("The opening's seconds (default 12)."),
+  turns: z.array(WorldTurnInput).max(WORLD_LIMITS.maxTurns - 1).describe(`The turns after the opening, in order. A 60 s walk-through is the opening and four turns of 12 s; up to ${WORLD_LIMITS.maxTotal} s in all.`),
+  seed: z.number().int().min(0).optional(),
+});
+export type WorldFilmToolInput = z.infer<typeof WorldFilmInput>;
+
+/** The tool's arguments as a World script. */
+export function worldFilmScript(i: WorldFilmToolInput): WorldScript {
+  return normalizeWorld({
+    opening: { words: i.scene, subject: i.subject, details: i.details, action: i.action, perspective: i.perspective, style: i.style, move: i.move ?? "zoom_in", seconds: i.seconds ?? 12 },
+    turns: i.turns.map((t) => ({ words: t.words, action: t.action, move: t.move ?? "still", seconds: t.seconds ?? 12 })),
+    seed: i.seed ?? Math.floor(Math.random() * 2 ** 31),
+  });
+}
+
+/** The film's steps: on your GPU whatever the chat's engine (no cloud service runs Hy-Nomas); "Paid APIs only" refuses it. */
+function worldFilmSteps_(i: WorldFilmToolInput): PipelineStep[] {
+  return worldFilmSteps(worldFilmScript(i), engineMode() === "cloud" ? "cloud" : "open").map((s) => ({ key: s.key, request: s.request, ...(s.after?.length && { after: s.after }) }));
+}
+
+const worldFilm = defineTool({
+  name: "world_film",
+  description:
+    "Film a world walk-through — Fuobe's World mode (Cinema Studio → World): Hy-Nomas (Tencent, open source) on your GPU starts a world from words, then continues it turn by turn, each turn steered by what changes, what the subject does and a camera move from the fly-path library (orbits, arcs, dollies, trucks, figure-8, or still); the turns are joined into one film, 1280 × 704 at 24 fps. " +
+    "Free on your GPU (about 24 GB; it runs on no cloud service), silent (add sound with Sound for video or Music afterwards). For 'a 60 s world walk-through' pass the opening and four turns of 12 s. Gated by the same approval card as generate.",
+  schema: WorldFilmInput,
+  gated: true,
+  title: (i) => `World: ${i.scene}`.slice(0, 80),
+  plan: (i) => {
+    try {
+      return planSteps("world_film", worldFilmSteps_(i));
+    } catch (e) {
+      return [{ tool: "world_film", modelId: WORLD_MODEL, modelName: "World", kind: "video", op: "world-turn", prompt: "World", count: 0, costUsd: 0, demo: false, atomic: true, error: (e as Error).message }];
+    }
+  },
+  async run(i) {
+    let steps: PipelineStep[];
+    try {
+      steps = worldFilmSteps_(i);
+    } catch (e) {
+      return { content: JSON.stringify({ error: (e as Error).message }), isError: true };
+    }
+    return startPipeline("World", steps, `World: ${i.scene}`.slice(0, 200));
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Edit speech: Tencent AuK on your GPU
+
+const SpeechEditInput = z.object({
+  media: ref.describe("The recording (or video) whose speech to change."),
+  kind: z.enum(["audio", "video"]).describe("audio, or video (its sound is edited and put back on the picture, copied as it is; each change keeps its length so the sound stays in step, and pace is for audio only)."),
+  transcript: z
+    .array(z.object({ start: z.number().min(0), end: z.number().min(0), text: z.string() }))
+    .min(1)
+    .max(2000)
+    .describe("Its transcript as timed lines (seconds), e.g. the cues of a transcribe result on this file."),
+  changes: z
+    .array(z.object({ line: z.number().int().min(0).describe("The line's index in transcript."), text: z.string().describe("What the line should say now.") }))
+    .optional()
+    .describe("Word edits: the lines that should say something else. Only the changed words are re-spoken, in the same voice."),
+  effect: z
+    .object({
+      kind: z.enum(["pitch", "pace", "volume", "emotion", "whisper", "unwhisper", "clean", "isolate"]),
+      semitones: z.number().int().optional().describe(`pitch: one of ${PITCH_STEPS.join(", ")}.`),
+      speed: z.number().optional().describe(`pace (audio only): one of ${PACES.join(", ")}.`),
+      db: z.number().int().optional().describe(`volume: one of ${VOLUME_STEPS.join(", ")}.`),
+      emotion: z.enum(EMOTIONS as [string, ...string[]]).optional().describe("emotion: the new mood."),
+    })
+    .optional()
+    .describe("Instead of word edits: change how a range sounds (clean = remove noise and room echo; isolate = keep only the speaker of that range)."),
+  range: z.object({ start: z.number().min(0), end: z.number().min(0) }).optional().describe("The range (seconds) the effect changes."),
+  quality: z.enum(["fast", "best"]).optional().describe("fast (default): AuK-Flash, 4 steps; best: the full AuK model, 32 steps."),
+});
+export type SpeechEditToolInput = z.infer<typeof SpeechEditInput>;
+
+/** The tool's arguments as an Edit speech run (one AuK job; on a video, the stream-copy mux too). Throws what's missing. */
+export function speechEditSteps(i: SpeechEditToolInput): PipelineStep[] {
+  if (engineMode() === "cloud") throw new Error(CLOUD_ONLY_SPEECH_EDIT_PROBLEM);
+  // The file's length from its header when it can be read (the run checks the file itself); else the transcript's.
+  const info = storedMedia(i.media, { allContainers: true });
+  const seconds = info?.info?.duration && info.info.duration > 0 ? info.info.duration : undefined;
+  const cues = i.transcript;
+  const edited = i.changes?.length ? cues.map((c, k) => i.changes!.filter((x) => x.line === k).pop()?.text ?? c.text) : undefined;
+  let effect: SpeechEffect | undefined;
+  if (i.effect) {
+    const e = i.effect;
+    const bad = (what: string) => new Error(`Pick ${what} for the ${e.kind} effect`);
+    if (e.kind === "pitch") {
+      if (!(PITCH_STEPS as readonly number[]).includes(e.semitones ?? NaN)) throw bad(`semitones (${PITCH_STEPS.join(", ")})`);
+      effect = { kind: "pitch", semitones: e.semitones as (typeof PITCH_STEPS)[number] };
+    } else if (e.kind === "pace") {
+      if (!(PACES as readonly number[]).includes(e.speed ?? NaN)) throw bad(`a speed (${PACES.join(", ")})`);
+      effect = { kind: "pace", speed: e.speed as (typeof PACES)[number] };
+    } else if (e.kind === "volume") {
+      if (!(VOLUME_STEPS as readonly number[]).includes(e.db ?? NaN)) throw bad(`decibels (${VOLUME_STEPS.join(", ")})`);
+      effect = { kind: "volume", db: e.db as (typeof VOLUME_STEPS)[number] };
+    } else if (e.kind === "emotion") {
+      if (!e.emotion) throw bad("an emotion");
+      effect = { kind: "emotion", emotion: e.emotion as Extract<SpeechEffect, { kind: "emotion" }>["emotion"] };
+    } else effect = { kind: e.kind };
+  }
+  const plan = planSpeechEdit({ engine: "open", media: i.media, kind: i.kind, cues, edited: effect ? undefined : edited, effect, range: i.range, quality: i.quality, seconds, hasAudio: info?.info?.hasAudio });
+  return plan.steps.map((s) => ({ key: s.key, request: s.request, ...(s.after && { after: s.after }), ...(s.chain && { chain: s.chain }) }));
+}
+
+const editSpeech = defineTool({
+  name: "edit_speech",
+  description:
+    "Change what was said in a recording or a video without re-recording it — Fuobe's Edit speech (Audio → Edit speech), with Tencent AuK on your GPU (open source; it isn't hosted in the cloud). " +
+    "Pass the file, its transcript (timed lines, e.g. a transcribe result's cues) and either changes (lines that should say something else: only the changed words are re-spoken, in the same voice, and crossfaded back) " +
+    "or an effect on a range (pitch, pace, volume, emotion, whisper, clean up noise and echo, keep only one speaker). A video gets its new sound back with the picture copied. English and Chinese speech. Gated by the same approval card as generate.",
+  schema: SpeechEditInput,
+  gated: true,
+  title: (i) => (i.effect ? `Edit speech: ${i.effect.kind}` : "Edit speech"),
+  place: () => ({ studio: "Edit speech", href: "/audio/edit-speech" }),
+  plan: (i) => {
+    try {
+      return planSteps("edit_speech", speechEditSteps(i));
+    } catch (e) {
+      return [{ tool: "edit_speech", modelId: "oss-auk", modelName: "AuK", kind: "audio", op: "speech-edit", prompt: "Edit speech", note: "Edit speech", count: 0, costUsd: 0, demo: false, atomic: true, error: (e as Error).message }];
+    }
+  },
+  async run(i) {
+    let steps: PipelineStep[];
+    try {
+      steps = speechEditSteps(i);
+    } catch (e) {
+      return { content: JSON.stringify({ error: (e as Error).message }), isError: true };
+    }
+    return startPipeline("Edit speech", steps, String(steps[0].request.batchTitle ?? "Edit speech"));
+  },
+});
+
 // Fly around: a still filmed along an exact camera path
 
 export const FlyAroundToolInput = z.object({
@@ -850,7 +1004,7 @@ function flyAroundSteps(i: FlyAroundToolInput, ctx: ToolContext): PipelineStep[]
     prompt: i.prompt,
     duration: i.duration,
     feature: "fly-around",
-  });
+  }, { worldcast: worldcastContext() });
   if (plan.blocker) throw new Error(plan.blocker);
   return plan.steps.map((s) => ({ key: s.key, request: s.request, ...(s.after?.length && { after: s.after }) }));
 }
@@ -882,7 +1036,7 @@ const flyAround = defineTool({
   },
 });
 
-export const STUDIO_TOOLS = [splitLayers, restyleFootage, dubVideo, facelessEpisode, createAds, addCaptions, restoreVideo, removePerson, blockoutFilm, flyAround];
+export const STUDIO_TOOLS = [splitLayers, restyleFootage, dubVideo, facelessEpisode, createAds, addCaptions, restoreVideo, removePerson, blockoutFilm, flyAround, editSpeech, worldFilm];
 
 /** For tests: the fallback pipelines, as they would be created. */
 export const fallbackSteps = { restore: restoreSteps, layers: layerSteps, restyle: restyleSteps, dub: dubSteps, faceless: facelessSteps, captions: captionSteps, ads: adRequests, blockout: blockoutSteps, flyAround: flyAroundSteps };

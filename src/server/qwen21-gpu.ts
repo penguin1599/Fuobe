@@ -51,7 +51,7 @@ export function qwen21Gpu(endpoint: string, extra: Record<string, unknown>, has:
   if (asked === "large") return { gpu: "large" };
   const on = isOffered(QWEN21_SMALL_MODEL, "open");
   if (asked === "small") {
-    if (!on) throw new Error(tenantAccount() ? "Small GPU isn't available here. Pick 20 GB or more" : offReason(getModel(QWEN21_SMALL_MODEL)!));
+    if (!on) throw new Error(tenantAccount() ? "Pick 20 GB or more for this model" : offReason(getModel(QWEN21_SMALL_MODEL)!));
     return { gpu: "small", note: SMALL_GPU_NOTE };
   }
   return on && smallFits(graph) ? { gpu: "small", note: SMALL_GPU_NOTE } : { gpu: "large" };

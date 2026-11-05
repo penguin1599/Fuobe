@@ -2,7 +2,7 @@ import "server-only";
 import crypto from "node:crypto";
 import { problemText } from "@/lib/gpu/gather";
 import { fixPlan } from "@/lib/gpu/plan";
-import { badgeOf, deviceLabel, needTargets, rankOf, shortGpu, summaryOf, toolReadiness, type ReadinessContext } from "@/lib/gpu/readiness";
+import { badgeOf, cardLabel, needTargets, rankOf, shortGpu, summaryOf, toolReadiness, type ReadinessContext } from "@/lib/gpu/readiness";
 import type { BadgeMap, FixPlan, GpuInventory, GpuProblem, ReadinessReport, RequirementIndex, StudioRow, ToolReadiness, ToolRef } from "@/lib/gpu/types";
 import { vramGb } from "@/lib/gpu/requirements";
 import { chooseH3Tier, deviceOf, tierOnCard, tierRowNote } from "@/lib/gpu/h3-tier";
@@ -145,7 +145,7 @@ export async function planFor(t: ReadTarget, ref: string, actor: string): Promis
     r = readinessOf(tool, snap.inventory, idx, ctx);
   }
   const fits = fitsFor(tool, t, snap.inventory, idx, ctx);
-  const gpu = snap.inventory.devices[0] ? deviceLabel(snap.inventory.devices[0].name) : undefined;
+  const gpu = cardLabel(snap.inventory.devices[0]);
   return fixPlan(r, snap.inventory, idx, { hash: sha256, urlHash: urlHash(t), account: ctx.account, loras: tool.loras, fits, gpu: gpu && vramGb(snap.inventory.devices[0].vramTotal) ? gpu : undefined });
 }
 

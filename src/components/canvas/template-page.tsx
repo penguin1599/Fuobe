@@ -1,12 +1,11 @@
 "use client";
 
-import { ArrowLeft, ArrowRight, Loader2, Plus } from "lucide-react";
+import { ArrowLeft, ArrowRight, Loader2, Plus, Workflow } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { PageShell } from "@/components/page-shell";
-import { SelfHostNote } from "@/components/self-host-note";
 import { EngineSwitch } from "@/components/studio/engine-switch";
 import { CoverArt, CoverImg, useCoverPlayback } from "@/components/template-cover";
 import { useEngine, useIsOwner, useIsVisitor, useModelAccess } from "@/lib/api";
@@ -64,8 +63,8 @@ function Input({ input }: { input: TemplateInput }) {
 
 /**
  * A Canvas template's page (/canvas/start/<id>): what it makes, what goes in, the steps and what comes out, for
- * everyone. The owner makes the board from here; a guest or an account (who can't save a board here) gets, for an
- * effect film, the Video effect that makes the same in one step with its example loaded, else the studios they can use.
+ * everyone. The owner makes the board from here; a guest or an account opens it in the editor ("Use this board",
+ * /canvas/try/<id>), and for an effect film also gets the Video effect that makes the same in one step.
  */
 export function TemplatePage({ t }: { t: TemplateDetail }) {
   const router = useRouter();
@@ -159,21 +158,28 @@ export function TemplatePage({ t }: { t: TemplateDetail }) {
                 <EngineSwitch value={engine} onChange={setEngine} size="sm" />
               </>
             ) : (
-              t.oneStep && (
+              <>
                 <Button asChild className="rounded-full">
-                  <Link href={t.oneStep.href}>
-                    {t.oneStep.label} <ArrowRight />
+                  <Link href={`/canvas/try/${t.id}`} data-use-board>
+                    <Workflow /> Use this board
                   </Link>
                 </Button>
-              )
+                {t.oneStep && (
+                  <Button asChild variant="secondary" className="rounded-full">
+                    <Link href={t.oneStep.href}>
+                      {t.oneStep.label} <ArrowRight />
+                    </Link>
+                  </Button>
+                )}
+              </>
             )}
           </div>
-          {!owner &&
-            (t.oneStep ? (
-              <p className="mt-2 text-[13px] text-pretty text-muted-foreground [html[data-viewer='owner']_&]:hidden">One tap opens it with a photo ready. Change anything, then make your own.</p>
-            ) : (
-              <SelfHostNote className="mt-2" />
-            ))}
+          {!owner && (
+            <p className="mt-2 text-[13px] text-pretty text-muted-foreground [html[data-viewer='owner']_&]:hidden">
+              Opens the board in the editor with every step and photo in place. Change anything and keep it.
+              {t.oneStep && " The effect in Video makes the same film in one step."}
+            </p>
+          )}
 
           <section aria-labelledby="goes-in" className="mt-8">
             <h2 id="goes-in" className={heading}>

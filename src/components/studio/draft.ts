@@ -10,6 +10,7 @@ import { positionsFrom, spread } from "@/lib/catalog/keyframes";
 import { songFromRun } from "@/lib/lyrics";
 import { reuseSignature, withSignatureWords } from "@/lib/catalog/palettes";
 import { movedAppRequest } from "@/lib/catalog/plan";
+import { studioResolutions } from "@/lib/catalog/regenerate";
 import { currentModelId, migrateRequest } from "@/lib/catalog/replaced";
 import { matchSpokenLanguage } from "@/lib/speech-languages";
 import type { ExampleRequest } from "@/lib/examples/types";
@@ -74,7 +75,7 @@ export function initialDraft(
   // An output format handed over in the link (Export → "ProRes in the cloud"), when the model writes it.
   const format = model?.options.formats?.find((f) => f === sp.get("format"));
   // A size handed over (Regenerate in 2K → 1440p), when the model offers it.
-  const resolution = model?.options.resolutions?.find((r) => r === sp.get("resolution"));
+  const resolution = studioResolutions(model?.options)?.find((r) => r === sp.get("resolution"));
   // Stills handed over as frames (Storyboard's "Animate these panels", a Character Sheet's poses): Frames mode, evenly spaced.
   const handed = config.frames ? handoffFrames(sp.get("frames")) : [];
   const frames = handed.length ? handed.map((u, i) => ({ value: slot(u)!, at: spread(handed.length)[i] })) : undefined;

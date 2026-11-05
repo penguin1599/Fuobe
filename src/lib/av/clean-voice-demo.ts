@@ -1,5 +1,5 @@
 /**
- * Clean up voice's demo (src/components/audio-tools/clean-voice-demo.tsx): a woman talking in a busy brasserie. One tap
+ * Clean up voice's demo (src/components/audio-tools/clean-voice-demo.tsx): a woman talking in a noisy restaurant. One tap
  * plays two 8 s takes of the same moment at once, the room as recorded and her voice alone, each through its own gain.
  * The room plays first; at 3 s the noise fades out over 1 s while she keeps talking, and the photo softens to match.
  * "Noise on" / "Noise off" switch both at the same moment in her speech and stop the automatic switch. demoReducer
@@ -11,7 +11,7 @@ export const DEMO_MEDIA = {
   /** The room as recorded, and her voice alone: 8 s, 48 kHz mono AAC, the same moment, at the same gain. */
   noisy: `${DEMO_DIR}/noisy.m4a`,
   clean: `${DEMO_DIR}/clean.m4a`,
-  /** The brasserie, and the same photo with the room softened and dimmed around her (1280x960). */
+  /** The restaurant, and the same photo with the room softened and dimmed around her (1280x960). */
   room: `${DEMO_DIR}/room.webp`,
   quiet: `${DEMO_DIR}/quiet.webp`,
 } as const;
@@ -67,6 +67,9 @@ export const HINTS = {
   failed: "The sound didn't load. Check your connection and tap again.",
   unsupported: "This browser can't play the demo's sound.",
 } as const;
+
+/** The chip over the photo: what is heard now (the studio's demo and Home's Audio tile say the same). */
+export const stateLabel = (clean: boolean) => (clean ? "Voice only" : "Noisy restaurant");
 
 export const DEMO_START: DemoState = { phase: "idle", clean: false, auto: true, ramp: 0, run: 0, flash: 0, hint: HINTS.ready };
 
