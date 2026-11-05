@@ -1,7 +1,7 @@
 "use client";
 
 import { Zap } from "lucide-react";
-import { type CSSProperties, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { type CSSProperties, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   changesWord,
   countChanges,
@@ -106,7 +106,81 @@ function useReducedMotion() {
   return reduced;
 }
 
-export function LiveDemo({ compact, className, onTypeAttempt }: { compact?: boolean; className?: string; onTypeAttempt?: () => void }) {
+/** A visitor's keys, for the change they type themselves: each key types the next letter of it. */
+export interface KeyBus {
+  /** Resolves true at the next key (at once if one is waiting), or false after `ms` with none. */
+  wait(ms: number): Promise<boolean>;
+  press(n?: number): void;
+  clear(): void;
+}
+
+/** Keys pressed faster than they can be typed wait their turn, up to a word or so. */
+const KEYS_HELD = 24;
+
+export function createKeyBus(): KeyBus {
+  let pending = 0;
+  let waiter: ((key: boolean) => void) | null = null;
+  return {
+    wait: (ms) =>
+      new Promise<boolean>((res) => {
+        if (pending > 0) {
+          pending--;
+          return res(true);
+        }
+        const t = setTimeout(() => {
+          if (waiter === done) waiter = null;
+          res(false);
+        }, ms);
+        const done = (key: boolean) => {
+          clearTimeout(t);
+          res(key);
+        };
+        waiter = done;
+      }),
+    press: (n = 1) => {
+      pending = Math.min(KEYS_HELD, pending + n);
+      if (waiter && pending > 0) {
+        const w = waiter;
+        waiter = null;
+        pending--;
+        w(true);
+      }
+    },
+    clear: () => {
+      pending = 0;
+      waiter = null;
+    },
+  };
+}
+
+/** How long the visitor's turn waits for a first key before it types itself, and for the next key once they type. */
+export const TURN_WAIT_MS = 4000;
+export const KEY_IDLE_MS = 1600;
+
+export interface PlayerOptions {
+  /** Play one round and rest on the last picture, rather than going round again. */
+  once?: boolean;
+  /** The change (0-based) the visitor types with `keys`; a key types the next letter, and it types itself when idle. */
+  keyChange?: number;
+  keys?: KeyBus;
+}
+
+/**
+ * The recorded session's player, for any card that shows it: it loads the file, measures the card (`box`) to pick the
+ * files it needs, plays while the card is in view and returns what is on screen now (`v`). Under reduced motion `v` is
+ * the start, and the card shows a still compare. Both players use it: the picture with its dock (LiveDemo), which goes
+ * round for ever, and the picture with its sentence and chat (LiveChatDemo), which plays once, lets the visitor type a
+ * change and then `show`s whatever picture of the session they go back to (mode "rest" until `replay`).
+ */
+export function useDemoPlayer(opts: PlayerOptions = {}) {
+  const options = useRef(opts);
+  useLayoutEffect(() => {
+    options.current = opts;
+  });
+  /** "play" runs the script; "rest" holds the picture `show` put up, or the last one of a round played `once`. */
+  const [mode, setMode] = useState<"play" | "rest">("play");
+  /** How many rounds have played to the end (with `once`). */
+  const [ended, setEnded] = useState(0);
   const [demo, setDemo] = useState<Demo | null>(null);
   const reduced = useReducedMotion();
   const box = useRef<HTMLDivElement>(null);
@@ -115,6 +189,8 @@ export function LiveDemo({ compact, className, onTypeAttempt }: { compact?: bool
   const [view, setView] = useState<DemoView | null>(null);
   /** The script step to run next, kept across pauses so the loop picks up where it stopped. */
   const at = useRef(0);
+  /** How many times the loop has gone round since the page loaded: a chat beside the picture keeps every round. */
+  const [round, setRound] = useState(0);
   /**
    * The files this card needs (see tierFor), and whether the browser shows AVIF; nothing loads before both are known.
    * The card keeps the largest files it has needed, so a narrower window does not load smaller copies of them.
@@ -188,7 +264,7 @@ export function LiveDemo({ compact, className, onTypeAttempt }: { compact?: bool
 
   // The player: one step at a time, each with its own small animation, then round again.
   useEffect(() => {
-    if (!demo || reduced || !visible || !tier || avif === null) return;
+    if (!demo || reduced || !visible || !tier || avif === null || mode !== "play") return;
     let alive = true;
     const timers = new Set<ReturnType<typeof setTimeout>>();
     const wait = (ms: number) =>
@@ -213,9 +289,14 @@ export function LiveDemo({ compact, className, onTypeAttempt }: { compact?: bool
     void (async () => {
       let i = at.current;
       let typed = "";
+      /** The change being made, and on the visitor's: whether it has begun, and whether their last wait ended in a key. */
+      let change = 0;
+      let opened = false;
+      let keyed = false;
       if (i > 0) {
         const v = viewBefore(demo, i);
         typed = v.typed;
+        change = v.changes;
         setView(v);
       } else setView((v) => startView(before, v && v.frame !== before ? v.frame : null));
       while (alive) {
@@ -244,15 +325,25 @@ export function LiveDemo({ compact, className, onTypeAttempt }: { compact?: bool
           } else if (s.type === "type") {
             const base = typed;
             const delays = typeDelays(s.text, s.ms);
+            const { keys, keyChange } = options.current;
+            // The visitor's change: each letter waits for a key (the first for a while), and types itself when none comes.
+            const mine = !!keys && keyChange === change;
             for (let c = 0; c < delays.length; c++) {
               if (!alive) return;
+              if (mine) {
+                keyed = await keys.wait(keyed ? KEY_IDLE_MS : opened ? delays[c] : TURN_WAIT_MS);
+                opened = true;
+                if (!alive) return;
+              }
               const t = base + [...s.text].slice(0, c + 1).join("");
               setView((v) => v && { ...v, typed: t });
-              await wait(delays[c]);
+              if (!mine) await wait(delays[c]);
             }
             typed = base + s.text;
           } else if (s.type === "change") {
             setView((v) => v && { ...v, changes: v.changes + 1 });
+            change++;
+            opened = keyed = false;
             await wait(s.ms);
           } else if (s.type === "compare") {
             const t0 = performance.now();
@@ -261,32 +352,198 @@ export function LiveDemo({ compact, className, onTypeAttempt }: { compact?: bool
               setView((v) => v && { ...v, compare: 50 + 42 * Math.sin(p * Math.PI * 2) });
               await wait(33);
             }
-            setView((v) => v && { ...v, compare: null });
+            // The line stays where the sweep ends (the middle), rather than vanishing: a round played `once` rests on it
+            // for the visitor to drag, and a looping one keeps it until the next round goes back to the original.
+            if (alive) setView((v) => v && { ...v, compare: 50 });
           } else await wait(s.ms);
         }
         if (!alive) return;
+        at.current = 0;
+        // Played once: rest on the last picture until the visitor goes back through it or plays it again.
+        if (options.current.once) {
+          setEnded((n) => n + 1);
+          setMode("rest");
+          return;
+        }
         // Round again: the last picture fades back to the original.
         i = 0;
-        at.current = 0;
         typed = "";
+        change = 0;
+        setRound((r) => r + 1);
         setView((v) => startView(before, v ? (v.frame !== before ? v.frame : null) : after !== before ? after : null));
       }
     })();
     return () => {
       alive = false;
       for (const t of timers) clearTimeout(t);
+      options.current.keys?.clear();
     };
-  }, [demo, reduced, visible, tier, avif]);
+  }, [demo, reduced, visible, tier, avif, mode]);
+
+  /**
+   * Stop playing and put up one picture of the session: drawn across like a live frame (sweep), faded in, or cut to at
+   * once. The words and the count stay as they were; the caller says which words the picture holds.
+   */
+  const show = useCallback((frame: string, how: "sweep" | "fade" | "cut" = "fade") => {
+    setMode("rest");
+    setView((v) => v && (v.frame === frame ? v : { ...v, under: v.frame, frame, sweep: how === "sweep", fade: how === "fade" ? FADE_MS : 0, compare: null }));
+  }, []);
+  /** Move the compare line (0 to 100, the original on the left) while the player rests on it. */
+  const compareTo = useCallback((n: number) => {
+    setView((v) => v && v.compare !== null ? { ...v, compare: Math.min(100, Math.max(0, n)) } : v);
+  }, []);
+  /** Play the session again from the start: a new round. */
+  const replay = useCallback(() => {
+    at.current = 0;
+    setRound((r) => r + 1);
+    setMode("play");
+  }, []);
 
   const ends = demo ? demoEnds(demo) : null;
   // Under reduced motion the still compare shows, with nothing left over from a loop that was playing.
   const v = ends && (reduced || !view) ? startView(ends.before) : view;
-  const ratio = demo ? `${demo.size[0]} / ${demo.size[1]}` : "4 / 3";
-  const pill = v ? pillText(v, compact) : { main: "Live", count: null };
-  const changes = v?.changes ?? 0;
   // Nothing shows before the card knows which files it needs, so no file is fetched that it then drops.
   const showImages = (visible || view !== null) && tier > 0 && avif !== null;
+  return { box, demo, ends, v, round, ended, mode, visible, reduced, src, showImages, show, replay, compareTo };
+}
+
+type Player = ReturnType<typeof useDemoPlayer>;
+
+/**
+ * The picture itself: the frame on screen, the one fading out under it, a live frame's sweep and the compare. Under
+ * reduced motion, a still before/after to drag.
+ */
+export function DemoPicture({ demo, ends, v, reduced, src, showImages, mode, compareTo, alt = "A live edit of an empty room becoming a dream home" }: Player & { alt?: string }) {
+  const dragging = useRef(false);
+  if (!demo || !ends || !v || !showImages) return null;
+  if (reduced) return <StillCompare before={src(ends.before)} after={src(ends.after)} changes={countChanges(demo)} />;
   const sweep = sweepPath({ s: 1, x: 0 });
+  const compare = v.compare;
+  // Once the player rests on the compare, its line is a slider: drag it, tap where it goes, or use the arrow keys.
+  const draggable = compare !== null && mode === "rest";
+  const at = (el: HTMLElement, clientX: number) => {
+    const r = el.getBoundingClientRect();
+    return ((clientX - r.left) / r.width) * 100;
+  };
+  return (
+    <div
+      className={cn("absolute inset-0", draggable && "cursor-ew-resize touch-pan-y select-none")}
+      onPointerDown={
+        draggable
+          ? (e) => {
+              if (e.button !== 0) return;
+              dragging.current = true;
+              e.currentTarget.setPointerCapture(e.pointerId);
+              compareTo(at(e.currentTarget, e.clientX));
+            }
+          : undefined
+      }
+      onPointerMove={draggable ? (e) => dragging.current && compareTo(at(e.currentTarget, e.clientX)) : undefined}
+      onPointerUp={() => (dragging.current = false)}
+      onPointerCancel={() => (dragging.current = false)}
+      style={
+        {
+          "--sweep-from": `${sweep.from}%`,
+          "--sweep-to": `${sweep.to}%`,
+          "--scan-from": `${sweep.scanFrom}%`,
+          "--scan-to": `${sweep.scanTo}%`,
+        } as CSSProperties
+      }
+    >
+      {/* Both pictures sit in one keyed list, so the frame that drops underneath keeps its painted image. */}
+      {[v.under, v.frame]
+        .filter((id): id is string => !!id)
+        .map((id) => {
+          const top = id === v.frame;
+          return (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              key={id}
+              src={src(id)}
+              alt={top ? alt : ""}
+              className="absolute inset-0 size-full object-cover"
+              style={top ? { animation: v.sweep ? `live-sweep ${SWEEP_MS}ms cubic-bezier(.45,0,.55,1)` : v.fade ? `live-fade ${v.fade}ms ease-out` : "none" } : undefined}
+              onError={
+                top
+                  ? (e) => {
+                      e.currentTarget.style.visibility = "hidden";
+                    }
+                  : undefined
+              }
+              draggable={false}
+            />
+          );
+        })}
+      {/* The leading edge of a live frame as it is drawn across. */}
+      {v.sweep && (
+        <span key={`s-${v.frame}`} className="pointer-events-none absolute inset-0 opacity-0" style={{ animation: `live-scan ${SWEEP_MS}ms cubic-bezier(.45,0,.55,1)` }} aria-hidden>
+          <span className="absolute inset-y-0 left-0 w-10 -translate-x-1/2 bg-gradient-to-r from-transparent via-white/25 to-transparent" />
+          <span className="absolute inset-y-0 left-0 w-px -translate-x-1/2 bg-white/70 shadow-[0_0_10px_rgba(255,255,255,.6)]" />
+        </span>
+      )}
+      {compare !== null && (
+        <>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={src(ends.before)} alt="" className="absolute -inset-px object-cover" style={{ width: "calc(100% + 2px)", height: "calc(100% + 2px)", clipPath: `inset(-2px ${100 - compare}% -2px 0)` }} draggable={false} />
+          <span className="absolute inset-y-0 w-0.5 bg-white shadow-[0_0_8px_rgba(0,0,0,.5)]" style={{ left: `${compare}%` }} />
+          {draggable && (
+            <span
+              role="slider"
+              tabIndex={0}
+              aria-label="Compare the original with the last picture"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={Math.round(compare)}
+              aria-valuetext={`Original ${Math.round(compare)}%, edited ${100 - Math.round(compare)}%`}
+              onKeyDown={(e) => {
+                const step = e.shiftKey ? 25 : 5;
+                const next =
+                  e.key === "ArrowLeft" || e.key === "ArrowDown" ? compare - step : e.key === "ArrowRight" || e.key === "ArrowUp" ? compare + step : e.key === "Home" ? 0 : e.key === "End" ? 100 : null;
+                if (next === null) return;
+                e.preventDefault();
+                compareTo(next);
+              }}
+              className="absolute top-1/2 -mt-3.5 -ml-3.5 grid size-7 place-items-center rounded-full bg-white text-black shadow-[0_2px_8px_rgb(0_0_0/30%)] outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 motion-safe:animate-[live-fade_300ms_ease-out]"
+              style={{ left: `${compare}%` }}
+            >
+              <svg viewBox="0 0 16 16" aria-hidden className="size-3.5" fill="currentColor">
+                <path d="M6 4 2 8l4 4V4Zm4 0v8l4-4-4-4Z" />
+              </svg>
+            </span>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+/** The pill in the picture's corner: Live, and on a compact card the count once there are two changes. */
+export function LivePill({ v, compact }: { v: DemoView | null; compact?: boolean }) {
+  const pill = v ? pillText(v, compact) : { main: "Live", count: null };
+  return (
+    <span className={cn("absolute inline-flex items-center gap-1.5 rounded-full bg-black/45 font-medium whitespace-nowrap backdrop-blur", compact ? "top-1.5 left-1.5 px-2 py-0.5 text-[10.5px]" : "top-3 left-3 px-2.5 py-1 text-[11px]")} role="status" aria-live="off">
+      <span className="size-1.5 rounded-full bg-emerald-400 motion-safe:animate-pulse" />
+      {pill.main}
+      {pill.count && <span className="text-white/75">· {pill.count}</span>}
+    </span>
+  );
+}
+
+/** The compare sweep's labels: the original on the left, the changes on the right. */
+export function CompareLabels({ v, compact, className }: { v: DemoView | null; compact?: boolean; className?: string }) {
+  if (!v || v.compare === null) return null;
+  return (
+    <div className={cn("pointer-events-none absolute inset-x-3 flex justify-between text-[11px] font-medium", compact ? "inset-x-2 bottom-12" : "bottom-16", className)} data-live-compare>
+      <span className="rounded-full bg-black/45 px-2 py-0.5 backdrop-blur">Original</span>
+      <span className="rounded-full bg-white/90 px-2 py-0.5 text-black">{changesWord(v.changes)}</span>
+    </div>
+  );
+}
+
+export function LiveDemo({ compact, className, onTypeAttempt }: { compact?: boolean; className?: string; onTypeAttempt?: () => void }) {
+  const player = useDemoPlayer();
+  const { box, demo, v } = player;
+  const ratio = demo ? `${demo.size[0]} / ${demo.size[1]}` : "4 / 3";
   // The typed text fades on the left only once it is wider than the bar; short text shows whole.
   const typedOuter = useRef<HTMLSpanElement>(null);
   const typedInner = useRef<HTMLSpanElement>(null);
@@ -300,74 +557,12 @@ export function LiveDemo({ compact, className, onTypeAttempt }: { compact?: bool
 
   return (
     <div ref={box} className={cn("@container relative isolate overflow-hidden rounded-2xl bg-media text-white", className)} style={{ aspectRatio: compact ? ratio : undefined }} data-live-demo>
-      {demo && ends && v && showImages && (reduced ? (
-        <StillCompare before={src(ends.before)} after={src(ends.after)} changes={countChanges(demo)} />
-      ) : (
-        <div
-          className="absolute inset-0"
-          style={
-            {
-              "--sweep-from": `${sweep.from}%`,
-              "--sweep-to": `${sweep.to}%`,
-              "--scan-from": `${sweep.scanFrom}%`,
-              "--scan-to": `${sweep.scanTo}%`,
-            } as CSSProperties
-          }
-        >
-          {/* Both pictures sit in one keyed list, so the frame that drops underneath keeps its painted image. */}
-          {[v.under, v.frame]
-            .filter((id): id is string => !!id)
-            .map((id) => {
-              const top = id === v.frame;
-              return (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  key={id}
-                  src={src(id)}
-                  alt={top ? "A live edit of a portrait" : ""}
-                  className="absolute inset-0 size-full object-cover"
-                  style={top ? { animation: v.sweep ? `live-sweep ${SWEEP_MS}ms cubic-bezier(.45,0,.55,1)` : v.fade ? `live-fade ${v.fade}ms ease-out` : "none" } : undefined}
-                  onError={
-                    top
-                      ? (e) => {
-                          e.currentTarget.style.visibility = "hidden";
-                        }
-                      : undefined
-                  }
-                  draggable={false}
-                />
-              );
-            })}
-          {/* The leading edge of a live frame as it is drawn across. */}
-          {v.sweep && (
-            <span key={`s-${v.frame}`} className="pointer-events-none absolute inset-0 opacity-0" style={{ animation: `live-scan ${SWEEP_MS}ms cubic-bezier(.45,0,.55,1)` }} aria-hidden>
-              <span className="absolute inset-y-0 left-0 w-10 -translate-x-1/2 bg-gradient-to-r from-transparent via-white/25 to-transparent" />
-              <span className="absolute inset-y-0 left-0 w-px -translate-x-1/2 bg-white/70 shadow-[0_0_10px_rgba(255,255,255,.6)]" />
-            </span>
-          )}
-          {v.compare !== null && (
-            <>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={src(ends.before)} alt="" className="absolute -inset-px object-cover" style={{ width: "calc(100% + 2px)", height: "calc(100% + 2px)", clipPath: `inset(-2px ${100 - v.compare}% -2px 0)` }} draggable={false} />
-              <span className="absolute inset-y-0 w-0.5 bg-white shadow-[0_0_8px_rgba(0,0,0,.5)]" style={{ left: `${v.compare}%` }} />
-            </>
-          )}
-        </div>
-      ))}
+      <DemoPicture {...player} />
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/70 via-black/0 to-black/10" />
-      <span className={cn("absolute inline-flex items-center gap-1.5 rounded-full bg-black/45 font-medium whitespace-nowrap backdrop-blur", compact ? "top-1.5 left-1.5 px-2 py-0.5 text-[10.5px]" : "top-3 left-3 px-2.5 py-1 text-[11px]")} role="status" aria-live="off">
-        <span className="size-1.5 rounded-full bg-emerald-400 motion-safe:animate-pulse" />
-        {pill.main}
-        {pill.count && <span className="text-white/75">· {pill.count}</span>}
-      </span>
+      <LivePill v={v} compact={compact} />
       {/* The compare sweep has its own labels; the count steps aside while it plays. */}
       {!compact && v && <ChangeCount changes={v.changes} hidden={v.compare !== null} />}
-      {v && v.compare !== null && (
-        <div className={cn("pointer-events-none absolute inset-x-3 flex justify-between text-[11px] font-medium", compact ? "inset-x-2 bottom-12" : "bottom-16")} data-live-compare>
-          <span className="rounded-full bg-black/45 px-2 py-0.5 backdrop-blur">Original</span>
-          <span className="rounded-full bg-white/90 px-2 py-0.5 text-black">{changesWord(changes)}</span>
-        </div>
-      )}
+      <CompareLabels v={v} compact={compact} />
       <div className={cn("absolute inset-x-3 bottom-3 flex items-center gap-2", compact && "inset-x-2 bottom-2")}>
         <button
           type="button"

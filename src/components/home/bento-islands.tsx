@@ -527,7 +527,7 @@ const HOLD_MS = 1400;
 const BACK_MS = 250;
 
 /**
- * The live tile: the Live edit session's own words typed one character at a time, each phrase followed by the picture
+ * The live tile: the portrait session's own words typed one character at a time, each phrase followed by the picture
  * it made (a 320 ms crossfade), held, then the next phrase in its place; after the last, back to the first picture and
  * round again. Before the page moves (and under reduced motion) it shows the first picture and the first phrase whole.
  * The later pictures are fetched only when it first plays, while the first phrase holds.

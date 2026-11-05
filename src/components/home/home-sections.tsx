@@ -20,6 +20,7 @@ import { PILL, PILL_ICON, PILL_TAP } from "@/components/home/pill";
 import { ShowcaseTile } from "@/components/home/showcase-tile";
 import { CountUp } from "@/components/ui/count-up";
 import { IntentLink } from "@/components/intent-link";
+import { LiveChatDemo } from "@/components/live/live-chat-demo";
 import { LiveDemo } from "@/components/live/live-demo";
 import { NAV } from "@/components/nav-items";
 import { PresetCard } from "@/components/preset-gallery";
@@ -238,26 +239,28 @@ export function AppsSection({ facts, beforeAfter, reveals, start }: Pick<HomeSho
 }
 
 /**
- * Live edit's moment: a recorded session plays beside what it does and one way in. The player is the only island; it
- * pauses off screen, and nothing here reaches a GPU.
+ * Live edit's moment: what it does and one way in, over a recorded session played as an editor with a rolling chat
+ * (each change typed, sent and kept, its picture beside it). The player is the only island; it pauses off screen, and
+ * nothing here reaches a GPU.
  */
 export function LiveEditSection() {
   const points: [LucideIcon, string][] = [
     [Zap, "Live frames as you type, on your own GPU"],
-    [TextCursorInput, "One prompt that keeps growing, always on your original"],
+    [TextCursorInput, "One sentence that keeps growing, always drawn on your original"],
     [Undo2, "Undo a change, or start fresh from the picture"],
   ];
   return (
-    <section aria-labelledby="home-live" data-reveal className={cn(SECTION, "[--cv:720px] sm:[--cv:860px] md:[--cv:820px] lg:[--cv:470px] xl:[--cv:500px]")}>
-      <div className="grid grid-cols-1 items-center gap-6 lg:grid-cols-12 lg:gap-10">
-        <LiveDemo className="aspect-[4/3] w-full shadow-strong lg:col-span-7" />
+    <section aria-labelledby="home-live" data-reveal className={cn(SECTION, "[--cv:1323px] sm:[--cv:1325px] md:[--cv:918px] lg:[--cv:987px] xl:[--cv:967px]")}>
+      <div className="grid grid-cols-1 gap-x-10 gap-y-4 lg:grid-cols-12 lg:items-end">
         <div className="min-w-0 lg:col-span-5">
           <span className="inline-flex items-center gap-1.5 rounded-full bg-highlight px-2 py-0.5 text-[11px] font-semibold text-highlight-foreground">New · Live edit</span>
           <h2 id="home-live" className={cn(H2, "mt-3")}>
             {HOME_LIVE.title}
           </h2>
           <p className={LINE}>{HOME_LIVE.line}</p>
-          <ul className="mt-4 space-y-2 text-[14px]">
+        </div>
+        <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-end sm:justify-between lg:col-span-7">
+          <ul className="space-y-2 text-[14px]">
             {points.map(([Icon, t]) => (
               <li key={t} className="flex items-center gap-2.5">
                 <Icon className="size-4 shrink-0 text-primary" />
@@ -265,11 +268,12 @@ export function LiveEditSection() {
               </li>
             ))}
           </ul>
-          <IntentLink href={HOME_LIVE.href} className="group mt-6 inline-flex h-10 items-center gap-2 rounded-full bg-primary px-5 text-[14px] font-medium text-primary-foreground transition hover:opacity-90">
+          <IntentLink href={HOME_LIVE.href} className="group inline-flex h-10 shrink-0 items-center gap-2 self-start rounded-full bg-primary px-5 text-[14px] font-medium text-primary-foreground transition hover:opacity-90 sm:self-end">
             Open Live edit <ArrowRight className="size-4 transition-transform duration-150 group-hover:translate-x-0.5" />
           </IntentLink>
         </div>
       </div>
+      <LiveChatDemo className="mt-6" />
     </section>
   );
 }

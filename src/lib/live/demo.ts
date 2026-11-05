@@ -1,17 +1,20 @@
 /**
- * The recorded live edit session that guests, Home and the Apps card see (public/previews/live-edit/demo.json), and
+ * The recorded live edit session that every LiveDemo player shows (Live edit's guest view and the Edit studio's Live
+ * pane, the Live edit section and drawn Live card on Home, the Apps card): a room makeover,
+ * public/previews/live-edit/room/demo.json. Home's first-screen live tile keeps the portrait
+ * (public/previews/live-edit/demo.json, src/lib/home-bento.ts). Also
  * the pure parts of its player: how long each step takes, where a paused loop picks up again, which frames are the
  * before and after, which file of a frame a card needs, and where the camera sits when it zooms in on a change. The
- * session is one prompt that keeps growing: every frame renders all the words so far on the start picture. The player
+ * session is one prompt that keeps growing: each frame shows the picture with all the words so far. The player
  * itself is src/components/live/live-demo.tsx.
  */
 
-export const LIVE_DEMO = "/previews/live-edit/demo.json";
+export const LIVE_DEMO = "/previews/live-edit/room/demo.json";
 /**
  * The file's content version: the first 8 hex digits of the SHA-256 of demo.json (line endings as \n). The player
  * fetches the file with it (?v=), so a new session reaches returning visitors at once; a test keeps it in step.
  */
-export const LIVE_DEMO_V = "57bf61aa";
+export const LIVE_DEMO_V = "8444cdca";
 
 /** A typed character never goes faster than this. */
 export const TYPE_MIN_CHAR_MS = 28;
@@ -242,6 +245,80 @@ export const changesWord = (n: number) => `${n} ${n === 1 ? "change" : "changes"
 
 /** How many changes a session makes. */
 export const countChanges = (d: Pick<Demo, "script">) => d.script.filter((s) => s.type === "change").length;
+
+/** One change of a session, as the chat player lists it. */
+export interface DemoChange {
+  /** The words this change added to the prompt, without the ", " that joins them on. */
+  words: string;
+  /** Its settled picture: the last frame shown before the count went up. */
+  frame: string;
+  /** How long the whole prompt is once this change is in, so the words typed after it can be told apart. */
+  end: number;
+}
+
+/** Joins a change's words onto the ones before it. */
+const trimJoin = (s: string) => s.replace(/^[\s,]+/, "");
+
+/** The session's changes in order: what each one added and the picture it settled on. */
+export function changeLog(d: Pick<Demo, "script">): DemoChange[] {
+  const out: DemoChange[] = [];
+  let typed = "";
+  let from = 0;
+  let frame = "";
+  for (const s of d.script) {
+    if (s.type === "type") typed += s.text;
+    else if (s.type === "frame") frame = s.frame;
+    else if (s.type === "change") {
+      out.push({ words: trimJoin(typed.slice(from)), frame, end: typed.length });
+      from = typed.length;
+    }
+  }
+  return out;
+}
+
+/** A picture of the session, placed at the letter of the prompt it was drawn for. */
+export interface SentenceMark {
+  /** How long the prompt was when this frame was drawn: the frame is the original with text.slice(0, at). */
+  at: number;
+  frame: string;
+  /** A live frame, drawn while the words were still being typed; otherwise the full-quality picture. */
+  live: boolean;
+  /** The change it belongs to (0-based); the original is in change 0 at 0. */
+  change: number;
+}
+
+/**
+ * The whole session as one sentence: its text, where each change's own words start and end (without the ", " that
+ * joins them on), and every picture at the letter it was drawn for. Only these prefixes were ever drawn, so going back
+ * through the sentence can only cut words off the end, the way Undo does.
+ */
+export function sentence(d: Pick<Demo, "script">): { text: string; clauses: { start: number; end: number }[]; marks: SentenceMark[] } {
+  let text = "";
+  let from = 0;
+  const clauses: { start: number; end: number }[] = [];
+  const marks: SentenceMark[] = [];
+  for (const s of d.script) {
+    if (s.type === "type") text += s.text;
+    else if (s.type === "frame") marks.push({ at: text.length, frame: s.frame, live: !!s.live, change: clauses.length });
+    else if (s.type === "change") {
+      clauses.push({ start: from + (text.slice(from).match(/^[\s,]*/)?.[0].length ?? 0), end: text.length });
+      from = text.length;
+    }
+  }
+  return { text, clauses, marks };
+}
+
+/** The picture drawn for the first `caret` letters: the last mark at or before it (a settled picture wins a tie). */
+export const markAt = (marks: SentenceMark[], caret: number) => marks.reduce<SentenceMark | undefined>((m, k) => (k.at <= caret ? k : m), undefined) ?? marks[0];
+
+/** Where the caret can rest: the letters a picture was drawn for, once each. */
+export const stops = (marks: SentenceMark[]) => [...new Set(marks.map((m) => m.at))];
+
+/** How many words the first `at` letters hold. */
+export const wordsIn = (text: string, at: number) => text.slice(0, at).split(/[\s,]+/).filter(Boolean).length;
+
+/** The words typed since the last change that settled: what is in the chat player's box right now. */
+export const pendingWords = (log: DemoChange[], typed: string, changes: number) => trimJoin(typed.slice(log[Math.min(changes, log.length) - 1]?.end ?? 0));
 
 /** What is wrong with a demo file, in words; empty when it plays. `exists` checks that a frame's file is there. */
 export function demoProblems(d: Demo, exists?: (src: string) => boolean): string[] {

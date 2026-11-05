@@ -730,6 +730,9 @@ html {
 @keyframes live-fade { from { opacity: 0; } to { opacity: 1; } }
 @keyframes live-caret { 50% { opacity: 0; } }
 @keyframes live-chip { from { opacity: 0; translate: 6px 0; } to { opacity: 1; translate: 0 0; } }
+/* The chat player (live-chat-demo.tsx): a message grows in at the bottom of the chat, so the ones above roll up
+   rather than jump. */
+@keyframes live-roll { from { grid-template-rows: 0fr; opacity: 0; translate: 0 10px; } to { grid-template-rows: 1fr; opacity: 1; translate: 0 0; } }
 /* A live frame is drawn across the picture: a soft edge travels left to right across the part the camera shows, and
    a faint line rides on it. The mask is 2.5 pictures wide; --sweep-from/--sweep-to and --scan-from/--scan-to come
    from sweepPath (src/lib/live/demo.ts). */

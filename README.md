@@ -81,11 +81,11 @@ Real covers from the galleries. Every clip and still below was rendered locally 
 <br>
 
 <p align="center">
-  <a href="https://fuobe.com/live-edit"><img src="docs/media/gifs/showcase-live-edit.gif" alt="Live edit: a portrait changes step by step as a prompt is typed, from evening makeup to a candlelit ballroom" width="80%"></a>
+  <a href="https://fuobe.com/live-edit"><img src="docs/media/gifs/showcase-live-edit.gif" alt="Live edit: an empty run-down room changes step by step as a prompt is typed, into a Paris apartment with the Eiffel Tower at sunset" width="80%"></a>
 </p>
 
 <p align="center">
-  <b>Live edit.</b> The picture changes as you type, on your own GPU. Here, ten changes to one photo in one growing prompt.<br>
+  <b>Live edit.</b> The picture changes as you type, on your own GPU. Here, eight changes to one photo in one growing prompt.<br>
   <a href="https://fuobe.com/live-edit"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/media/buttons/try-live-edit-on-dark.svg"><img src="docs/media/buttons/try-live-edit.svg" alt="Try Live edit" width="147"></picture></a>
 </p>
 

@@ -5,10 +5,13 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import sharp from "sharp";
 import { describe, expect, it } from "vitest";
-import { ChangeCount } from "@/components/live/live-demo";
+import { CHAT_CREW, type ChatRow, chatRows } from "@/components/live/live-chat-demo";
+import { YOUR_TURN } from "@/components/live/live-crew";
+import { ChangeCount, createKeyBus } from "@/components/live/live-demo";
 import {
   type Box,
   cameraFor,
+  changeLog,
   changesWord,
   countChanges,
   type Demo,
@@ -22,22 +25,28 @@ import {
   LIVE_DEMO,
   LIVE_DEMO_V,
   LOOP_MAX_MS,
+  markAt,
   loopMs,
   MID_W,
+  pendingWords,
   pillText,
   SMALL_W,
+  sentence,
+  stops,
   SWEEP_MS,
   sweepPath,
   tierFor,
   typeDelays,
   viewBefore,
+  wordsIn,
   ZOOM_MAX,
 } from "@/lib/live/demo";
 
 /*
- * The recorded live edit session (public/previews/live-edit/demo.json) and its player (src/lib/live/demo.ts,
- * src/components/live/live-demo.tsx): the file plays, every frame is there in the sizes a card needs, one round stays
- * short, the whole picture always shows, and the session is one prompt that keeps growing.
+ * The recorded live edit session (LIVE_DEMO: the room makeover, public/previews/live-edit/room/demo.json) and its
+ * player (src/lib/live/demo.ts, src/components/live/live-demo.tsx): the file plays, every frame is there in the sizes a
+ * card needs, one round stays short, the whole picture always shows, and the session is one prompt that keeps growing.
+ * The Home tile's portrait session is checked at the end.
  */
 
 const PUBLIC = path.join(__dirname, "..", "public");
@@ -46,11 +55,12 @@ const shippedText = fs.readFileSync(path.join(PUBLIC, LIVE_DEMO), "utf8").replac
 const shipped = JSON.parse(shippedText) as Demo;
 
 /**
- * An eleven-change session in the shape of the shipped one: the camera moves in on the changed area, the words go on
- * the end of the one prompt, partial live frames arrive while typing, the camera pulls back out as the settled one
- * arrives, then the count goes up. The two big changes keep the whole picture.
+ * A made-up eleven-change session in the longer shape the player also plays (the shipped one has no zoom steps): the
+ * camera moves in on the changed area, the words go on the end of the one prompt, a partial live frame arrives while
+ * typing, the camera pulls back out as the settled one arrives, then the count goes up. The two big changes keep the
+ * whole picture.
  */
-const LABELS = ["Red lips", "Hair down", "Gold hoops", "Velvet gown", "Diamond choker", "Red rose", "Fur stole", "Ballroom", "Spotlight", "Soft smile", "Cinematic grade"];
+const LABELS = ["White walls", "Oak floor", "Velvet sofa", "Arched window", "Hanging plants", "Bookshelves", "Gold armchair", "String lights", "Golden hour", "Sleeping cat", "Reading lamp"];
 function longSession(): Demo {
   const frames: Demo["frames"] = { s0: { src: "/previews/x/960/step-00.jpg", small: "/previews/x/512/step-00.jpg" } };
   const script: DemoStep[] = [{ type: "frame", frame: "s0", ms: 800 }];
@@ -59,7 +69,7 @@ function longSession(): Demo {
     const early = i < 2;
     frames[`s${i + 1}a`] = { src: `/previews/x/960/step-${n}a.jpg` };
     frames[`s${i + 1}`] = { src: `/previews/x/960/step-${n}.jpg` };
-    const box: Box | null = label === "Ballroom" || label === "Spotlight" ? null : [0.4, 0.3, 0.6, 0.6];
+    const box: Box | null = label === "String lights" || label === "Golden hour" ? null : [0.4, 0.3, 0.6, 0.6];
     if (box) script.push({ type: "zoom", box, ms: 200 });
     script.push(
       { type: "type", text: `${i ? ", " : ""}${label.toLowerCase()}`, ms: early ? 700 : 450 },
@@ -79,9 +89,9 @@ describe("the shipped demo", () => {
     expect(loopMs(shipped)).toBeLessThanOrEqual(LOOP_MAX_MS);
   });
 
-  it("is one prompt of ten changes or more, each settled picture shown before the count goes up", () => {
+  it("is one prompt of eight changes or more, each settled picture shown before the count goes up", () => {
     const changes = shipped.script.flatMap((s, i) => (s.type === "change" ? [i] : []));
-    expect(changes.length).toBeGreaterThanOrEqual(10);
+    expect(changes.length).toBeGreaterThanOrEqual(8);
     expect(countChanges(shipped)).toBe(changes.length);
     for (const [k, i] of changes.entries()) {
       const prev = shipped.script[i - 1];
@@ -327,5 +337,151 @@ describe("the change count", () => {
 
   it("steps aside while the compare plays", () => {
     expect(renderToStaticMarkup(createElement(ChangeCount, { changes: 3, hidden: true }))).toMatch(/opacity-0/);
+  });
+});
+
+describe("the chat player's turns", () => {
+  it("lists every change with the words it added and the picture it settled on", () => {
+    const log = changeLog(shipped);
+    expect(log).toHaveLength(countChanges(shipped));
+    expect(log[0]).toMatchObject({ words: "freshly painted smooth white walls, seamless oak floor", frame: "s1" });
+    expect(log[1]).toMatchObject({ words: "emerald velvet sofa with straight arms centred under the window", frame: "s2" });
+    for (const [k, c] of log.entries()) {
+      expect(c.frame).toBe(`s${k + 1}`);
+      expect(c.words).not.toMatch(/^[\s,]/);
+    }
+    // Joined back up, the turns are the whole prompt.
+    expect(log.map((c) => c.words).join(", ")).toBe(viewBefore(shipped, shipped.script.length).typed);
+  });
+
+  it("puts only the words since the last settled change in the box", () => {
+    const log = changeLog(shipped);
+    const full = viewBefore(shipped, shipped.script.length).typed;
+    expect(pendingWords(log, "", 0)).toBe("");
+    expect(pendingWords(log, "freshly pa", 0)).toBe("freshly pa");
+    expect(pendingWords(log, full.slice(0, log[0].end), 1)).toBe("");
+    expect(pendingWords(log, `${full.slice(0, log[0].end)}, emerald`, 1)).toBe("emerald");
+    expect(pendingWords(log, full, log.length)).toBe("");
+  });
+
+  it("follows a session in the long shape too, zoom steps and all", () => {
+    const log = changeLog(longSession());
+    expect(log.map((c) => c.words)).toEqual(LABELS.map((l) => `${l.toLowerCase()} now`));
+    expect(log.at(-1)?.frame).toBe(`s${LABELS.length}`);
+  });
+});
+
+describe("the chat player's room", () => {
+  it("has someone to type every change of the shipped session, and the sixth is the viewer's", () => {
+    expect(CHAT_CREW.length).toBeGreaterThanOrEqual(countChanges(shipped));
+    expect(CHAT_CREW[5].id).toBe("you");
+    expect(CHAT_CREW.filter((p) => p.id === "you")).toHaveLength(1);
+  });
+});
+
+describe("the chat player's history", () => {
+  const log = changeLog(shipped);
+  const messages = (rows: ChatRow[]) => rows.filter((r) => r.kind === "message");
+
+  it("keeps every earlier round when the picture goes back to the original: only a reload starts it over", () => {
+    const first = chatRows(log, 0, log.length, "").rows;
+    const second = chatRows(log, 1, 2, "").rows;
+    // The second round starts with everything the first one ended with, then a line, then its own changes.
+    expect(second.slice(0, first.length)).toEqual(first);
+    expect(second[first.length]).toMatchObject({ kind: "round", round: 1 });
+    expect(messages(second)).toHaveLength(log.length + 2);
+    // Keys never repeat, so a message on screen keeps its place as the chat rolls.
+    expect(new Set(second.map((r) => r.key)).size).toBe(second.length);
+  });
+
+  it("has everyone join once, and they stay for the rounds after", () => {
+    const { rows, here } = chatRows(log, 2, 3, "");
+    const joins = rows.filter((r) => r.kind === "join").map((r) => (r.kind === "join" ? r.who.id : ""));
+    expect(new Set(joins).size).toBe(joins.length);
+    expect(here.map((p) => p.id).sort()).toEqual([...new Set(CHAT_CREW.map((p) => p.id))].sort());
+  });
+
+  it("shows someone else's change as they type it, and yours only once it settles", () => {
+    const typingMaya = chatRows(log, 0, 0, "freshly pa").rows.at(-1);
+    expect(typingMaya).toMatchObject({ kind: "message", n: 1, words: "freshly pa", frame: null });
+    const yourTurn = chatRows(log, 0, 5, "floor to ce").rows;
+    expect(messages(yourTurn).at(-1)).toMatchObject({ n: 5 });
+    // The next person joins as soon as yours settles, so yours is the last message, not the last row.
+    const yours = messages(chatRows(log, 0, 6, "").rows).at(-1);
+    expect(yours).toMatchObject({ kind: "message", n: 6, words: log[5].words, frame: log[5].frame });
+    expect(yours?.kind === "message" && yours.who.id).toBe("you");
+  });
+});
+
+describe("the sentence under the picture", () => {
+  const s = sentence(shipped);
+  const log = changeLog(shipped);
+
+  it("is the whole prompt, each change's own words in its place", () => {
+    expect(s.text).toBe(viewBefore(shipped, shipped.script.length).typed);
+    expect(s.clauses).toHaveLength(log.length);
+    s.clauses.forEach((c, i) => expect(s.text.slice(c.start, c.end)).toBe(log[i].words));
+  });
+
+  it("puts every picture at the letter it was drawn for: the words typed before it, never after", () => {
+    expect(s.marks[0]).toMatchObject({ at: 0, frame: "s0", live: false });
+    expect(s.marks.map((m) => m.frame)).toEqual(frameOrder(shipped));
+    for (const m of s.marks.filter((k) => k.live)) expect(m.at).toBeLessThanOrEqual(s.clauses[m.change].end);
+    // Each change's full-quality picture sits at the end of its words.
+    s.clauses.forEach((c, i) => expect(s.marks.find((m) => m.frame === `s${i + 1}`)).toMatchObject({ at: c.end, live: false, change: i }));
+  });
+
+  it("only stops where a picture was drawn, and a tie goes to the full-quality one", () => {
+    const at = stops(s.marks);
+    expect(at[0]).toBe(0);
+    expect(at.at(-1)).toBe(s.text.length);
+    expect(markAt(s.marks, s.clauses[0].end).frame).toBe("s1");
+    expect(markAt(s.marks, s.clauses[0].end - 1).live).toBe(true);
+    expect(markAt(s.marks, 0).frame).toBe("s0");
+    expect(markAt(s.marks, s.text.length).frame).toBe(`s${log.length}`);
+  });
+
+  it("counts the words a picture holds", () => {
+    expect(wordsIn(s.text, 0)).toBe(0);
+    expect(wordsIn(s.text, s.clauses[0].end)).toBe(8);
+  });
+});
+
+describe("the visitor's keys", () => {
+  it("answers a key at once, gives up after the wait with none, and keeps keys pressed early for the next letters", async () => {
+    const keys = createKeyBus();
+    const waiting = keys.wait(1000);
+    keys.press();
+    await expect(waiting).resolves.toBe(true);
+    await expect(keys.wait(5)).resolves.toBe(false);
+    keys.press(3);
+    await expect(Promise.all([keys.wait(5), keys.wait(5), keys.wait(5)])).resolves.toEqual([true, true, true]);
+    await expect(keys.wait(5)).resolves.toBe(false);
+    keys.press(2);
+    keys.clear();
+    await expect(keys.wait(5)).resolves.toBe(false);
+  });
+
+  it("is the sixth change, and the room has someone for every other one", () => {
+    expect(YOUR_TURN).toBe(5);
+    expect(CHAT_CREW.length).toBeGreaterThanOrEqual(countChanges(shipped));
+  });
+});
+
+/* The Home tile keeps the portrait session (src/lib/home-bento.ts) while the players show the room: it still has to play. */
+describe("the Home tile's portrait session", () => {
+  const PORTRAIT = "/previews/live-edit/demo.json";
+  const portrait = JSON.parse(fs.readFileSync(path.join(PUBLIC, PORTRAIT), "utf8")) as Demo;
+
+  it("plays: every frame file is there, at its content version", () => {
+    expect(demoProblems(portrait, exists)).toEqual([]);
+    const sha8 = (b: Buffer) => createHash("sha256").update(b).digest("hex").slice(0, 8);
+    for (const fr of Object.values(portrait.frames)) {
+      for (const src of frameFiles(fr)) expect(src.split("?v=")[1]).toBe(sha8(fs.readFileSync(path.join(PUBLIC, framePath(src)))));
+    }
+  });
+
+  it("is not the session the players show", () => {
+    expect(LIVE_DEMO).not.toBe(PORTRAIT);
   });
 });

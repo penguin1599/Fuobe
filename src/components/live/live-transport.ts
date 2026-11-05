@@ -144,10 +144,14 @@ export class ServerTransport implements LiveTransport {
 
   /** Its own session, every time (never one another tab or editor might hold: their renders would knock out each other's). */
   async open(): Promise<OpenResult> {
+    // Opening again after a close (React's dev double mount) starts afresh; an earlier open that lands late ends its
+    // session instead of taking over.
+    this.closed = false;
+    const opening = ++this.opens;
     const res = await fetch("/api/live/session", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
     const j = (await res.json().catch(() => ({}))) as { sessionId?: string; mode?: "server" | "link"; seed?: number; nodes?: { version?: number; outdated?: boolean }; highvram?: boolean | null; missing?: string[]; error?: string; code?: string };
     if (!res.ok || !j.sessionId) return { ok: false, error: j.error ?? `Live edit didn't start (${res.status})`, code: j.code };
-    if (this.closed) {
+    if (this.closed || opening !== this.opens) {
       this.end(j.sessionId);
       return { ok: false, error: "Closed", code: "closed" };
     }
@@ -158,6 +162,7 @@ export class ServerTransport implements LiveTransport {
   }
 
   private closed = false;
+  private opens = 0;
 
   private end(id: string) {
     void fetch("/api/live/session", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionId: id, end: true }), keepalive: true }).catch(() => {});
