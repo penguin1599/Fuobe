@@ -12,7 +12,7 @@ import {
   frameFile,
   frameOrder,
   LIVE_DEMO,
-  LIVE_DEMO_V,
+  pickDemo,
   pillText,
   SETTLE_FADE_MS,
   SMALL_W,
@@ -39,9 +39,11 @@ import { cn } from "@/lib/utils";
 export { LIVE_DEMO };
 
 let loaded: Promise<Demo | null> | null = null;
-// A failed fetch is not kept, so the next player tries again.
+/** The session this page shows: picked once, at random, so every player on the page agrees. */
+let chosen: ReturnType<typeof pickDemo> | null = null;
+// A failed fetch is not kept, so the next player tries again (the same session).
 const loadDemo = () =>
-  (loaded ??= fetch(`${LIVE_DEMO}?v=${LIVE_DEMO_V}`)
+  (loaded ??= fetch(`${(chosen ??= pickDemo()).src}?v=${chosen.v}`)
     .then((r) => (r.ok ? (r.json() as Promise<Demo>) : null))
     .catch(() => null)
     .then((d) => {
@@ -413,7 +415,7 @@ type Player = ReturnType<typeof useDemoPlayer>;
  * The picture itself: the frame on screen, the one fading out under it, a live frame's sweep and the compare. Under
  * reduced motion, a still before/after to drag.
  */
-export function DemoPicture({ demo, ends, v, reduced, src, showImages, mode, compareTo, alt = "A live edit of an empty room becoming a dream home" }: Player & { alt?: string }) {
+export function DemoPicture({ demo, ends, v, reduced, src, showImages, mode, compareTo, alt = "A live edit: the picture changing as the words are typed" }: Player & { alt?: string }) {
   const dragging = useRef(false);
   if (!demo || !ends || !v || !showImages) return null;
   if (reduced) return <StillCompare before={src(ends.before)} after={src(ends.after)} changes={countChanges(demo)} />;

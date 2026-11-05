@@ -1,8 +1,8 @@
 /**
- * The recorded live edit session that every LiveDemo player shows (Live edit's guest view and the Edit studio's Live
- * pane, the Live edit section and drawn Live card on Home, the Apps card): a room makeover,
- * public/previews/live-edit/room/demo.json. Home's first-screen live tile keeps the portrait
- * (public/previews/live-edit/demo.json, src/lib/home-bento.ts). Also
+ * The recorded live edit sessions the LiveDemo players show (Live edit's guest view and the Edit studio's Live pane, the
+ * Live edit section and drawn Live card on Home, the Apps card): a room makeover (public/previews/live-edit/room/) and a
+ * portrait (public/previews/live-edit/demo.json, which Home's first-screen live tile always plays, src/lib/home-bento.ts).
+ * Each page picks one of them at random (pickDemo), so visitors see either. Also
  * the pure parts of its player: how long each step takes, where a paused loop picks up again, which frames are the
  * before and after, which file of a frame a card needs, and where the camera sits when it zooms in on a change. The
  * session is one prompt that keeps growing: each frame shows the picture with all the words so far. The player
@@ -15,6 +15,16 @@ export const LIVE_DEMO = "/previews/live-edit/room/demo.json";
  * fetches the file with it (?v=), so a new session reaches returning visitors at once; a test keeps it in step.
  */
 export const LIVE_DEMO_V = "8444cdca";
+/** The portrait session: Home's first-screen tile, and the other session the players may show. Versioned the same way. */
+export const PORTRAIT_DEMO = "/previews/live-edit/demo.json";
+export const PORTRAIT_DEMO_V = "57bf61aa";
+/** The sessions a player may show. */
+export const LIVE_DEMOS = [
+  { src: LIVE_DEMO, v: LIVE_DEMO_V },
+  { src: PORTRAIT_DEMO, v: PORTRAIT_DEMO_V },
+] as const;
+/** One of them at random (r in [0, 1)): a page picks once, so all its players show the same session. */
+export const pickDemo = (r = Math.random()) => LIVE_DEMOS[Math.min(LIVE_DEMOS.length - 1, Math.floor(r * LIVE_DEMOS.length))];
 
 /** A typed character never goes faster than this. */
 export const TYPE_MIN_CHAR_MS = 28;

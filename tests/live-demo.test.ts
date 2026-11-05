@@ -24,6 +24,10 @@ import {
   framePath,
   LIVE_DEMO,
   LIVE_DEMO_V,
+  LIVE_DEMOS,
+  pickDemo,
+  PORTRAIT_DEMO,
+  PORTRAIT_DEMO_V,
   LOOP_MAX_MS,
   markAt,
   loopMs,
@@ -46,7 +50,7 @@ import {
  * The recorded live edit session (LIVE_DEMO: the room makeover, public/previews/live-edit/room/demo.json) and its
  * player (src/lib/live/demo.ts, src/components/live/live-demo.tsx): the file plays, every frame is there in the sizes a
  * card needs, one round stays short, the whole picture always shows, and the session is one prompt that keeps growing.
- * The Home tile's portrait session is checked at the end.
+ * The portrait session (Home's tile, and the players' other pick) is checked at the end.
  */
 
 const PUBLIC = path.join(__dirname, "..", "public");
@@ -468,20 +472,26 @@ describe("the visitor's keys", () => {
   });
 });
 
-/* The Home tile keeps the portrait session (src/lib/home-bento.ts) while the players show the room: it still has to play. */
-describe("the Home tile's portrait session", () => {
-  const PORTRAIT = "/previews/live-edit/demo.json";
-  const portrait = JSON.parse(fs.readFileSync(path.join(PUBLIC, PORTRAIT), "utf8")) as Demo;
+/* The portrait session: Home's tile always plays it, and the players pick it or the room at random. */
+describe("the portrait session, and the random pick", () => {
+  const sha8 = (b: Buffer | string) => createHash("sha256").update(b).digest("hex").slice(0, 8);
+  const portraitText = fs.readFileSync(path.join(PUBLIC, PORTRAIT_DEMO), "utf8").replace(/\r\n/g, "\n");
+  const portrait = JSON.parse(portraitText) as Demo;
 
-  it("plays: every frame file is there, at its content version", () => {
+  it("plays: every frame file is there, at its content version, and the file is fetched at its own", () => {
     expect(demoProblems(portrait, exists)).toEqual([]);
-    const sha8 = (b: Buffer) => createHash("sha256").update(b).digest("hex").slice(0, 8);
+    expect(sha8(portraitText)).toBe(PORTRAIT_DEMO_V);
     for (const fr of Object.values(portrait.frames)) {
       for (const src of frameFiles(fr)) expect(src.split("?v=")[1]).toBe(sha8(fs.readFileSync(path.join(PUBLIC, framePath(src)))));
     }
   });
 
-  it("is not the session the players show", () => {
-    expect(LIVE_DEMO).not.toBe(PORTRAIT);
+  it("offers both sessions, and either can come up", () => {
+    expect(LIVE_DEMOS.map((d) => d.src)).toEqual([LIVE_DEMO, PORTRAIT_DEMO]);
+    expect(LIVE_DEMOS.map((d) => d.v)).toEqual([LIVE_DEMO_V, PORTRAIT_DEMO_V]);
+    expect(pickDemo(0).src).toBe(LIVE_DEMO);
+    expect(pickDemo(0.49).src).toBe(LIVE_DEMO);
+    expect(pickDemo(0.5).src).toBe(PORTRAIT_DEMO);
+    expect(pickDemo(0.9999).src).toBe(PORTRAIT_DEMO);
   });
 });

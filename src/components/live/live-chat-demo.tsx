@@ -152,7 +152,7 @@ export function LiveChatDemo({ className }: { className?: string }) {
         <div ref={box} className="@container relative isolate aspect-[4/3] min-w-0 overflow-hidden bg-media text-white" data-live-demo>
           {reduced && frame ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={src(frame)} alt="A live edit of an empty room becoming a dream home" className="absolute inset-0 size-full object-cover" draggable={false} />
+            <img src={src(frame)} alt="A live edit: the picture changing as the words are typed" className="absolute inset-0 size-full object-cover" draggable={false} />
           ) : (
             <DemoPicture {...player} />
           )}
